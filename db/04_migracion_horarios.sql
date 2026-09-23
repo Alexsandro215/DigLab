@@ -182,6 +182,49 @@ PREPARE ejecutar FROM @sql; EXECUTE ejecutar; DEALLOCATE PREPARE ejecutar;
 --     Con UNA clave asi es lo que hay en el TESCHI. Si hubiera mas de una, no
 --     se toca nada de este paso y el script lo dice: rehacerlas a ciegas de una
 --     en una sin bucles, fuera de un procedimiento, es pedir un estado a medias.
+--
+--     Y NO se puede dejar a medias. En el servidor real el paso 2 fallo (1553)
+--     DESPUES de que el paso 1 hubiera quitado la clave de reportess: algo que
+--     el usuario de la aplicacion no puede ver (una clave de otra base del mismo
+--     servidor, o una huerfana en el diccionario de InnoDB) tambien se apoya en
+--     ese indice. mysql se detiene en el primer error, el paso 3 no llego a
+--     correr, y reportess se quedo sin su clave. Por eso, antes de quitarla, su
+--     definicion se apunta en digbit_clave_pendiente. Si algo falla,
+--     migrar_bd.ps1 corre 04b_reparar_clave_pendiente.sql, que la repone en el
+--     acto; y este mismo bloque la repone al empezar, si se corre a mano.
+--     Lo de abajo es IDENTICO a 04b: si cambias uno, cambia el otro.
+CREATE TABLE IF NOT EXISTS digbit_clave_pendiente (
+    nombre     VARCHAR(64) NOT NULL,
+    tabla      VARCHAR(64) NOT NULL,
+    columna    VARCHAR(64) NOT NULL,
+    al_borrar  VARCHAR(20) NOT NULL,
+    al_cambiar VARCHAR(20) NOT NULL,
+    PRIMARY KEY (nombre)
+) ENGINE=InnoDB;
+SET @p_nombre  := (SELECT nombre     FROM digbit_clave_pendiente LIMIT 1);
+SET @p_tabla   := (SELECT tabla      FROM digbit_clave_pendiente WHERE nombre = @p_nombre);
+SET @p_columna := (SELECT columna    FROM digbit_clave_pendiente WHERE nombre = @p_nombre);
+SET @p_borrar  := (SELECT al_borrar  FROM digbit_clave_pendiente WHERE nombre = @p_nombre);
+SET @p_cambiar := (SELECT al_cambiar FROM digbit_clave_pendiente WHERE nombre = @p_nombre);
+SET @p_falta := (@p_nombre IS NOT NULL AND
+                 (SELECT COUNT(*) FROM information_schema.REFERENTIAL_CONSTRAINTS
+                  WHERE CONSTRAINT_SCHEMA = DATABASE()
+                    AND CONSTRAINT_NAME = @p_nombre AND TABLE_NAME = @p_tabla) = 0);
+SET @comprobar_claves := @@FOREIGN_KEY_CHECKS;
+SET FOREIGN_KEY_CHECKS = 0;
+SET @sql := IF(@p_falta,
+    CONCAT('ALTER TABLE `', @p_tabla, '` ADD CONSTRAINT `', @p_nombre,
+           '` FOREIGN KEY (`', @p_columna, '`) REFERENCES codigos_accesos (codigo)',
+           ' ON DELETE ', @p_borrar, ' ON UPDATE ', @p_cambiar),
+    'SELECT ''ninguna clave pendiente de reponer'' AS resultado');
+PREPARE ejecutar FROM @sql; EXECUTE ejecutar; DEALLOCATE PREPARE ejecutar;
+SET FOREIGN_KEY_CHECKS = @comprobar_claves;
+SELECT IF(@p_falta, CONCAT('REPUESTA la clave ', @p_tabla, '.', @p_nombre,
+                           ' que un intento anterior dejo quitada'),
+          'nada que reponer') AS reparacion;
+DELETE FROM digbit_clave_pendiente;
+-- (fin del bloque identico a 04b)
+
 SET @hay := (SELECT COUNT(*) FROM information_schema.STATISTICS
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'codigos_accesos'
                AND INDEX_NAME = 'ix_codigos_codigo');
@@ -229,6 +272,12 @@ SELECT @idx AS indice_unico, @n_fk AS claves_que_apuntan_a_codigo,
        CONCAT(@fk_tabla, '.', @fk_columna, ' (', @fk_nombre, ') ON DELETE ',
               @fk_al_borrar, ' ON UPDATE ', @fk_al_cambiar) AS clave_a_rehacer;
 
+-- Antes de quitarla, apuntarla, para poder reponerla si el paso 2 falla.
+INSERT INTO digbit_clave_pendiente (nombre, tabla, columna, al_borrar, al_cambiar)
+SELECT @fk_nombre, @fk_tabla, @fk_columna, @fk_al_borrar, @fk_al_cambiar
+FROM DUAL
+WHERE @idx IS NOT NULL AND @n_fk = 1;
+
 -- Paso 1: quitar la clave foranea (solo si hay unico que quitar y es UNA).
 SET @sql := IF(@idx IS NOT NULL AND @n_fk = 1,
     CONCAT('ALTER TABLE `', @fk_tabla, '` DROP FOREIGN KEY `', @fk_nombre, '`'),
@@ -254,6 +303,10 @@ SET @sql := IF(@idx IS NOT NULL AND @n_fk = 1,
     'SELECT ''sin clave foranea que rehacer'' AS resultado');
 PREPARE ejecutar FROM @sql; EXECUTE ejecutar; DEALLOCATE PREPARE ejecutar;
 SET FOREIGN_KEY_CHECKS = @comprobar_claves;
+
+-- Salio bien: ya no hay nada pendiente.
+DELETE FROM digbit_clave_pendiente;
+DROP TABLE IF EXISTS digbit_clave_pendiente;
 
 -- 3b) Columnas, indices y claves nuevas. Solo si faltan, para poder repetir el
 --     script sin que corte. Las filas viejas quedan con las dos columnas en

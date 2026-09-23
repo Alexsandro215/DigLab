@@ -66,7 +66,11 @@ $migraciones = @(
     "06_migracion_contrasenas.sql"
 ) | ForEach-Object { Join-Path $carpetaDb $_ }
 
-foreach ($f in @($revision) + $migraciones) {
+# Repone la clave foranea que la 04 quita un momento, si una migracion se
+# corta a medias. Ver db\04b_reparar_clave_pendiente.sql.
+$reparacion = Join-Path $carpetaDb "04b_reparar_clave_pendiente.sql"
+
+foreach ($f in @($revision, $reparacion) + $migraciones) {
     if (-not (Test-Path $f)) { throw "No encuentro $f. Ejecuta esto desde deploy\ dentro del repositorio." }
 }
 
@@ -199,10 +203,35 @@ foreach ($m in $migraciones) {
     if ($nombre -like "04_*" -and $ContrasenaAdmin) {
         $texto = $texto.Replace("MD5('CAMBIAME')", "MD5('" + $ContrasenaAdmin.Replace("'", "''") + "')")
     }
-    Nativo { $texto | & $mysql @comunes "--table" $Base | Out-Null }
-    if ($LASTEXITCODE -ne 0) {
+    $errores = Nativo { $texto | & $mysql @comunes "--table" $Base 2>&1 | Where-Object { $_ -is [Management.Automation.ErrorRecord] } }
+    $codigoMigracion = $LASTEXITCODE
+    if ($codigoMigracion -ne 0) {
         Write-Host ""
-        throw "mysql devolvio $LASTEXITCODE al aplicar $nombre. Las anteriores si se aplicaron. Respaldo: $archivoRespaldo"
+        foreach ($e in $errores) { Write-Host "   $e" -ForegroundColor Red }
+
+        # Lo primero, antes de explicar nada: no dejar la base a medias. La 04
+        # quita una clave foranea y la vuelve a poner; si se corto entre medias,
+        # la clave estaria quitada. Esto la repone (y no hace nada si no hace falta).
+        Write-Host "   reparando lo que haya quedado a medias..." -NoNewline
+        $salidaReparacion = Nativo { LeerSql $reparacion | & $mysql @comunes "-N" "-B" $Base 2>&1 }
+        if ($LASTEXITCODE -eq 0) {
+            $linea = @($salidaReparacion | Where-Object { $_ -match 'REPUESTA|nada que reponer' }) | Select-Object -Last 1
+            Write-Host " $linea" -ForegroundColor Yellow
+        } else {
+            Write-Host " FALLO: $salidaReparacion" -ForegroundColor Red
+            Write-Host "   Ejecuta a mano db\04b_reparar_clave_pendiente.sql en phpMyAdmin." -ForegroundColor Red
+        }
+
+        if ("$errores" -match '1553') {
+            Write-Host ""
+            Write-Host "   El indice unico de codigos_accesos.codigo lo necesita una clave foranea que" -ForegroundColor Yellow
+            Write-Host "   '$Usuario' NO puede ver (de otra base del servidor, o huerfana en InnoDB)." -ForegroundColor Yellow
+            Write-Host "   Pide a quien administre el servidor que ejecute, como administrador:" -ForegroundColor Yellow
+            Write-Host "     SELECT f.ID, f.FOR_NAME, c.FOR_COL_NAME FROM information_schema.INNODB_SYS_FOREIGN f" -ForegroundColor Yellow
+            Write-Host "       JOIN information_schema.INNODB_SYS_FOREIGN_COLS c ON c.ID = f.ID" -ForegroundColor Yellow
+            Write-Host "      WHERE f.REF_NAME = '$Base/codigos_accesos';" -ForegroundColor Yellow
+        }
+        throw "mysql devolvio $codigoMigracion al aplicar $nombre. Las anteriores si se aplicaron. Respaldo: $archivoRespaldo"
     }
     Write-Host " ok" -ForegroundColor Green
 }
