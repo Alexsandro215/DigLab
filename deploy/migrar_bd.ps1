@@ -95,7 +95,16 @@ $dump  = Buscar "mysqldump.exe"
 # La contrasena va por el entorno y no en la linea de comandos: asi no queda en
 # el historial ni la ve quien liste los procesos.
 if ($Contrasena) { $env:MYSQL_PWD = $Contrasena }
-$comunes = @("-h", $Servidor, "-P", "$Puerto", "-u", $Usuario)
+# El juego de caracteres se declara, no se deja al azar. utf8mb4 porque es un
+# superconjunto de utf8: sirve igual para la base del TESCHI (tablas utf8, en
+# MariaDB 5.5) que para una hecha con 01_schema.sql (utf8mb4), sin perder nada.
+$comunes = @("-h", $Servidor, "-P", "$Puerto", "-u", $Usuario, "--default-character-set=utf8mb4")
+
+# Lo que se le pasa a mysql.exe por la tuberia (la revision y las migraciones)
+# sale codificado con $OutputEncoding, que en Windows PowerShell 5.1 es ASCII:
+# cualquier letra con acento llegaria como '?'. Se fija aqui, en el ambito del
+# guion, asi no se cambia nada de la consola de quien lo ejecute.
+$OutputEncoding = New-Object Text.UTF8Encoding $false
 
 # Cada .sql trae USE teschi_otru; si la base se llama de otro modo, se cambia al
 # vuelo en vez de pedirle al encargado que edite cuatro archivos.
@@ -125,13 +134,20 @@ $archivoRespaldo = Join-Path $CarpetaRespaldo ("$Base-" + (Get-Date -Format "yyy
 # rutinas o eventos (pasa con cuentas restringidas), se reintenta sin ellos en
 # vez de quedarse sin respaldo, y se avisa de lo que falta. Lo que nunca se
 # salta es el esquema y los datos.
-$codigo = Nativo { & $dump @comunes "--single-transaction" "--no-tablespaces" "--routines" "--events" "--triggers" $Base |
-                       Out-File -FilePath $archivoRespaldo -Encoding utf8
+#
+# --result-file y NO una tuberia a Out-File. Pasandolo por PowerShell, la salida
+# de mysqldump (UTF-8) se leia con la pagina de codigos de la consola y se volvia
+# a escribir: "Quimica" con acento quedaba "Qu├¡mica" en el respaldo, mas un BOM
+# al principio. Se vio ensayando contra una copia de la base del TESCHI, que
+# tiene acentos. Un respaldo asi restaura nombres rotos: la red de seguridad era
+# falsa. Con --result-file es mysqldump quien escribe los bytes, sin traducir.
+$codigo = Nativo { & $dump @comunes "--single-transaction" "--no-tablespaces" "--routines" "--events" "--triggers" `
+                       "--result-file=$archivoRespaldo" $Base
                    $LASTEXITCODE }
 if ($codigo -ne 0) {
     Write-Warning "El usuario '$Usuario' no puede volcar rutinas ni eventos. Se reintenta solo con esquema y datos."
-    $codigo = Nativo { & $dump @comunes "--single-transaction" "--no-tablespaces" "--skip-triggers" $Base |
-                           Out-File -FilePath $archivoRespaldo -Encoding utf8
+    $codigo = Nativo { & $dump @comunes "--single-transaction" "--no-tablespaces" "--skip-triggers" `
+                           "--result-file=$archivoRespaldo" $Base
                        $LASTEXITCODE }
     if ($codigo -ne 0) { throw "mysqldump devolvio $codigo incluso en modo minimo. Sin respaldo no se sigue." }
     Write-Warning "El respaldo NO incluye rutinas, eventos ni disparadores. Para uno completo, usa una cuenta administradora."
@@ -142,8 +158,12 @@ if ($info.Length -lt 1024 -or -not (Select-String -Path $archivoRespaldo -Patter
     throw "El respaldo $archivoRespaldo no parece valido ($($info.Length) bytes). Sin respaldo no se sigue."
 }
 Write-Host ("   {0}  ({1:N0} KB)" -f $archivoRespaldo, ($info.Length / 1KB)) -ForegroundColor Green
+# Para restaurar, "source" dentro de mysql: lee el archivo el mismo. La receta
+# anterior (Get-Content | mysql) pasaba por la tuberia de PowerShell y tenia el
+# mismo defecto al reves: los acentos llegaban como '?'.
+$respaldoParaMysql = $archivoRespaldo.Replace('\', '/')
 Write-Host "   Para deshacerlo todo:" -ForegroundColor DarkGray
-Write-Host "     Get-Content -Raw '$archivoRespaldo' | mysql -h $Servidor -P $Puerto -u $Usuario $Base" -ForegroundColor DarkGray
+Write-Host "     & '$mysql' -h $Servidor -P $Puerto -u $Usuario -p --default-character-set=utf8mb4 $Base -e `"source $respaldoParaMysql`"" -ForegroundColor DarkGray
 
 # --- 2. Revision -----------------------------------------------------------------
 Paso "2. Revision previa (no cambia nada)"
