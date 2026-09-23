@@ -153,11 +153,19 @@ namespace DigBit.conexion
 
             try
             {
+                // Solo si no existe ya. Aqui importa mas que en linea: si la red se
+                // cae despues de insertar pero antes de la respuesta, la cola lo
+                // reintenta, y sin esta comprobacion la bitacora entraria dos veces.
+                // Antes eso lo evitaba el UNIQUE (fk_codigo_accesos, fk_usuario),
+                // que la base del TESCHI no puede llevar por sus duplicados
+                // historicos. El catch del 1062 sigue para las bases que si.
                 using (MySqlCommand comando = new MySqlCommand(@"
                     INSERT INTO registros_bitacoras
                         (fk_codigo_accesos, fk_usuario, numero_computadora, falla_red, comentarios_red, falla_hardware, comentarios_hardware,
                          falla_software, comentarios_software, registrado_sin_conexion, registrado_en)
-                    VALUES (@S, @U, @C, @FR, @CR, @FH, @CH, @FS, @CS, 1, @En)", conexion))
+                    SELECT @S, @U, @C, @FR, @CR, @FH, @CH, @FS, @CS, 1, @En
+                    FROM DUAL
+                    WHERE NOT EXISTS (SELECT 1 FROM registros_bitacoras WHERE fk_codigo_accesos = @S AND fk_usuario = @U)", conexion))
                 {
                     comando.Parameters.AddWithValue("@S", idSesion);
                     comando.Parameters.AddWithValue("@U", idUsuario);
@@ -169,7 +177,11 @@ namespace DigBit.conexion
                     comando.Parameters.AddWithValue("@FS", b.FallaSoftware);
                     comando.Parameters.AddWithValue("@CS", b.ComentarioSoftware);
                     comando.Parameters.AddWithValue("@En", b.Registrada);
-                    comando.ExecuteNonQuery();
+                    if (comando.ExecuteNonQuery() == 0)
+                    {
+                        Log.Aviso("Bitacora pendiente de " + b.Matricula + " descartada: ya existia en la sesion " + idSesion + ".");
+                        return EstadoEnvio.Duplicada;
+                    }
                 }
 
                 return EstadoEnvio.Enviada;

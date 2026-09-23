@@ -1459,8 +1459,18 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
                     }
 
 
-                    // Insertar en la tabla registros_bitacoras
-                    string consultaInsertar = "INSERT INTO registros_bitacoras (fk_codigo_accesos, fk_usuario, numero_computadora, falla_red, comentarios_red, falla_hardware, comentarios_hardware, falla_software, comentarios_software) VALUES (@IdCodigoAcceso, @codigo_usuario, @computadora, @fallared, @comentariored, @fallahardware, @comentariohardware, @fallasoftware, @comentariosoftware)";
+                    // Insertar en la tabla registros_bitacoras, pero solo si ese
+                    // alumno no tiene ya una con este codigo. La base del TESCHI no
+                    // puede llevar el UNIQUE (fk_codigo_accesos, fk_usuario): trae
+                    // duplicados historicos que no se borran. Asi que la regla la
+                    // hace cumplir la propia insercion, y 0 filas significa
+                    // "ya estaba". El catch del 1062 se queda para las bases que si
+                    // tienen el UNIQUE.
+                    string consultaInsertar = @"
+                        INSERT INTO registros_bitacoras (fk_codigo_accesos, fk_usuario, numero_computadora, falla_red, comentarios_red, falla_hardware, comentarios_hardware, falla_software, comentarios_software)
+                        SELECT @IdCodigoAcceso, @codigo_usuario, @computadora, @fallared, @comentariored, @fallahardware, @comentariohardware, @fallasoftware, @comentariosoftware
+                        FROM DUAL
+                        WHERE NOT EXISTS (SELECT 1 FROM registros_bitacoras WHERE fk_codigo_accesos = @IdCodigoAcceso AND fk_usuario = @codigo_usuario)";
                     using (MySqlCommand cmdInsertar = new MySqlCommand(consultaInsertar, conexion))
                     {
                         cmdInsertar.Parameters.AddWithValue("@IdCodigoAcceso", idCodigoAcceso);
@@ -1478,7 +1488,10 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
 
                         if (filasAfectadas <= 0)
                         {
-                            throw new Exception("No se pudo insertar el registro en la bitácora.");
+                            // El WHERE NOT EXISTS encontro la suya: es un duplicado, no
+                            // un fallo. Mismo mensaje que el 1062 de mas abajo.
+                            MessageBox.Show("Ya registraste tu bitácora con este código.", "Registro duplicado", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            return false;
                         }
                         else {
                             MessageBox.Show($" Se inserto de manera exitosa el registro", "Exito", MessageBoxButtons.OK, MessageBoxIcon.Information);

@@ -6,11 +6,10 @@
 --
 -- Existe porque las migraciones tocan datos reales de alumnos y MySQL no hace
 -- DDL transaccional: si una falla a la mitad, la tabla se queda en un estado
--- intermedio. Lo que mas probabilidades tiene de fallar es la fase 2, que anade
--- UNIQUE (fk_codigo_accesos, fk_usuario) sobre registros_bitacoras: si ya hay
--- alumnos con dos bitacoras del mismo codigo, el ALTER se rechaza. Y esos
--- duplicados son justo el problema que esa restriccion viene a impedir, asi que
--- es probable que existan.
+-- intermedio. Por eso cada choque que se conoce esta aqui, ANTES de tocar nada.
+-- Los que se han encontrado ensayando contra una copia de la base del TESCHI
+-- (MariaDB 5.5.68) salen en la seccion de detalles: las migraciones ya los
+-- sortean, pero conviene saber que estan.
 --
 -- Uso:
 --   mysql -u root -p < db/00_revision_previa.sql
@@ -46,7 +45,7 @@ UNION ALL SELECT
     IF((SELECT COUNT(*) FROM (
         SELECT 1 FROM registros_bitacoras
         GROUP BY fk_codigo_accesos, fk_usuario HAVING COUNT(*) > 1) d) = 0,
-       'ok', 'BLOQUEA: la fase 2 fallara. Mira la consulta del final y borra los sobrantes')
+       'ok', 'AVISO: la 03 no pondra el UNIQUE; la aplicacion hace cumplir la regla al insertar. No hay que borrar nada')
 UNION ALL SELECT
     'Motor de registros_bitacoras',
     (SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'registros_bitacoras'),
@@ -88,7 +87,7 @@ UNION ALL SELECT
     'info'
 UNION ALL SELECT
     '06 fase 7 (columna password para PBKDF2)',
-    (SELECT CONCAT(COLUMN_TYPE, IF(CHARACTER_MAXIMUM_LENGTH >= 255, ' (suficiente)', ' (SE QUEDA CORTA)'))
+    (SELECT CONCAT(COLUMN_TYPE, IF(CHARACTER_MAXIMUM_LENGTH >= 100, ' (cabe PBKDF2: la 06 no la toca)', ' (corta: la 06 la ensancha)'))
      FROM information_schema.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'usuarios' AND COLUMN_NAME = 'password'),
     'info'
@@ -100,6 +99,29 @@ UNION ALL SELECT
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'codigos_accesos'
               AND COLUMN_NAME = 'codigo' AND NON_UNIQUE = 0 LIMIT 1),
            'ninguno (nada que quitar)'),
+    'info'
+UNION ALL SELECT
+    'Tabla tipo_usuarios',
+    IF((SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tipo_usuarios') = 0,
+       'no existe',
+       CONCAT('existe; tipo 3 ',
+              IF((SELECT COUNT(*) FROM tipo_usuarios WHERE idtipo_usuarios = 3) > 0,
+                 'ya esta', 'falta (la 04 lo crea antes que al administrador)'))),
+    'info'
+UNION ALL SELECT
+    'Claves foraneas que apuntan a codigos_accesos.codigo',
+    CONCAT((SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE
+            WHERE REFERENCED_TABLE_SCHEMA = DATABASE()
+              AND REFERENCED_TABLE_NAME = 'codigos_accesos'
+              AND REFERENCED_COLUMN_NAME = 'codigo'),
+           ' (la 04 pone un indice normal antes de quitar el unico)'),
+    'info'
+UNION ALL SELECT
+    'Referencias rotas: bitacoras de usuarios que ya no existen',
+    CONCAT((SELECT COUNT(*) FROM registros_bitacoras r
+            WHERE NOT EXISTS (SELECT 1 FROM usuarios u WHERE u.idusuarios = r.fk_usuario)),
+           ' (no impiden migrar; no salen en informes que cruzan con usuarios)'),
     'info'
 UNION ALL SELECT
     'Administrador ADMIN001',
@@ -115,8 +137,8 @@ UNION ALL SELECT
 FROM usuarios;
 
 -- -----------------------------------------------------------------------------
--- Si la fila de duplicados dice BLOQUEA, esta consulta te los enseña uno a uno.
--- Lo normal es conservar el de menor id y borrar el resto.
+-- Los duplicados uno a uno, por si alguien quiere revisarlos. NO hace falta
+-- borrarlos para migrar: la 03 simplemente no pone el UNIQUE si los hay.
 -- -----------------------------------------------------------------------------
 SELECT r.fk_codigo_accesos, r.fk_usuario, COUNT(*) AS repeticiones,
        GROUP_CONCAT(r.idregistros_bitacoras ORDER BY r.idregistros_bitacoras) AS ids,

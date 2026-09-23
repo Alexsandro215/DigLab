@@ -21,9 +21,17 @@
 
 USE teschi_otru;
 
--- Si la columna ya era VARCHAR(255) esto no cambia nada y se puede repetir.
-ALTER TABLE usuarios
-    MODIFY COLUMN password VARCHAR(255) NOT NULL;
+-- Solo si la columna es mas corta de lo necesario. El formato ocupa unos 90
+-- caracteres; se deja margen hasta 100. La base del TESCHI ya la tiene en
+-- VARCHAR(200), asi que ahi no se toca: no tiene sentido reescribir la tabla
+-- de usuarios para ganar un ancho que no hace falta.
+SET @ancho := (SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS
+               WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'usuarios'
+                 AND COLUMN_NAME = 'password');
+SET @sql := IF(@ancho < 100,
+    'ALTER TABLE usuarios MODIFY COLUMN password VARCHAR(255) NOT NULL',
+    CONCAT('SELECT ''password ya es VARCHAR(', @ancho, '): cabe PBKDF2, no se toca'' AS resultado'));
+PREPARE ejecutar FROM @sql; EXECUTE ejecutar; DEALLOCATE PREPARE ejecutar;
 
 -- -----------------------------------------------------------------------------
 -- Seguimiento: cuanta gente falta por migrar.
