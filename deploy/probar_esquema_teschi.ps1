@@ -38,7 +38,10 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$MysqlExe,
 
-    [string]$Configuration = 'Release'
+    [string]$Configuration = 'Release',
+
+    # La que se paso a migrar_bd.ps1 -ContrasenaAdmin. Sin eso la 04 deja CAMBIAME.
+    [string]$ContrasenaAdmin = 'CAMBIAME'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -158,7 +161,8 @@ Write-Host "`n== 2. Administrador de la migracion 04" -ForegroundColor Cyan
 $fila = "$(Sql "SELECT CONCAT(fk_tipo_usuario, '|', password) FROM usuarios WHERE numero_identificador = 'ADMIN001'")".Trim()
 $tipoAdmin, $claveAdmin = $fila.Split('|')
 Esperar 'ADMIN001 es tipo 3' $tipoAdmin '3'
-Esperar "'CAMBIAME' entra" (Verificar 'CAMBIAME' $claveAdmin).Ok $true
+Esperar "su contrasena entra" (Verificar $ContrasenaAdmin $claveAdmin).Ok $true
+Esperar "'CAMBIAME' ya no, si se cambio" (Verificar 'CAMBIAME' $claveAdmin).Ok ($ContrasenaAdmin -eq 'CAMBIAME')
 
 # ================================================================================
 Write-Host "`n== 3. Codigos de clase" -ForegroundColor Cyan

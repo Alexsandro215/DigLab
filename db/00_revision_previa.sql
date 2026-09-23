@@ -25,10 +25,17 @@ UNION ALL SELECT
     DATABASE(),
     'info'
 UNION ALL SELECT
-    'Codificacion de la base',
-    (SELECT DEFAULT_CHARACTER_SET_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = DATABASE()),
-    IF((SELECT DEFAULT_CHARACTER_SET_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = DATABASE()) LIKE 'utf8%',
-       'ok', 'REVISA: los acentos pueden salir mal')
+    'Codificacion (base / tablas)',
+    CONCAT((SELECT DEFAULT_CHARACTER_SET_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = DATABASE()),
+           ' / ',
+           (SELECT TABLE_COLLATION FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'codigos_accesos')),
+    -- Lo que cuenta son las TABLAS: la 04 hace las nuevas con el cotejamiento de
+    -- codigos_accesos, no con el de la base. En el TESCHI la base es latin1 por
+    -- defecto pero las tablas son utf8, y eso esta bien.
+    IF((SELECT TABLE_COLLATION FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'codigos_accesos') LIKE 'utf8%',
+       'ok', 'REVISA: las tablas no son utf8, los acentos pueden salir mal')
 UNION ALL SELECT
     'Filas: usuarios / codigos / bitacoras',
     CONCAT((SELECT COUNT(*) FROM usuarios), ' / ',
@@ -69,9 +76,16 @@ UNION ALL SELECT
 UNION ALL SELECT '=== QUE MIGRACIONES YA ESTAN ===', '', ''
 UNION ALL SELECT
     '03 fase 2 (una bitacora por alumno y codigo)',
+    -- Con duplicados la 03 no pone el UNIQUE a proposito. Decir "pendiente" ahi
+    -- hacia creer que no se habia corrido.
     IF((SELECT COUNT(*) FROM information_schema.STATISTICS
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'registros_bitacoras'
-          AND INDEX_NAME = 'uq_bitacora_codigo_usuario') > 0, 'ya aplicada', 'pendiente'),
+          AND INDEX_NAME = 'uq_bitacora_codigo_usuario') > 0, 'ya aplicada',
+       IF((SELECT COUNT(*) FROM (
+            SELECT 1 FROM registros_bitacoras
+            GROUP BY fk_codigo_accesos, fk_usuario HAVING COUNT(*) > 1) d) > 0,
+          'sin UNIQUE a proposito: hay duplicados viejos (la aplicacion cumple la regla)',
+          'pendiente')),
     'info'
 UNION ALL SELECT
     '04 fase 6 (horarios por laboratorio)',
@@ -115,7 +129,7 @@ UNION ALL SELECT
             WHERE REFERENCED_TABLE_SCHEMA = DATABASE()
               AND REFERENCED_TABLE_NAME = 'codigos_accesos'
               AND REFERENCED_COLUMN_NAME = 'codigo'),
-           ' (la 04 pone un indice normal antes de quitar el unico)'),
+           ' (la 04 la quita, quita el unico y la vuelve a poner identica)'),
     'info'
 UNION ALL SELECT
     'Referencias rotas: bitacoras de usuarios que ya no existen',
