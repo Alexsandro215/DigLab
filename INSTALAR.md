@@ -1,4 +1,4 @@
-# Instalar DigBit
+﻿# Instalar DigBit
 
 Esta guía deja funcionando el montaje completo: **un equipo que hace de servidor
 y de administrador**, y las **máquinas de laboratorio** que se conectan a él.
@@ -16,6 +16,7 @@ pantalla y con qué usuario de base de datos se conecta.
 
 ```
 preparar_bd.ps1     Deja MySQL listo con el esquema y datos de prueba
+servidor.config     A que equipo apunta esta copia (lo escribe el instalador)
 mysql/              MySQL portátil (no hace falta instalarlo aparte)
 deploy\             Los guiones de instalación y diagnóstico
 db\                 Esquema, datos de prueba y migraciones
@@ -38,6 +39,28 @@ porque no se escribe: sale de una lista que lee de la base.
 Lo que el instalador **no** hace, y sigue siendo tuyo: descongelar Deep Freeze
 antes y volver a congelar despues.
 
+### La direccion del servidor no se teclea
+
+La casilla **Servidor** ya no hay que rellenarla. El paquete se acuerda de a que
+equipo apunta, y lo hace en este orden:
+
+1. la variable de entorno `DIGBIT_SERVIDOR`, si la pones (para pruebas);
+2. **si la base esta en este mismo equipo**, `127.0.0.1`;
+3. el archivo **`servidor.config`** de la raiz del paquete, que el paso 1 deja
+   escrito con el **nombre de red** del equipo servidor.
+
+Por eso el orden de los pasos importa mas que antes: prepara el servidor y
+**copia ESE MISMO paquete** (la carpeta entera, con su `servidor.config`) a la
+memoria con la que vas a las demas maquinas. Alli la casilla sale rellena sola.
+
+Se anota el nombre de la maquina, no su IP, para que siga valiendo cuando el
+DHCP le cambie la direccion. Si tu red no resuelve nombres, escribe la IP una
+sola vez en la casilla: al instalar queda anotada en `servidor.config` y el
+siguiente equipo ya la trae puesta.
+
+La casilla se puede seguir editando. Si el servidor se muda de equipo, cambia la
+ultima linea de `servidor.config` y no hace falta recompilar ni tocar nada mas.
+
 ### Paso 1 — "Servidor de base de datos"
 
 **Va primero y se hace una sola vez en todo el despliegue**, en el equipo que
@@ -58,6 +81,11 @@ dentro de MySQL.
 Si ya hay una base montada te avisa y te deja cancelar. Continuar la borra
 entera.
 
+Al terminar escribe `servidor.config` con el nombre de este equipo y te lo dice
+en la ventana. Eso es lo que hara que los pasos 2, 3 y 4 no pregunten ninguna IP.
+Recuerda que la base sigue escuchando **solo en local** hasta que ejecutes
+`deploy\abrir_bd_en_red.ps1`; sin eso las maquinas del laboratorio no llegan.
+
 ### Paso 2 — "Administrador"
 
 En el mismo equipo, o en el del encargado. Al marcarlo, el usuario cambia solo
@@ -65,12 +93,12 @@ a `digbit_admin`; escribe en **Contrasena** la que acabas de crear para el.
 
 | Casilla | Que poner |
 |---|---|
-| Servidor | `127.0.0.1` si la base esta en este mismo equipo; si no, su IP |
+| Servidor | **nada**: ya viene relleno |
 | Base | `teschi_otru` |
 | Usuario | `digbit_admin` |
 | Contrasena | la del paso 1 |
 
-**Probar conexion** primero, **Instalar** despues.
+Lo unico que se escribe aqui es la contrasena. Pulsa **Instalar**.
 
 En estos dos equipos, el del administrador y el del profesor, **no se instala
 nada en el sentido incomodo de la palabra**: no hay kiosco, ni cuenta nueva, ni
@@ -93,7 +121,7 @@ Una vez por equipo. Descongelado si tiene Deep Freeze.
 
 | Casilla | Que poner |
 |---|---|
-| Servidor | la IP del equipo servidor |
+| Servidor | **nada**: lo trae el paquete del paso 1 |
 | Usuario | `digbit_equipo` (cambia solo) |
 | Contrasena | la de `digbit_equipo` del paso 1 |
 | Laboratorio | pulsa **Cargar** y escogelo de la lista |
@@ -163,6 +191,10 @@ Sólo si las máquinas de laboratorio están en otros equipos:
 Crea el usuario de red y la regla del cortafuegos. **Al terminar imprime la
 cadena de conexión con la IP de este equipo: guárdala**, es la que necesitarás
 en cada máquina.
+
+En `Server=` vale igual el **nombre** del equipo que su IP, y es lo que usa el
+instalador (`servidor.config`) para no depender del DHCP. Por consola puedes
+poner cualquiera de los dos.
 
 ## A3. Los dos usuarios con permisos mínimos
 

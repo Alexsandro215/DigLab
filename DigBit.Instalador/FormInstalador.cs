@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -40,6 +40,7 @@ namespace DigBit.Instalador
         private readonly List<Control> soloMaquina = new List<Control>();
         private readonly List<Control> soloServidor = new List<Control>();
         private readonly string raiz;
+        private readonly string origenServidor;
 
         public FormInstalador()
         {
@@ -78,7 +79,13 @@ namespace DigBit.Instalador
             Controls.Add(rbMaestro); y += 34;
 
             Titulo("Base de datos", ref y);
-            Campo("Servidor (IP o nombre)", txtServidor, ref y, "127.0.0.1");
+            // El servidor NO se pregunta: sale del propio paquete. Antes esta
+            // casilla arrancaba en 127.0.0.1 y habia que sustituirla a mano por la
+            // IP del equipo servidor en cada una de las 30 maquinas, que es el paso
+            // donde se equivocaba todo el mundo. Sigue siendo editable para poder
+            // corregirla, pero en el camino normal ya viene rellena.
+            Campo("Servidor (se rellena solo)", txtServidor, ref y,
+                  Guiones.ServidorPorDefecto(raiz, out origenServidor));
             Campo("Base", txtBase, ref y, "teschi_otru");
             Campo("Usuario", txtUsuarioBd, ref y, "digbit_equipo");
             Campo("Contrasena", txtClaveBd, ref y, "");
@@ -169,6 +176,8 @@ namespace DigBit.Instalador
             else
             {
                 txtSalida.Text = "Paquete: " + raiz + Environment.NewLine +
+                    "Servidor: " + (txtServidor.Text.Length > 0 ? txtServidor.Text : "(vacio)") +
+                    "   (" + origenServidor + ")" + Environment.NewLine +
                     "Rellena los datos y pulsa Instalar. Lo que se ejecuta por debajo son los guiones de la carpeta deploy.";
             }
         }
@@ -352,6 +361,8 @@ namespace DigBit.Instalador
                 return;
             }
 
+            RecordarServidor();
+
             StringBuilder args = new StringBuilder();
             if (EsMaquina)
             {
@@ -423,6 +434,33 @@ namespace DigBit.Instalador
             }
         }
 
+        /// <summary>
+        /// Anota en el paquete el servidor que se acaba de usar. Asi, si alguien
+        /// tuvo que escribirlo a mano en el primer equipo, no hay que volver a
+        /// escribirlo en los veintinueve siguientes.
+        ///
+        /// 127.0.0.1 y localhost se saltan a proposito: anotar eso mandaria a
+        /// cada maquina del laboratorio contra una base que no tiene, y el fallo
+        /// no aparece hasta que un alumno se planta delante del equipo.
+        /// </summary>
+        private void RecordarServidor()
+        {
+            string valor = txtServidor.Text.Trim();
+            if (valor.Length == 0 || valor == "127.0.0.1" || valor == "localhost") { return; }
+            if (valor == Guiones.LeerServidor(raiz)) { return; }
+
+            string fallo = Guiones.GuardarServidor(raiz, valor);
+            if (fallo != null)
+            {
+                MessageBox.Show(
+                    "No pude anotar el servidor en " + Guiones.ArchivoServidor + ":" + Environment.NewLine +
+                    fallo + Environment.NewLine + Environment.NewLine +
+                    "La instalacion sigue igual. Lo unico que pierdes es que el proximo equipo" + Environment.NewLine +
+                    "volvera a preguntar la direccion en vez de traerla puesta.",
+                    "Servidor", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
         private string Validar()
         {
             if (EsServidor)
@@ -433,7 +471,15 @@ namespace DigBit.Instalador
                 return null;
             }
 
-            if (txtServidor.Text.Trim().Length == 0) { return "Falta el servidor de la base de datos."; }
+            if (txtServidor.Text.Trim().Length == 0)
+            {
+                return "Este paquete todavia no sabe donde esta la base.\r\n\r\n" +
+                       "Lo normal es no tener que rellenar esto: prepara primero el servidor con la primera " +
+                       "opcion de arriba y COPIA ESE MISMO PAQUETE a los demas equipos; al terminar deja escrito " +
+                       Guiones.ArchivoServidor + " y la casilla sale sola.\r\n\r\n" +
+                       "Si este es otro paquete y la base ya existe, escribe aqui el nombre del equipo servidor " +
+                       "una vez: queda anotado y los siguientes equipos ya no lo pediran.";
+            }
             if (txtBase.Text.Trim().Length == 0) { return "Falta el nombre de la base."; }
             if (txtUsuarioBd.Text.Trim().Length == 0) { return "Falta el usuario de la base."; }
             if (!EsMaquina) { return null; }
@@ -511,20 +557,40 @@ namespace DigBit.Instalador
             guion.AppendLine("Write-Host '   y la contrasena de administrador que acabas de poner.'");
 
             File.WriteAllText(temporal, guion.ToString(), new UTF8Encoding(false));
+            int codigo;
             try
             {
-                Correr(temporal, "", "Preparar la base");
+                codigo = Correr(temporal, "", "Preparar la base");
             }
             finally
             {
                 try { File.Delete(temporal); } catch (Exception) { }
             }
 
+            // Si la base no llego a montarse no hay nada a lo que apuntar, y
+            // dejar escrito un servidor que no existe es peor que no dejar nada.
+            if (codigo != 0) { return; }
+
             // Se dejan rellenos los datos del siguiente paso, para no tener que
-            // acordarse de nada.
+            // acordarse de nada. Aqui se trabaja por 127.0.0.1 aunque la maquina
+            // tenga nombre de red: preparar_bd.ps1 deja MySQL escuchando solo en
+            // local hasta que se ejecute deploy\abrir_bd_en_red.ps1.
             txtServidor.Text = "127.0.0.1";
             txtBase.Text = "teschi_otru";
             txtClaveBd.Text = txtNuevaClaveAdmin.Text;
+
+            // Lo que se anota en el paquete es el NOMBRE de esta maquina, que es
+            // lo unico que les sirve a los demas equipos. Un nombre aguanta que
+            // el DHCP le cambie la IP; la IP escrita a mano en 30 sitios, no.
+            string fallo = Guiones.GuardarServidor(raiz, Environment.MachineName);
+            txtSalida.Text += Environment.NewLine + Environment.NewLine + (fallo == null
+                ? "Este paquete queda apuntando a '" + Environment.MachineName + "'." + Environment.NewLine +
+                  "Copialo TAL CUAL a los demas equipos: alli la casilla Servidor ya sale rellena y" + Environment.NewLine +
+                  "nadie tiene que averiguar ninguna IP. Si el servidor se muda, cambia " + Guiones.ArchivoServidor + "." + Environment.NewLine +
+                  "Antes de configurar ninguna maquina, abre la base a la red:" + Environment.NewLine +
+                  "   deploy\\abrir_bd_en_red.ps1 -Contrasena '<la de digbit_equipo>'"
+                : "Aviso: no pude escribir " + Guiones.ArchivoServidor + " (" + fallo + ")." + Environment.NewLine +
+                  "En los demas equipos habra que escribir '" + Environment.MachineName + "' a mano en Servidor.");
         }
 
         private static string Comilla(string valor)
@@ -532,12 +598,12 @@ namespace DigBit.Instalador
             return Guiones.Comillas(valor);
         }
 
-        private void Correr(string guion, string argumentos, string que)
+        private int Correr(string guion, string argumentos, string que)
         {
             if (!File.Exists(guion))
             {
                 MessageBox.Show("No encuentro " + guion, que, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
+                return -1;
             }
 
             btnInstalar.Enabled = false;
@@ -570,6 +636,8 @@ namespace DigBit.Instalador
                 lblEstado.Text = que + " FALLO (codigo " + codigo + ").";
                 lblEstado.ForeColor = Color.Firebrick;
             }
+
+            return codigo;
         }
 
         /// <summary>

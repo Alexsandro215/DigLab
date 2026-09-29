@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -54,6 +54,117 @@ namespace DigBit.Instalador
         public static string Guion(string raiz, string nombre)
         {
             return Path.Combine(raiz, "deploy", nombre);
+        }
+
+        /// <summary>
+        /// Nombre del archivo donde el paquete se acuerda de a que equipo hay
+        /// que conectarse. Es el reemplazo del host que el DigBit viejo llevaba
+        /// quemado dentro de Conexion.cs ("localhost", y a correr): el equipo no
+        /// pregunta a donde va, lo sabe. La diferencia es que este valor se
+        /// escribe UNA vez, al preparar el servidor, en vez de compilarse dentro
+        /// del ejecutable, asi que se cambia sin recompilar nada.
+        /// </summary>
+        public const string ArchivoServidor = "servidor.config";
+
+        /// <summary>Tiene prioridad sobre el archivo. Para pruebas y casos raros.</summary>
+        public const string VariableServidor = "DIGBIT_SERVIDOR";
+
+        /// <summary>La carpeta de datos que monta preparar_bd.ps1.</summary>
+        private const string BaseLocal = @"C:\DigBitDB\data";
+
+        public static string RutaServidor(string raiz)
+        {
+            return raiz == null ? null : Path.Combine(raiz, ArchivoServidor);
+        }
+
+        /// <summary>
+        /// A que equipo se conecta este paquete, sin preguntarselo a nadie.
+        ///
+        /// El orden importa, y la base local va ANTES que servidor.config a
+        /// proposito: preparar_bd.ps1 deja MySQL escuchando solo en 127.0.0.1,
+        /// asi que en el equipo que hace de servidor la unica direccion que
+        /// funciona seguro es esa, aunque servidor.config diga su nombre de red
+        /// (que es el que necesitan las maquinas del laboratorio, no esta).
+        /// </summary>
+        /// <param name="origen">De donde salio el valor, para poder decirlo en pantalla.</param>
+        public static string ServidorPorDefecto(string raiz, out string origen)
+        {
+            string delEntorno = Environment.GetEnvironmentVariable(VariableServidor);
+            if (!string.IsNullOrWhiteSpace(delEntorno))
+            {
+                origen = "de la variable " + VariableServidor;
+                return delEntorno.Trim();
+            }
+
+            if (Directory.Exists(BaseLocal))
+            {
+                origen = "la base esta en ESTE equipo";
+                return "127.0.0.1";
+            }
+
+            string guardado = LeerServidor(raiz);
+            if (guardado != null)
+            {
+                origen = "de " + ArchivoServidor;
+                return guardado;
+            }
+
+            origen = "este paquete todavia no sabe donde esta la base";
+            return string.Empty;
+        }
+
+        /// <summary>Primera linea util de servidor.config, o null si no hay.</summary>
+        public static string LeerServidor(string raiz)
+        {
+            string ruta = RutaServidor(raiz);
+            if (ruta == null || !File.Exists(ruta)) { return null; }
+
+            try
+            {
+                foreach (string linea in File.ReadAllLines(ruta))
+                {
+                    string valor = linea.Trim();
+                    if (valor.Length > 0 && !valor.StartsWith("#")) { return valor; }
+                }
+            }
+            catch (IOException)
+            {
+                // El paquete vive en una memoria USB que igual acaban de quitar.
+                // No saber el servidor no es motivo para no dejar instalar: se
+                // escribe a mano en la casilla y ya esta.
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Deja escrito a que equipo apunta el paquete. Devuelve null si pudo, o
+        /// el motivo si no: falla si el paquete esta en un CD o en una memoria
+        /// protegida contra escritura, y eso NO tiene que parar una instalacion
+        /// que por lo demas va bien.
+        /// </summary>
+        public static string GuardarServidor(string raiz, string valor)
+        {
+            string ruta = RutaServidor(raiz);
+            if (ruta == null) { return "no se cual es la raiz del paquete"; }
+
+            try
+            {
+                File.WriteAllText(ruta,
+                    "# A que equipo se conectan los DigBit instalados desde ESTE paquete." + Environment.NewLine +
+                    "# Lo escribe el instalador al preparar el servidor. Si el servidor se" + Environment.NewLine +
+                    "# muda, cambia la linea de abajo y los siguientes equipos lo cogen solos." + Environment.NewLine +
+                    valor + Environment.NewLine,
+                    new UTF8Encoding(false));
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
         }
 
         /// <summary>Numeros de serie de las memorias USB conectadas.</summary>
