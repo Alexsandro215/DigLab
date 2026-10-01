@@ -89,6 +89,24 @@ namespace DigBit.conexion
             }
         }
 
+        /// <summary>
+        /// La sesion de una franja en una fecha concreta (0 si ese dia nadie ha
+        /// registrado todavia). Es la de la clase de hoy del panel del profesor:
+        /// sin la fecha saldria la de la semana pasada.
+        /// </summary>
+        public int ObtenerIdSesionDeFranja(int idFranja, DateTime fecha)
+        {
+            using (MySqlConnection conexion = mconexion.GetConexion())
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT idcodigos_accesos FROM codigos_accesos WHERE horarios_idhorarios = @Id AND fecha = @Fecha LIMIT 1", conexion))
+            {
+                comando.Parameters.AddWithValue("@Id", idFranja);
+                comando.Parameters.AddWithValue("@Fecha", fecha.Date);
+                object resultado = comando.ExecuteScalar();
+                return resultado == null ? 0 : Convert.ToInt32(resultado);
+            }
+        }
+
         /// <summary>La sesion de una excepcion 'extra' (0 si nadie la ha usado todavia).</summary>
         public int ObtenerIdSesionDeExcepcion(int idExcepcion)
         {
@@ -159,8 +177,8 @@ namespace DigBit.conexion
         /// </summary>
         private const string SinNovedad = "('', 'Ninguno', 'EP', 'Equipo Propio')";
 
-        /// <summary>Condicion SQL: la bitacora rb reporta alguna falla o comentario.</summary>
-        private const string CondicionConFalla =
+        /// <summary>Condicion SQL: la bitacora rb reporta alguna falla o comentario. La usa tambien el panel del administrador.</summary>
+        internal const string CondicionConFalla =
             "TRIM(COALESCE(rb.falla_red, '')) NOT IN " + SinNovedad +
             " OR TRIM(COALESCE(rb.comentarios_red, '')) NOT IN " + SinNovedad +
             " OR TRIM(COALESCE(rb.falla_hardware, '')) NOT IN " + SinNovedad +
@@ -171,7 +189,8 @@ namespace DigBit.conexion
         /// <summary>
         /// Alumnos registrados en una sesion, para la tabla y el PDF. Incluye
         /// con_falla: 1 si esa bitacora reporta alguna falla o comentario, para
-        /// resaltarla frente a las que no reportaron nada.
+        /// resaltarla frente a las que no reportaron nada; y hora_registro ("HH:mm"
+        /// de su primer registro, o "—" si es de antes de guardarse la hora).
         /// </summary>
         public DataTable consultaRegistroSesion(int idSesion)
         {
@@ -184,6 +203,7 @@ namespace DigBit.conexion
                        COALESCE(rb.falla_hardware, '') AS falla_hardware, COALESCE(rb.comentarios_hardware, '') AS comentarios_hardware,
                        COALESCE(rb.falla_software, '') AS falla_software, COALESCE(rb.comentarios_software, '') AS comentarios_software,
                        rb.registrado_sin_conexion AS sin_conexion,
+                       COALESCE(DATE_FORMAT(rb.registrado_en, '%H:%i'), '') AS hora_registro,
                        CASE WHEN " + CondicionConFalla + @" THEN 1 ELSE 0 END AS con_falla
                 FROM registros_bitacoras rb
                 INNER JOIN usuarios u ON rb.fk_usuario = u.idusuarios
@@ -204,6 +224,12 @@ namespace DigBit.conexion
                 // se deja ver en tablas y PDF junto al nombre.
                 string marca = Convert.ToInt32(fila["sin_conexion"]) == 1 ? " [sin conexion]" : "";
                 fila["nombre_completo"] = fila["nombre"] + " " + fila["apellido_paterno"] + " " + fila["apellido_materno"] + marca;
+
+                // Las bitacoras en linea de antes de guardar la hora no la tienen.
+                if (string.IsNullOrEmpty(fila["hora_registro"].ToString()))
+                {
+                    fila["hora_registro"] = "—";
+                }
             }
 
             return tabla;
@@ -268,9 +294,10 @@ namespace DigBit.conexion
         /// Sesiones (una clase en una fecha) para la pantalla del administrador:
         /// una fila por sesion con cuantos alumnos registraron, cuantos
         /// reportaron alguna falla y cuantos entraron sin conexion. El detalle de
-        /// cada sesion es consultaRegistroSesion.
+        /// cada sesion es consultaRegistroSesion. Con un profesor (su id), solo
+        /// las suyas: es su "Mis bitacoras".
         /// </summary>
-        public DataTable ObtenerSesionesAdministrador()
+        public DataTable ObtenerSesionesAdministrador(int idProfesor = 0)
         {
             DataTable tabla = new DataTable();
             using (MySqlConnection conexion = mconexion.GetConexion())
@@ -294,12 +321,14 @@ namespace DigBit.conexion
                 LEFT JOIN grupos g         ON g.idgrupos = ca.grupos_idgrupos
                 LEFT JOIN laboratorios l   ON l.idlaboratorios = ca.laboratorios_idlaboratorios
                 LEFT JOIN registros_bitacoras rb ON rb.fk_codigo_accesos = ca.idcodigos_accesos
+                WHERE @Profesor = 0 OR ca.usuarios_idusuarios = @Profesor
                 GROUP BY ca.idcodigos_accesos, ca.fecha, ca.hora_registro, ca.hora_entrada, ca.hora_salida, ca.codigo,
                          m.nombre_materia, g.nombre_grupo, prof.numero_identificador,
                          prof.nombre, prof.apellido_paterno, prof.apellido_materno, l.nombre_laboratorio
                 ORDER BY fecha DESC, ca.hora_entrada DESC, ca.idcodigos_accesos DESC", conexion))
             using (MySqlDataAdapter adapter = new MySqlDataAdapter(comando))
             {
+                comando.Parameters.AddWithValue("@Profesor", idProfesor);
                 adapter.Fill(tabla);
             }
 
@@ -316,6 +345,56 @@ namespace DigBit.conexion
 
         /// <summary>Las tres areas que puede reportar el alumno, en el orden en que se muestran.</summary>
         public static readonly string[] AreasDeFalla = { "red", "hardware", "software" };
+
+        /// <summary>
+        /// Las fallas de la lista de cada area, las que elige el alumno al
+        /// registrar (sin "Ninguno" ni "Otro", que pone cada pantalla). Lo que se
+        /// guarda es este texto: el administrador lo ve tal cual.
+        /// </summary>
+        public static string[] OpcionesDeFalla(string area)
+        {
+            switch (area)
+            {
+                case "red":
+                    return new[] { "Sin cable de red", "Con cable de red sin internet", "Desconectado de cable de red" };
+                case "hardware":
+                    return new[] { "No sirve el teclado", "No sirve el mouse", "Monitor no enciende", "Computadora no enciende" };
+                case "software":
+                    return new[] { "Muy lenta", "Se apaga sola", "Pantallazo azul", "Programas faltantes" };
+                default:
+                    return new string[0];
+            }
+        }
+
+        /// <summary>
+        /// El id de un usuario por su matricula; 0 si no existe. Sin avisos: un
+        /// error de conexion sube, para que la pantalla del alumno pase a la copia
+        /// sin conexion (idusuario lo tapaba con un mensaje y lo dejaba atascado).
+        /// </summary>
+        public int IdDeUsuario(string numeroIdentificador)
+        {
+            using (MySqlConnection conexion = mconexion.GetConexion())
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT idusuarios FROM usuarios WHERE numero_identificador = @Numero", conexion))
+            {
+                comando.Parameters.AddWithValue("@Numero", numeroIdentificador ?? "");
+                object resultado = comando.ExecuteScalar();
+                return resultado == null || resultado == DBNull.Value ? 0 : Convert.ToInt32(resultado);
+            }
+        }
+
+        /// <summary>"Nombre Apellidos" de un usuario por su matricula o numero de empleado; null si no existe. Sin avisos: el error sube.</summary>
+        public string NombreDeUsuario(string numeroIdentificador)
+        {
+            using (MySqlConnection conexion = mconexion.GetConexion())
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT CONCAT_WS(' ', nombre, apellido_paterno, apellido_materno) FROM usuarios WHERE numero_identificador = @Numero", conexion))
+            {
+                comando.Parameters.AddWithValue("@Numero", numeroIdentificador ?? "");
+                object resultado = comando.ExecuteScalar();
+                return resultado == null || resultado == DBNull.Value ? null : resultado.ToString();
+            }
+        }
 
         /// <summary>
         /// True si ese valor es algo que el alumno reporto. Mismo criterio que la
@@ -439,10 +518,21 @@ namespace DigBit.conexion
                         idUsuario = Convert.ToInt32(resultado);
                     }
 
+                    // Solo la primera bitacora del alumno en la sesion cuenta, y con ella
+                    // la hora de registro (registrado_en, reloj del servidor). Si vuelve
+                    // a registrarse (se fue la luz, se reinicio el equipo) no se inserta
+                    // otra ni se cambia la hora: con clases seguidas del mismo profesor,
+                    // la hora es lo que dice cuando llego. No basta el UNIQUE
+                    // (fk_codigo_accesos, fk_usuario): la base del TESCHI no puede
+                    // llevarlo por sus duplicados historicos.
                     using (MySqlCommand cmdInsertar = new MySqlCommand(@"
                         INSERT INTO registros_bitacoras
-                            (fk_codigo_accesos, fk_usuario, numero_computadora, falla_red, comentarios_red, falla_hardware, comentarios_hardware, falla_software, comentarios_software)
-                        VALUES (@IdCodigoAcceso, @codigo_usuario, @computadora, @fallared, @comentariored, @fallahardware, @comentariohardware, @fallasoftware, @comentariosoftware)", conexion))
+                            (fk_codigo_accesos, fk_usuario, numero_computadora, falla_red, comentarios_red, falla_hardware, comentarios_hardware,
+                             falla_software, comentarios_software, registrado_en)
+                        SELECT @IdCodigoAcceso, @codigo_usuario, @computadora, @fallared, @comentariored, @fallahardware, @comentariohardware,
+                               @fallasoftware, @comentariosoftware, NOW()
+                        FROM DUAL
+                        WHERE NOT EXISTS (SELECT 1 FROM registros_bitacoras WHERE fk_codigo_accesos = @IdCodigoAcceso AND fk_usuario = @codigo_usuario)", conexion))
                     {
                         cmdInsertar.Parameters.AddWithValue("@IdCodigoAcceso", idSesion);
                         cmdInsertar.Parameters.AddWithValue("@codigo_usuario", idUsuario);
@@ -454,12 +544,15 @@ namespace DigBit.conexion
                         cmdInsertar.Parameters.AddWithValue("@fallasoftware", fallasotware);
                         cmdInsertar.Parameters.AddWithValue("@comentariosoftware", comentariosoftware);
 
-                        if (cmdInsertar.ExecuteNonQuery() <= 0)
+                        if (cmdInsertar.ExecuteNonQuery() == 0)
                         {
-                            throw new Exception("No se pudo insertar el registro en la bitacora.");
+                            // Ya tenia una: la primera se queda como estaba, con su hora.
+                            Log.Info("Bitacora de " + matricula + " no guardada: ya tenia una en la sesion " + idSesion + ".");
+                            MessageBox.Show("Ya registraste tu bitacora con este codigo.", "Registro duplicado", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            return false;
                         }
 
-                        MessageBox.Show("Se inserto de manera exitosa el registro", "Exito", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        // Sin mensaje: la pantalla del alumno confirma el registro.
                         return true;
                     }
                 }

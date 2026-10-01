@@ -13,10 +13,10 @@
       1. Respalda la base entera con mysqldump y comprueba que el respaldo sirve.
       2. Pasa db/00_revision_previa.sql, que no cambia nada, y SE DETIENE si
          alguna comprobacion dice BLOQUEA.
-      3. Aplica 03, 04, 05 y 06 en orden, parando en el primer error.
+      3. Aplica 03, 04, 05, 06, 08 y 09 en orden, parando en el primer error.
       4. Vuelve a pasar la revision para enseñar como quedo.
 
-    Las cuatro migraciones son repetibles: si una ya estaba aplicada lo dice y
+    Las seis migraciones son repetibles: si una ya estaba aplicada lo dice y
     sigue. Se pueden volver a pasar sin romper nada.
 
 .EXAMPLE
@@ -63,7 +63,9 @@ $migraciones = @(
     "03_migracion_fase2.sql",
     "04_migracion_horarios.sql",
     "05_migracion_sin_conexion.sql",
-    "06_migracion_contrasenas.sql"
+    "06_migracion_contrasenas.sql",
+    "08_migracion_bajas.sql",
+    "09_codigo_por_profesor.sql"
 ) | ForEach-Object { Join-Path $carpetaDb $_ }
 
 # Repone la clave foranea que la 04 quita un momento, si una migracion se

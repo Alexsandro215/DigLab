@@ -34,6 +34,7 @@ namespace DigBit
         private readonly string descripcionClase;
         private readonly string descripcionHorario;
         private readonly string nombreProfesor;
+        private readonly DateTime? fecha;
 
         private int idSesion;
         private VentanaCodigo ventana;
@@ -55,15 +56,18 @@ namespace DigBit
         /// <summary>
         /// Se recibe la franja o la excepcion, no la sesion: si al abrir todavia
         /// nadie ha registrado, la ventana la vuelve a buscar en cada refresco y
-        /// se llena sola cuando el primer alumno entra.
+        /// se llena sola cuando el primer alumno entra. Con fecha, la sesion de la
+        /// franja ese dia (la clase de hoy); sin ella, la mas reciente.
         /// </summary>
-        public BitacoraSesion(int? idFranja, int? idExcepcion, string descripcionClase, string descripcionHorario, string nombreProfesor)
+        public BitacoraSesion(int? idFranja, int? idExcepcion, string descripcionClase, string descripcionHorario, string nombreProfesor,
+            DateTime? fecha = null)
         {
             this.idFranja = idFranja;
             this.idExcepcion = idExcepcion;
             this.descripcionClase = descripcionClase ?? "";
             this.descripcionHorario = descripcionHorario ?? "";
             this.nombreProfesor = nombreProfesor ?? "";
+            this.fecha = fecha;
 
             InicializarComponentes();
             Refrescar();
@@ -247,7 +251,7 @@ namespace DigBit
                     // Aun no hay sesion: se busca otra vez, por si el primer
                     // alumno acaba de entrar.
                     idSesion = idFranja.HasValue
-                        ? consultas.ObtenerIdSesionDeFranja(idFranja.Value)
+                        ? (fecha.HasValue ? consultas.ObtenerIdSesionDeFranja(idFranja.Value, fecha.Value) : consultas.ObtenerIdSesionDeFranja(idFranja.Value))
                         : idExcepcion.HasValue ? consultas.ObtenerIdSesionDeExcepcion(idExcepcion.Value) : 0;
 
                     if (idSesion != 0)
@@ -320,11 +324,16 @@ namespace DigBit
             dgvAlumnos.Columns["comentarios_hardware"].HeaderText = "Hardware";
             dgvAlumnos.Columns["comentarios_software"].HeaderText = "Software";
 
+            // La hora de su primer registro: con clases seguidas, dice cuando llego.
+            dgvAlumnos.Columns["hora_registro"].HeaderText = "Hora";
+
             dgvAlumnos.Columns["nombre_completo"].DisplayIndex = 0;
             dgvAlumnos.Columns["numero_identificador"].DisplayIndex = 1;
-            dgvAlumnos.Columns["numero_computadora"].DisplayIndex = 2;
+            dgvAlumnos.Columns["hora_registro"].DisplayIndex = 2;
+            dgvAlumnos.Columns["numero_computadora"].DisplayIndex = 3;
             dgvAlumnos.Columns["nombre_completo"].FillWeight = 26;
             dgvAlumnos.Columns["numero_identificador"].FillWeight = 12;
+            dgvAlumnos.Columns["hora_registro"].FillWeight = 7;
             dgvAlumnos.Columns["numero_computadora"].FillWeight = 10;
             foreach (string area in Consultas.AreasDeFalla)
             {
@@ -491,55 +500,8 @@ namespace DigBit
                     XMLWorkerHelper.GetInstance().ParseXHtml(writer, pdfDoc, sr);
                 }
 
-                AgregarTablaAlPDF(pdfDoc, consultas.consultaRegistroSesion(idSesion));
+                TablaAlumnosPdf.Agregar(pdfDoc, consultas.consultaRegistroSesion(idSesion));
                 pdfDoc.Close();
-            }
-        }
-
-        private void AgregarTablaAlPDF(Document pdfDoc, DataTable detalles)
-        {
-            PdfPTable pdfTable = new PdfPTable(4);
-            pdfTable.WidthPercentage = 100;
-            pdfTable.SetWidths(new float[] { 8f, 28f, 20f, 44f });
-
-            foreach (string encabezado in new[] { "No.", "Nombre Completo", "Numero de Computadora", "Comentarios" })
-            {
-                pdfTable.AddCell(new PdfPCell(new Phrase(encabezado)) { BackgroundColor = BaseColor.LIGHT_GRAY, Padding = 4f });
-            }
-
-            BaseColor suave = new BaseColor(ColorConFalla.R, ColorConFalla.G, ColorConFalla.B);
-            BaseColor fuerte = new BaseColor(ColorFallaCelda.R, ColorFallaCelda.G, ColorFallaCelda.B);
-            iTextSharp.text.Font negrita = FontFactory.GetFont(FontFactory.HELVETICA_BOLD, 10f);
-            bool hayFallas = false;
-
-            int numeroFila = 1;
-            foreach (DataRow row in detalles.Rows)
-            {
-                bool conFalla = Consultas.ConFalla(row);
-                hayFallas |= conFalla;
-
-                string[] celdas = { numeroFila.ToString(), row["nombre_completo"].ToString(), row["numero_computadora"].ToString(), Consultas.DescribirFallas(row) };
-                for (int i = 0; i < celdas.Length; i++)
-                {
-                    bool esLaFalla = conFalla && i == celdas.Length - 1;
-                    PdfPCell celda = new PdfPCell(new Phrase(celdas[i], esLaFalla ? negrita : null)) { Padding = 4f };
-                    if (conFalla)
-                    {
-                        celda.BackgroundColor = esLaFalla ? fuerte : suave;
-                    }
-
-                    pdfTable.AddCell(celda);
-                }
-
-                numeroFila++;
-            }
-
-            pdfDoc.Add(pdfTable);
-
-            if (hayFallas)
-            {
-                pdfDoc.Add(new Paragraph("Celda naranja intensa: la falla o el comentario que reporto el alumno.",
-                    FontFactory.GetFont(FontFactory.HELVETICA, 8f)) { SpacingBefore = 6f });
             }
         }
 

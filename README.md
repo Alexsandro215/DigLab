@@ -63,6 +63,8 @@ mysql -u root -p < db\03_migracion_fase2.sql
 mysql -u root -p < db\04_migracion_horarios.sql
 mysql -u root -p < db\05_migracion_sin_conexion.sql
 mysql -u root -p < db\06_migracion_contrasenas.sql
+mysql -u root -p < db\08_migracion_bajas.sql
+mysql -u root -p < db\09_codigo_por_profesor.sql
 ```
 
 Usuarios que deja el seed:
@@ -595,6 +597,8 @@ db/
   06_migracion_contrasenas.sql    Para una base que ya existía: ensancha password para PBKDF2 y mide la migración
   00_revision_previa.sql       Antes de migrar: dice qué va a fallar, sin cambiar nada
   07_usuarios_minimos.sql      Los dos usuarios de MySQL con permisos mínimos (equipos y administrador)
+  08_migracion_bajas.sql       Para una base que ya existía: dar de baja usuarios y desactivar laboratorios sin borrar su historial
+  09_codigo_por_profesor.sql   Para una base que ya existía: un código por profesor para todas sus clases
 deploy/
   instalar_vigilante.ps1       Instala/quita el servicio DigBit.Vigilante (como administrador)
   probar_vigilante.ps1         Escenarios del vigilante en simulación, sin base de datos
@@ -635,8 +639,12 @@ DigBit/
     HorariosDatos.cs           Clases, horario por laboratorio, excepciones, agenda y resolución del código
     CacheHorario.cs            Copia local del horario del laboratorio y resolución del código sin servidor
     ColaBitacoras.cs           Cola de bitácoras registradas sin servidor y su subida
-    InsercionDatos.cs          Inserciones (usuarios, laboratorios, grupos, códigos)
-    Borrar.cs                  Eliminación de laboratorios
+    InsercionDatos.cs          Alta de usuarios heredada (las secciones nuevas usan los *Datos)
+    AlumnosDatos.cs, ProfesoresDatos.cs, LaboratoriosDatos.cs   Lo que leen y escriben las secciones del administrador
+    UsuariosDatos.cs           Lo común a alumnos y profesores: alta, edición, contraseña, baja
+    CatalogosDatos.cs          Carreras, semestres y grupos para los diálogos
+    Esquema.cs                 Qué migraciones tiene la base (08, 09), para no fallar si faltan
+    ReglasCodigo.cs            Qué clase abre el código de un profesor en este laboratorio a esta hora
     Codigo_Gemerador.cs        Generador de códigos aleatorios
     Datos_User.cs              Sesión en memoria (usuario, código y ventana actuales)
     VentanaCodigo.cs           Inicio, fin y estado de un código
@@ -644,10 +652,17 @@ DigBit/
   RJControls/                  Controles personalizados (botones, cajas de texto, combos)
   AvisoSesion.cs, PantallaError.cs   Ventanas de aviso de fin de sesión y de error
   RegistroExitoso.cs           Equipo propio: registro guardado, apagar o volver al login
-  BitacoraMisClases.cs         Profesor: su horario semanal; al pulsar una clase abre su bitácora
-  BitacoraSesion.cs            Quién registró en una clase: tabla en vivo, cuenta atrás y PDF
+  PrincipalAdministrador.cs    Administrador: las cinco secciones y el panel de laboratorios en vivo
+  PanelLaboratoriosAhora.cs    El panel: hora anterior, actual y siguiente de cada laboratorio
+  PantallaAdmin.cs             Base de las listas del administrador y sus diálogos
+  AdministrarAlumnos.cs, AdministrarProfesores.cs, AdministrarLaboratorios.cs   Secciones del administrador
+  GestionBitacorasAdministrador.cs   Bitácoras: sesiones con filtros, quién registró y PDF (también "Mis bitácoras")
   AdministrarHorarios.cs       Administrador: clases, horario por laboratorio, excepciones
-  MisClasesProfesor.cs         Profesor: sus clases con código y su horario (solo lectura)
+  Profesor_Principal.cs, TarjetasProfesor.cs   Profesor: su código, su clase de ahora y sus secciones
+  BitacoraMisClases.cs         Profesor: "Mi horario"; al pulsar una clase abre su bitácora
+  BitacoraSesion.cs            Quién registró en una clase: tabla en vivo, cuenta atrás y PDF
+  TablaAlumnosPdf.cs           La tabla de alumnos de los PDF de bitácoras
+  Alumno_Principal.cs          Alumno: el código y cómo está el equipo, en dos pasos
   *.cs / *.Designer.cs / *.resx   Formularios WinForms
   img/, Resources/             Imágenes y plantilla HTML del PDF
 DigBit.Vigilante/              Servicio de Windows (LocalSystem): cierra la sesión a la hora de salida
@@ -663,7 +678,8 @@ Tablas de la base de datos:
 | `usuarios` | Alumnos y profesores, con la contraseña en PBKDF2 (ver sección 8) |
 | `carrera_grupo_semestre` | Carrera, grupo y semestre de cada alumno |
 | `carreras`, `grupos`, `semestres`, `materias`, `laboratorios` | Catálogos |
-| `codigos_accesos` | Códigos que genera el profesor por clase |
+| `clases`, `horarios`, `horario_excepciones` | Cada clase (profesor + grupo + materia), sus franjas por laboratorio y los cambios puntuales |
+| `codigos_accesos` | Una fila por sesión (una clase en una fecha) con el código que se usó, que es el de su profesor (`usuarios.codigo_clase`) |
 | `registros_bitacoras` | Bitácora que llena cada alumno con un código |
 
 ## Estado del proyecto y trabajo pendiente

@@ -28,6 +28,7 @@ namespace DigBit.conexion
             {
                 string almacenada = null;
                 int tipoUsuarioId = 0;
+                bool activo = true;
 
                 using (MySqlConnection conexion = mconexion.GetConexion())
                 {
@@ -37,8 +38,9 @@ namespace DigBit.conexion
                         return false;
                     }
 
+                    string columnaActivo = Esquema.TieneBajas(conexion) ? "activo" : "1 AS activo";
                     using (MySqlCommand consulta = new MySqlCommand(
-                        "SELECT fk_tipo_usuario, password FROM usuarios WHERE numero_identificador = @NumeroIdentificador", conexion))
+                        "SELECT fk_tipo_usuario, password, " + columnaActivo + " FROM usuarios WHERE numero_identificador = @NumeroIdentificador", conexion))
                     {
                         consulta.Parameters.AddWithValue("@NumeroIdentificador", numeroIdentificador);
 
@@ -51,6 +53,7 @@ namespace DigBit.conexion
                             {
                                 tipoUsuarioId = (int)Convert.ToInt64(lector["fk_tipo_usuario"]);
                                 almacenada = lector[1] == DBNull.Value ? null : lector[1].ToString();
+                                activo = Convert.ToInt32(lector["activo"]) == 1;
                             }
                         }
                     }
@@ -62,6 +65,15 @@ namespace DigBit.conexion
                         // existe" le regala a quien lo intente la lista de matriculas
                         // validas.
                         MessageBox.Show("Número de identificador o contraseña incorrectos. Por favor, verifica tus credenciales.", "Error de inicio de sesión", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return false;
+                    }
+
+                    // Solo despues de comprobar la contrasena: quien la sabe ya sabe
+                    // que su cuenta existe, y asi no se delata ninguna matricula.
+                    if (!activo)
+                    {
+                        Log.Info("Inicio de sesion rechazado: '" + numeroIdentificador + "' esta dado de baja.");
+                        MessageBox.Show("Tu cuenta está dada de baja. Si crees que es un error, acude con el encargado del laboratorio.", "Cuenta dada de baja", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         return false;
                     }
 
@@ -258,25 +270,6 @@ namespace DigBit.conexion
             return idCarrera;
         }
 
-        public List<string> ObtenerNombresCarreras()
-        {
-            List<string> nombresCarreras = new List<string>();
-
-            try
-            {
-                foreach (OpcionCombo carrera in ObtenerCarreras())
-                {
-                    nombresCarreras.Add(carrera.Texto);
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Error al obtener los nombres de las carreras: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-
-            return nombresCarreras;
-        }
-
         public List<OpcionCombo> ObtenerCarreras()
         {
             List<OpcionCombo> carreras = new List<OpcionCombo>();
@@ -451,35 +444,6 @@ namespace DigBit.conexion
             return nombreSemestre;
         }
 
-        public List<string> ObtenerNombresLaboratorio()
-        {
-            List<string> nombresLaboratorios = new List<string>();
-
-            try
-            {
-                using (MySqlConnection conexion = mconexion.GetConexion())
-                {
-                    string consulta = "SELECT nombre_laboratorio FROM laboratorios"; // Ajusta esto según el nombre de tu tabla
-                    using (MySqlCommand comando = new MySqlCommand(consulta, conexion))
-                    {
-                        using (MySqlDataReader reader = comando.ExecuteReader())
-                        {
-                            while (reader.Read())
-                            {
-                                nombresLaboratorios.Add(reader["nombre_laboratorio"].ToString());
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Error al obtener los nombres de las carreras: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-
-            return nombresLaboratorios;
-        }
-
         public List<string> ObtenerNombresLaboratorios()
         {
             List<string> nombresLaboratorios = new List<string>();
@@ -507,64 +471,6 @@ namespace DigBit.conexion
             }
 
             return nombresLaboratorios;
-        }
-
-
-        public bool ActualizarLabo(string nombreLaboratorio, string nuevoNombre)
-        {
-            try
-            {
-                string consultaID = "SELECT idlaboratorios FROM laboratorios WHERE nombre_laboratorio = @nombreLaboratorio";
-
-                using (MySqlConnection conexion = mconexion.GetConexion())
-                {
-                    int idLaboratorio = -1; // Variable para almacenar el ID del laboratorio
-                    using (MySqlCommand cmd = new MySqlCommand(consultaID, conexion))
-                    {
-                        cmd.Parameters.AddWithValue("@nombreLaboratorio", nombreLaboratorio);
-                        using (MySqlDataReader reader = cmd.ExecuteReader())
-                        {
-                            if (reader.Read())
-                            {
-                                idLaboratorio = reader.GetInt32("idlaboratorios");
-                            }
-                        }
-                    }
-
-                    if (idLaboratorio != -1)
-                    {
-                        string consulta = "UPDATE laboratorios SET nombre_laboratorio = @nuevoNombre WHERE idlaboratorios = @idLaboratorio";
-                        using (MySqlCommand cmd = new MySqlCommand(consulta, conexion))
-                        {
-                            cmd.Parameters.AddWithValue("@nuevoNombre", nuevoNombre);
-                            cmd.Parameters.AddWithValue("@idLaboratorio", idLaboratorio);
-                            int rowsAffected = cmd.ExecuteNonQuery();
-
-                            if (rowsAffected > 0)
-                            {
-                                MessageBox.Show("Registro actualizado exitosamente.", "Exito", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                                // Llama a CargarComboBox para actualizar los datos
-                                return true;
-                            }
-                            else
-                            {
-                                MessageBox.Show($"Error al actualizar el nombre del laboratorio", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                                return false;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine("No se encontró ningún laboratorio con ese nombre.");
-                        return false;
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine("Error: " + e.Message);
-                return false;
-            }
         }
 
         /// <summary>
@@ -1009,7 +915,8 @@ namespace DigBit.conexion
 
 
 
-        public bool ActualizarUsuario(string idUsuarios, string nombre, string apellidoPaterno, string apellidoMaterno, string correo, int idCarrera, int idGrupo, int idSemestre)
+        /// <summary>Sin grupo (null), el que tuviera el alumno se conserva: ya no se le pide.</summary>
+        public bool ActualizarUsuario(string idUsuarios, string nombre, string apellidoPaterno, string apellidoMaterno, string correo, int idCarrera, int? idGrupo, int idSemestre)
         {
             try
             {
@@ -1019,7 +926,7 @@ namespace DigBit.conexion
                                     SET nombre = @Nombre, apellido_paterno = @ApellidoPaterno, apellido_materno = @ApellidoMaterno, correo = @Correo
                                     WHERE idusuarios = @idUsuarios;
                                     UPDATE carrera_grupo_semestre
-                                    SET carreras_idcarreras = @IdCarrera, grupos_idgrupos = @IdGrupo, semestres_idsemestres = @IdSemestre
+                                    SET carreras_idcarreras = @IdCarrera, grupos_idgrupos = COALESCE(@IdGrupo, grupos_idgrupos), semestres_idsemestres = @IdSemestre
                                     WHERE usuarios_numero_identificador = @idUsuarios";
 
                     using (MySqlCommand comando = new MySqlCommand(consulta, conexion))
@@ -1030,7 +937,7 @@ namespace DigBit.conexion
                         comando.Parameters.AddWithValue("@ApellidoMaterno", apellidoMaterno);
                         comando.Parameters.AddWithValue("@Correo", correo);
                         comando.Parameters.AddWithValue("@IdCarrera", idCarrera);
-                        comando.Parameters.AddWithValue("@IdGrupo", idGrupo);
+                        comando.Parameters.AddWithValue("@IdGrupo", idGrupo.HasValue ? (object)idGrupo.Value : DBNull.Value);
                         comando.Parameters.AddWithValue("@IdSemestre", idSemestre);
 
                         int filasAfectadas = comando.ExecuteNonQuery();
@@ -1385,7 +1292,7 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
                         int filasAfectadas = comando.ExecuteNonQuery();
                         if (filasAfectadas > 0)
                         {
-                            MessageBox.Show("Bitacora actualizada correctamente.", "Exito", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            // Sin mensaje: la pantalla de Bitacoras lo confirma en su linea de estado.
                             return true;
                         }
 
@@ -1515,76 +1422,6 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
                 return false;
             }
         }
-        //Consulta para buscar los datos de identificacion de un usuario PARA DESPUES ELIMINARLO.
-        public (string Nombre, string ApellidoPaterno, string ApellidoMaterno) BuscarParaEliminar(string matricula)
-        {
-            try
-            {
-                using (MySqlConnection con = mconexion.GetConexion())
-                {
-                    string consulta = "SELECT nombre, apellido_paterno, apellido_materno FROM usuarios WHERE numero_identificador = @Matricula";
-
-                    using (MySqlCommand cmd = new MySqlCommand(consulta, con))
-                    {
-                        cmd.Parameters.AddWithValue("@Matricula", matricula);
-
-                        using (MySqlDataReader reader = cmd.ExecuteReader())
-                        {
-                            if (reader.Read())
-                            {
-                                string nombre = reader["nombre"].ToString();
-                                string apellidoPaterno = reader["apellido_paterno"].ToString();
-                                string apellidoMaterno = reader["apellido_materno"].ToString();
-
-                                return (nombre, apellidoPaterno, apellidoMaterno);
-                            }
-                            else
-                            {
-                                return (null, null, null);
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                // Manejo de excepciones (puedes loguear el error o lanzar una excepción personalizada)
-                throw new Exception("Ocurrió un error al buscar el usuario", ex);
-            }
-        }
-
-        //FUNCION PARA ELIMINAR UN USUARIO
-        public void EliminarUsuario(string matricula)
-        {
-            try
-            {
-                using (MySqlConnection con = mconexion.GetConexion())
-                {
-                    string consulta = "DELETE FROM usuarios WHERE numero_identificador = @Matricula";
-
-                    using (MySqlCommand cmd = new MySqlCommand(consulta, con))
-                    {
-                        cmd.Parameters.AddWithValue("@Matricula", matricula);
-                        int filasAfectadas = cmd.ExecuteNonQuery();
-
-                        if (filasAfectadas > 0)
-                        {
-                            MessageBox.Show("Usuario eliminado con exito.", "información", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                        }
-                        else
-                        {
-                            Console.WriteLine("No se encontró un usuario con la matrícula proporcionada.");
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                // Manejo de excepciones (puedes loguear el error o lanzar una excepción personalizada)
-                throw new Exception("Ocurrió un error al eliminar el usuario", ex);
-            }
-        }
-
         //Consulta para obtener el ID del usuario
         public string idusuario(string matricula)
         {

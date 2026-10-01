@@ -61,10 +61,13 @@ namespace DigBit
 
             lblCarrera.Visible = !esProfesor;
             lblSemestre.Visible = !esProfesor;
-            lblGrupo.Visible = !esProfesor;
             cbCarrera.Visible = !esProfesor;
             cbSemestre.Visible = !esProfesor;
-            cbGrupo.Visible = !esProfesor;
+
+            // El alumno ya no declara grupo: el codigo es del profesor y vale para
+            // todas sus clases. El que tuviera guardado se conserva.
+            lblGrupo.Visible = false;
+            cbGrupo.Visible = false;
         }
 
 
@@ -171,18 +174,15 @@ namespace DigBit
             else
             {
                 OpcionCombo carreraSeleccionada = cbCarrera.SelectedItem as OpcionCombo;
-                OpcionCombo grupoSeleccionado = cbGrupo.SelectedItem as OpcionCombo;
-
-                if (carreraSeleccionada == null || grupoSeleccionado == null)
+                if (carreraSeleccionada == null)
                 {
-                    MessageBox.Show("Selecciona una carrera y un grupo validos.", "Datos incompletos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show("Selecciona tu carrera.", "Datos incompletos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
 
                 int nuevaCarreraId = carreraSeleccionada.Id;
-                int nuevoGrupoId = grupoSeleccionado.Id;
                 int nuevoSemestreId = consultas.ObtenerIdSemestre(cbSemestre.Texts);
-                exito = consultas.ActualizarUsuario(idUsuario, nuevoNombre, nuevoApellidoPaterno, nuevoApellidoMaterno, nuevoCorreo, nuevaCarreraId, nuevoGrupoId, nuevoSemestreId);
+                exito = consultas.ActualizarUsuario(idUsuario, nuevoNombre, nuevoApellidoPaterno, nuevoApellidoMaterno, nuevoCorreo, nuevaCarreraId, null, nuevoSemestreId);
             }
 
             if (exito)

@@ -66,11 +66,35 @@ namespace DigBit
         private Button btnSesionExtra;
         private Button btnQuitarExtra;
 
-        public AdministrarHorarios()
+        // El ultimo laboratorio que se miro en esta sesion: al volver a abrir
+        // Horarios se sigue donde se quedo, en vez de en el primero de la lista.
+        private static int ultimoLaboratorio;
+
+        private readonly int laboratorioInicial;
+        private readonly ToolTip ayuda = new ToolTip();
+
+        public AdministrarHorarios() : this(0)
         {
+        }
+
+        /// <summary>Con un laboratorio (desde el panel del administrador), abre su horario semanal.</summary>
+        public AdministrarHorarios(int laboratorioInicial)
+        {
+            this.laboratorioInicial = laboratorioInicial;
             InicializarComponentes();
             CargarLaboratorios();
             CargarClases();
+            if (laboratorioInicial != 0)
+            {
+                tabs.SelectedTab = tabHorario;
+            }
+        }
+
+        /// <summary>Lleva la ventana ya abierta al horario semanal de ese laboratorio.</summary>
+        public void MostrarLaboratorio(int idLaboratorio)
+        {
+            tabs.SelectedTab = tabHorario;
+            SeleccionarPorId(cboLabHorario, idLaboratorio);
         }
 
         // =====================================================================
@@ -192,6 +216,12 @@ namespace DigBit
             AnclarPestanas();
         }
 
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            ayuda.Dispose();
+            base.OnFormClosed(e);
+        }
+
         private void AnclarPestanas()
         {
             foreach (TabPage pagina in new[] { tabClases, tabExcepciones })
@@ -219,7 +249,16 @@ namespace DigBit
             Label lblLab = EstiloHorarios.CrearEtiqueta("Laboratorio", new Point(12, 16));
 
             cboLabHorario = EstiloHorarios.CrearCombo(new Point(110, 12), 250);
-            cboLabHorario.SelectedIndexChanged += (s, e) => CargarFranjas();
+            cboLabHorario.SelectedIndexChanged += (s, e) =>
+            {
+                OpcionCombo elegido = cboLabHorario.SelectedItem as OpcionCombo;
+                if (elegido != null)
+                {
+                    ultimoLaboratorio = elegido.Id;
+                }
+
+                CargarFranjas();
+            };
 
             // Botones en la misma fila del selector: la cuadricula se queda con
             // todo el alto de la pestana.
@@ -235,15 +274,25 @@ namespace DigBit
             btnFranjaBorrar = EstiloHorarios.CrearBoton("Borrar", new Point(835, 8), new Size(105, 34));
             btnFranjaBorrar.Click += (s, e) => BorrarFranja();
 
+            // Una linea corta que cabe a cualquier ancho; la explicacion entera, al
+            // pasar el raton (antes era una sola linea que se cortaba a la derecha).
             lblLeyendaHorario = new Label
             {
-                AutoSize = true,
+                AutoSize = false,
+                AutoEllipsis = true,
                 Font = new DrawingFont("Century Gothic", 8.5F, FontStyle.Regular),
                 ForeColor = Color.Gray,
                 Location = new Point(12, 48),
-                Text = "Un cuadro por hora. Arrastra o usa Ctrl+clic para seleccionar cuadros (libres u ocupados, en uno o varios dias) y asignales una clase o aplica una excepcion. "
-                    + "Clic en una franja: sus opciones. El color es del maestro. Rayado naranja: sesion extra; rayado gris: franja cancelada (proximos 7 dias, hasta que pase su hora)."
+                Size = new Size(928, 18),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                Text = "Arrastra o usa Ctrl+clic para elegir cuadros; clic en una franja para sus opciones. "
+                    + "Color: el profesor. Rayado naranja: sesión extra. Rayado gris: cancelada."
             };
+            ayuda.SetToolTip(lblLeyendaHorario,
+                "Un cuadro por hora. Arrastra o usa Ctrl+clic para seleccionar cuadros (libres u ocupados, en uno o varios días)\n"
+                + "y asígnales una clase o aplica una excepción. Clic en una franja: sus opciones.\n"
+                + "El color es el del profesor. Rayado naranja: sesión extra; rayado gris: franja cancelada\n"
+                + "(próximos 7 días, hasta que pase su hora).");
 
             contenedorSemana = new Panel
             {
@@ -423,7 +472,18 @@ namespace DigBit
 
         private void CargarLaboratorios()
         {
-            List<OpcionCombo> laboratorios = consultas.ObtenerLaboratorios();
+            // Sin los desactivados: no se les asigna horario nuevo.
+            List<OpcionCombo> laboratorios;
+            try
+            {
+                laboratorios = datos.ObtenerLaboratoriosActivos();
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Horarios: leer laboratorios", ex);
+                MessageBox.Show("No se pudieron leer los laboratorios: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                laboratorios = new List<OpcionCombo>();
+            }
 
             cboLabHorario.Items.Clear();
             cboLabExcepciones.Items.Clear();
@@ -433,8 +493,11 @@ namespace DigBit
                 cboLabExcepciones.Items.Add(new OpcionCombo { Id = laboratorio.Id, Texto = laboratorio.Texto });
             }
 
-            // Si este equipo tiene laboratorio asignado se preselecciona; si no, el primero.
-            int preferido = LaboratorioEquipo.Resuelto ? LaboratorioEquipo.Id : 0;
+            // El que se pidio (desde el panel), el ultimo que se miro, el de este
+            // equipo si tiene laboratorio asignado, o el primero.
+            int preferido = laboratorioInicial != 0 ? laboratorioInicial
+                : ultimoLaboratorio != 0 ? ultimoLaboratorio
+                : LaboratorioEquipo.Resuelto ? LaboratorioEquipo.Id : 0;
             SeleccionarPorId(cboLabHorario, preferido);
             SeleccionarPorId(cboLabExcepciones, preferido);
         }
@@ -553,7 +616,7 @@ namespace DigBit
                 Color color = CuadriculaSemanal.ColorDeProfesor(clase.ProfesorId);
                 DataGridViewCell celdaProfesor = dgvClases.Rows[fila].Cells[3];
                 celdaProfesor.Style.BackColor = color;
-                celdaProfesor.Style.SelectionBackColor = ControlPaint.Dark(color, 0.12f);
+                celdaProfesor.Style.SelectionBackColor = EstiloHorarios.Oscurecer(color, 0.18f);
                 celdaProfesor.Style.SelectionForeColor = Color.Black;
 
                 if (!clase.Activa)
@@ -562,7 +625,8 @@ namespace DigBit
                 }
             }
 
-            lblClasesCantidad.Text = "Clases: " + clases.Count + " (el color es el del maestro, el mismo del horario)";
+            // Corto a proposito: a su derecha empiezan los botones.
+            lblClasesCantidad.Text = clases.Count + (clases.Count == 1 ? " clase" : " clases") + " (color: su profesor)";
             if (anterior != null)
             {
                 EstiloHorarios.SeleccionarFila(dgvClases, r => ((ClaseInfo)r.Tag).Id == anterior.Id);
@@ -1886,6 +1950,17 @@ namespace DigBit
             return grid;
         }
 
+        /// <summary>
+        /// Un poco mas oscuro (0.18 = 18 %). ControlPaint.Dark no sirve para esto:
+        /// con valores pequenos devuelve un tono casi del todo oscuro, y un rosa
+        /// pastel se volvia rojo intenso al seleccionar la fila.
+        /// </summary>
+        public static Color Oscurecer(Color color, float cuanto)
+        {
+            float factor = 1f - Math.Max(0f, Math.Min(1f, cuanto));
+            return Color.FromArgb(color.A, (int)(color.R * factor), (int)(color.G * factor), (int)(color.B * factor));
+        }
+
         public static void Pesos(DataGridView grid, params float[] pesos)
         {
             for (int i = 0; i < pesos.Length && i < grid.Columns.Count; i++)
@@ -2728,12 +2803,24 @@ namespace DigBit
         private Button btnGuardar;
         private Button btnCancelar;
 
+        // Desde db/09 el codigo es del profesor: aqui solo se ve y se cambia en Profesores.
+        private readonly bool codigoPorProfesor;
+        private LinkLabel lnkNuevoGrupo;
+
         public DialogoClase(HorariosDatos datos, Consultas consultas, ClaseInfo existente, int creadaPor)
         {
             this.datos = datos;
             this.consultas = consultas;
             this.existente = existente;
             this.creadaPor = creadaPor;
+            try
+            {
+                codigoPorProfesor = datos.UsaCodigoPorProfesor();
+            }
+            catch (Exception ex)
+            {
+                Log.Error("DialogoClase: saber si el codigo es por profesor", ex);
+            }
 
             InicializarComponentes();
             CargarDatos();
@@ -2756,7 +2843,18 @@ namespace DigBit
             cboProfesor = EstiloHorarios.CrearCombo(new Point(140, 62), 350);
 
             Label lblGrupo = EstiloHorarios.CrearEtiqueta("Grupo", new Point(24, 106));
-            cboGrupo = EstiloHorarios.CrearCombo(new Point(140, 102), 350);
+            cboGrupo = EstiloHorarios.CrearCombo(new Point(140, 102), 250);
+
+            // Los grupos son de las clases: si falta el de esta, se crea aqui mismo.
+            lnkNuevoGrupo = new LinkLabel
+            {
+                AutoSize = true,
+                Font = new DrawingFont("Century Gothic", 9F),
+                LinkColor = Color.DarkGreen,
+                Location = new Point(398, 107),
+                Text = "Nuevo grupo"
+            };
+            lnkNuevoGrupo.LinkClicked += (s, e) => CrearGrupo();
 
             Label lblMateria = EstiloHorarios.CrearEtiqueta("Materia", new Point(24, 146));
             cboMateria = EstiloHorarios.CrearCombo(new Point(140, 142), 350);
@@ -2769,6 +2867,24 @@ namespace DigBit
 
             btnProponer = EstiloHorarios.CrearBoton("Proponer otro", new Point(292, 178), new Size(140, 34));
             btnProponer.Click += (s, e) => ProponerCodigo();
+
+            Label lblNotaCodigo = null;
+            if (codigoPorProfesor)
+            {
+                txtCodigo.ReadOnly = true;
+                txtCodigo.TabStop = false;
+                btnProponer.Visible = false;
+                lblNotaCodigo = new Label
+                {
+                    AutoSize = false,
+                    Font = new DrawingFont("Century Gothic", 8.5F),
+                    ForeColor = Color.FromArgb(90, 90, 90),
+                    Location = new Point(292, 176),
+                    Size = new Size(210, 40),
+                    Text = "Es el del profesor: el mismo en todas sus clases. Se cambia en Profesores."
+                };
+                cboProfesor.SelectedIndexChanged += (s, e) => MostrarCodigoDelProfesor();
+            }
 
             Label lblDesde = EstiloHorarios.CrearEtiqueta("Vigente desde", new Point(24, 230));
             dtpDesde = new DateTimePicker
@@ -2797,7 +2913,9 @@ namespace DigBit
                 ForeColor = Color.Gray,
                 Location = new Point(24, 268),
                 Size = new Size(470, 50),
-                Text = "El codigo lo teclean los alumnos: identifica esta clase todo el semestre y solo entra en su laboratorio y su horario."
+                Text = codigoPorProfesor
+                    ? "El codigo es el del profesor y vale en todas sus clases, pero cada una solo en su laboratorio y a su hora."
+                    : "El codigo lo teclean los alumnos: identifica esta clase todo el semestre y solo entra en su laboratorio y su horario."
             };
 
             btnGuardar = EstiloHorarios.CrearBoton("Guardar", new Point(210, 336), new Size(135, 40));
@@ -2814,11 +2932,16 @@ namespace DigBit
             Controls.Add(cboProfesor);
             Controls.Add(lblGrupo);
             Controls.Add(cboGrupo);
+            Controls.Add(lnkNuevoGrupo);
             Controls.Add(lblMateria);
             Controls.Add(cboMateria);
             Controls.Add(lblCodigo);
             Controls.Add(txtCodigo);
             Controls.Add(btnProponer);
+            if (lblNotaCodigo != null)
+            {
+                Controls.Add(lblNotaCodigo);
+            }
             Controls.Add(lblDesde);
             Controls.Add(dtpDesde);
             Controls.Add(lblHasta);
@@ -2833,7 +2956,7 @@ namespace DigBit
             List<OpcionCombo> profesores;
             try
             {
-                profesores = datos.ObtenerProfesores();
+                profesores = datos.ObtenerProfesores(existente == null ? (int?)null : existente.ProfesorId);
             }
             catch (Exception ex)
             {
@@ -2848,7 +2971,15 @@ namespace DigBit
 
             if (existente == null)
             {
-                ProponerCodigo();
+                if (codigoPorProfesor)
+                {
+                    MostrarCodigoDelProfesor();
+                }
+                else
+                {
+                    ProponerCodigo();
+                }
+
                 return;
             }
 
@@ -2861,9 +2992,44 @@ namespace DigBit
                 // Con sesiones (y bitacoras) registradas, profesor, grupo y materia ya no se tocan.
                 cboProfesor.Enabled = false;
                 cboGrupo.Enabled = false;
+                lnkNuevoGrupo.Enabled = false;
                 cboMateria.Enabled = false;
                 lblAviso.ForeColor = Color.DarkGreen;
-                lblAviso.Text = "Esta clase ya tiene " + existente.Sesiones + " sesion(es) registrada(s): solo se pueden cambiar el codigo y la vigencia.";
+                lblAviso.Text = "Esta clase ya tiene " + existente.Sesiones + " sesion(es) registrada(s): solo se "
+                    + (codigoPorProfesor ? "puede cambiar la vigencia." : "pueden cambiar el codigo y la vigencia.");
+            }
+        }
+
+        /// <summary>El codigo del profesor elegido; "(nuevo)" si aun no tiene: se le asigna al guardar.</summary>
+        private void MostrarCodigoDelProfesor()
+        {
+            OpcionCombo profesor = cboProfesor.SelectedItem as OpcionCombo;
+            if (profesor == null)
+            {
+                txtCodigo.Text = "";
+                return;
+            }
+
+            try
+            {
+                string codigo = datos.CodigoDelProfesor(profesor.Id);
+                txtCodigo.Text = string.IsNullOrEmpty(codigo) ? "(nuevo)" : codigo;
+            }
+            catch (Exception ex)
+            {
+                Log.Error("DialogoClase: leer el codigo del profesor " + profesor.Id, ex);
+                txtCodigo.Text = "";
+            }
+        }
+
+        private void CrearGrupo()
+        {
+            using (DialogoGrupo dialogo = new DialogoGrupo(0))
+            {
+                if (dialogo.ShowDialog(this) == DialogResult.OK)
+                {
+                    EstiloHorarios.Rellenar(cboGrupo, consultas.ObtenerGrupos(), dialogo.IdGuardado);
+                }
             }
         }
 
@@ -2891,15 +3057,16 @@ namespace DigBit
                 return;
             }
 
-            string codigo = txtCodigo.Text.Trim();
-            if (codigo.Length == 0)
+            // Con un codigo por profesor el que se muestra es el suyo y lo pone HorariosDatos.
+            string codigo = codigoPorProfesor ? "" : txtCodigo.Text.Trim();
+            if (!codigoPorProfesor && codigo.Length == 0)
             {
                 MessageBox.Show("Escribe un código o pulsa 'Proponer otro'.", "Codigo requerido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 txtCodigo.Focus();
                 return;
             }
 
-            if (codigo.Any(char.IsWhiteSpace))
+            if (!codigoPorProfesor && codigo.Any(char.IsWhiteSpace))
             {
                 MessageBox.Show("El código no puede llevar espacios.", "Codigo no valido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 txtCodigo.Focus();
@@ -2914,7 +3081,7 @@ namespace DigBit
 
             try
             {
-                if (!datos.CodigoDisponible(codigo, existente == null ? (int?)null : existente.Id))
+                if (!codigoPorProfesor && !datos.CodigoDisponible(codigo, existente == null ? (int?)null : existente.Id))
                 {
                     MessageBox.Show("El código '" + codigo + "' ya está en uso por otra clase. Elige otro.", "Codigo repetido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     txtCodigo.Focus();

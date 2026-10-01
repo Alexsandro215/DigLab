@@ -10,8 +10,6 @@ namespace DigBit
     public partial class RegistroAlumnos : Form
     {
         // Declaración de variables
-        private Conexion mconexion;
-        private InsercionDatos insercionDatos;
         private Consultas consultas;
 
 
@@ -20,9 +18,23 @@ namespace DigBit
             InitializeComponent();
             consultas = new Consultas();
             CargarDatoscbCarrera();
-            LimpiarComboGrupo();
-            mconexion = new Conexion();
-            insercionDatos = new InsercionDatos();
+            QuitarGrupo();
+        }
+
+        /// <summary>
+        /// El alumno ya no declara grupo: el codigo es del profesor y vale para
+        /// todas sus clases. Se quita el combo (y su icono) y la contrasena y el
+        /// correo suben a su hueco.
+        /// </summary>
+        private void QuitarGrupo()
+        {
+            int hueco = txtPassword.Top - cbGrupo.Top;
+            cbGrupo.Visible = false;
+            pictureBox6.Visible = false;
+            foreach (Control control in new Control[] { pictureBox7, txtPassword, pictureBox8, rjTcorreo })
+            {
+                control.Top -= hueco;
+            }
         }
 
         // (No esta cableado en el Designer: el boton usa btnCancelar_Click_1.) Se
@@ -174,25 +186,45 @@ namespace DigBit
             string contraseña = txtPassword.Texts;
             string correo = rjTcorreo.Texts;
 
-            // Fase 6: el alumno se guarda con su carrera y grupo (antes se pedian y
-            // se tiraban). El grupo es lo que permite marcar en el informe a quien
-            // registra fuera de su clase.
+            // El alumno se guarda con su carrera; el grupo ya no se pide.
             OpcionCombo carrera = cbCarrera.SelectedItem as OpcionCombo;
-            OpcionCombo grupo = cbGrupo.SelectedItem as OpcionCombo;
-            if (carrera == null || grupo == null)
+            if (carrera == null)
             {
-                MessageBox.Show("Selecciona tu carrera y tu grupo.", "Datos incompletos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Selecciona tu carrera.", "Datos incompletos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
 
-            string error = insercionDatos.InsertarAlumno(nombre, apellidoPaterno, apellidoMaterno, matricula, contraseña, correo, carrera.Id, grupo.Id);
-            if (error != null)
+            // La misma regla que el inicio de sesion: si no, no podria entrar.
+            if (!System.Text.RegularExpressions.Regex.IsMatch(matricula.Trim(), "^[A-Za-z0-9]+$"))
             {
-                MessageBox.Show("No se pudo registrar al alumno: " + error, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("La matrícula solo puede tener letras y números, sin espacios.", "Matrícula no válida", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
 
-            return true;
+            try
+            {
+                new AlumnosDatos().Crear(new DatosAlumno
+                {
+                    Matricula = matricula.Trim(),
+                    Nombre = nombre.Trim(),
+                    ApellidoPaterno = apellidoPaterno.Trim(),
+                    ApellidoMaterno = apellidoMaterno.Trim(),
+                    Correo = correo.Trim(),
+                    CarreraId = carrera.Id
+                }, contraseña);
+                return true;
+            }
+            catch (ErrorDeDatos ex)
+            {
+                MessageBox.Show(ex.Message, "No se pudo registrar", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+            catch (Exception ex)
+            {
+                DigBit.Infraestructura.Log.Error("Registro de alumno desde el login", ex);
+                MessageBox.Show("No se pudo registrar al alumno: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return false;
+            }
         }
         private void btnRegistrar_Click(object sender, EventArgs e)
         {
@@ -252,43 +284,10 @@ namespace DigBit
             }
         }
 
-        private void CargarDatoscbGrupo(int idCarrera)
-        {
-            try
-            {
-                cbGrupo.Items.Clear();
-
-                foreach (OpcionCombo grupo in consultas.ObtenerGruposPorCarrera(idCarrera))
-                {
-                    cbGrupo.Items.Add(grupo);
-                }
-
-                cbGrupo.SelectedIndex = -1;
-                cbGrupo.Texts = "Grupo";
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Error al cargar los nombres del grupo: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-
-        private void LimpiarComboGrupo()
-        {
-            cbGrupo.Items.Clear();
-            cbGrupo.SelectedIndex = -1;
-            cbGrupo.Texts = "Grupo";
-        }
-
+        // Lo engancha el Designer. Antes cargaba los grupos de la carrera; el grupo
+        // ya no se pide.
         private void cbCarrera_OnSelectedIndexChanged(object sender, EventArgs e)
         {
-            OpcionCombo carreraSeleccionada = cbCarrera.SelectedItem as OpcionCombo;
-            if (carreraSeleccionada == null)
-            {
-                LimpiarComboGrupo();
-                return;
-            }
-
-            CargarDatoscbGrupo(carreraSeleccionada.Id);
         }
     }
 }

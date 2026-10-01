@@ -68,6 +68,10 @@ CREATE TABLE materias (
 CREATE TABLE laboratorios (
     idlaboratorios     INT         NOT NULL AUTO_INCREMENT,
     nombre_laboratorio VARCHAR(80) NOT NULL,
+    -- 0 = desactivado: no sale en el panel ni en Horarios, pero su historial se
+    -- conserva. Uno con historial se desactiva en vez de borrarse. En una base
+    -- ya existente se anade con db/08_migracion_bajas.sql.
+    activo             TINYINT(1)  NOT NULL DEFAULT 1,
     PRIMARY KEY (idlaboratorios),
     UNIQUE KEY uq_laboratorios_nombre (nombre_laboratorio)
 ) ENGINE=InnoDB;
@@ -95,8 +99,19 @@ CREATE TABLE usuarios (
     -- escrito en duro en Login.cs). No hay tabla de catalogo: el codigo nunca la
     -- consulta (ver AbrirPestanaSegunTipoUsuario).
     fk_tipo_usuario      TINYINT      NOT NULL,
+    -- 0 = dado de baja: no puede entrar, pero su historial se conserva y se le
+    -- puede reactivar. Se da de baja en vez de borrar porque las claves
+    -- foraneas borran en cascada sus bitacoras. En una base ya existente se
+    -- anade con db/08_migracion_bajas.sql.
+    activo               TINYINT(1)   NOT NULL DEFAULT 1,
+    baja_en              DATETIME     NULL,
+    -- Solo profesores: el codigo que teclean sus alumnos en el laboratorio, uno
+    -- para todas sus clases (se copia a clases.codigo). En una base ya
+    -- existente se anade con db/09_codigo_por_profesor.sql.
+    codigo_clase         VARCHAR(16)  NULL,
     PRIMARY KEY (idusuarios),
-    UNIQUE KEY uq_usuarios_numero_identificador (numero_identificador)
+    UNIQUE KEY uq_usuarios_numero_identificador (numero_identificador),
+    UNIQUE KEY uq_usuarios_codigo_clase (codigo_clase)
 ) ENGINE=InnoDB;
 
 -- Relacion alumno -> carrera / grupo / semestre.
@@ -137,8 +152,10 @@ CREATE TABLE clases (
     usuarios_idusuarios INT         NOT NULL,
     grupos_idgrupos     INT         NOT NULL,
     materias_id_materia INT         NOT NULL,
-    -- Lo propone la aplicacion (5 caracteres, CodigoGenerador) y el administrador
-    -- puede cambiarlo. Unico en toda la base, tambien entre semestres.
+    -- El codigo de su profesor (usuarios.codigo_clase): todas las clases de un
+    -- profesor lo comparten, por eso no es unico. Se busca la clase por codigo,
+    -- laboratorio y hora (HorariosDatos.ResolverCodigo). En una base ya
+    -- existente, db/09_codigo_por_profesor.sql.
     codigo              VARCHAR(16) NOT NULL,
     vigente_desde       DATE        NOT NULL,
     vigente_hasta       DATE        NOT NULL,
@@ -147,7 +164,7 @@ CREATE TABLE clases (
     creada_por          INT         NULL,
     creada_en           DATETIME    NOT NULL,
     PRIMARY KEY (idclases),
-    UNIQUE KEY uq_clases_codigo (codigo),
+    KEY ix_clases_codigo (codigo),
     KEY ix_clases_profesor (usuarios_idusuarios),
     KEY ix_clases_grupo (grupos_idgrupos),
     CONSTRAINT fk_clases_profesor
@@ -294,7 +311,11 @@ CREATE TABLE registros_bitacoras (
     -- Fase 4: 1 si el alumno registro sin servidor (entro solo con su matricula,
     -- sin contrasena, y la bitacora se subio despues desde la cola local).
     registrado_sin_conexion TINYINT(1) NOT NULL DEFAULT 0,
-    -- Momento real del registro segun el equipo (NULL si se registro en linea).
+    -- Cuando registro el alumno: reloj del servidor en linea, el del equipo sin
+    -- conexion. Es el de su PRIMER registro y no se actualiza nunca: si vuelve a
+    -- registrarse (se fue la luz, se reinicio el equipo) no entra otra bitacora.
+    -- Con clases seguidas del mismo profesor dice cuando llego. NULL en las
+    -- bitacoras en linea de antes del 2026-09-29, que no lo guardaban.
     registrado_en         DATETIME     NULL,
     PRIMARY KEY (idregistros_bitacoras),
     -- Un alumno registra UNA bitacora por codigo (por clase). Un segundo intento

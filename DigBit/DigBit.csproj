@@ -119,31 +119,9 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="actualizarLaboratorio.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="actualizarLaboratorio.Designer.cs">
-      <DependentUpon>actualizarLaboratorio.cs</DependentUpon>
-    </Compile>
     <Compile Include="Alumno_Principal.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="Alumno_Principal.Designer.cs">
-      <DependentUpon>Alumno_Principal.cs</DependentUpon>
-    </Compile>
-    <Compile Include="borrarlab.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="borrarlab.Designer.cs">
-      <DependentUpon>borrarlab.cs</DependentUpon>
-    </Compile>
-    <Compile Include="Buscar_Codigo_Alumno.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="Buscar_Codigo_Alumno.Designer.cs">
-      <DependentUpon>Buscar_Codigo_Alumno.cs</DependentUpon>
-    </Compile>
-    <Compile Include="conexion\Borrar.cs" />
     <Compile Include="conexion\Codigo_Gemerador.cs" />
     <Compile Include="conexion\Conexion.cs" />
     <Compile Include="conexion\Consultas.cs" />
@@ -154,6 +132,13 @@
     <Compile Include="conexion\Usuario.cs" />
     <Compile Include="conexion\VentanaCodigo.cs" />
     <Compile Include="conexion\HorariosDatos.cs" />
+    <Compile Include="conexion\AlumnosDatos.cs" />
+    <Compile Include="conexion\CatalogosDatos.cs" />
+    <Compile Include="conexion\ReglasCodigo.cs" />
+    <Compile Include="conexion\LaboratoriosDatos.cs" />
+    <Compile Include="conexion\ProfesoresDatos.cs" />
+    <Compile Include="conexion\UsuariosDatos.cs" />
+    <Compile Include="conexion\Esquema.cs" />
     <Compile Include="conexion\Consultas.Sesiones.cs" />
     <Compile Include="Infraestructura\LaboratorioEquipo.cs" />
     <Compile Include="Infraestructura\SinConexion.cs" />
@@ -166,9 +151,6 @@
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="AdministrarHorarios.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="MisClasesProfesor.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Infraestructura\AppContexto.cs" />
@@ -188,56 +170,17 @@
     <Compile Include="RegistroExitoso.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="creargrupo.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="creargrupo.Designer.cs">
-      <DependentUpon>creargrupo.cs</DependentUpon>
-    </Compile>
-    <Compile Include="editarLab.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="editarLab.Designer.cs">
-      <DependentUpon>editarLab.cs</DependentUpon>
-    </Compile>
     <Compile Include="editar_Perfil.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="editar_Perfil.Designer.cs">
       <DependentUpon>editar_Perfil.cs</DependentUpon>
     </Compile>
-    <Compile Include="EliminarUser.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="EliminarUser.Designer.cs">
-      <DependentUpon>EliminarUser.cs</DependentUpon>
-    </Compile>
     <Compile Include="GestionBitacorasAdministrador.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="HistorialCodigosProfesor.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="ingresar.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="EditarBitacoraAdministrador.cs">
       <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="ingresar.Designer.cs">
-      <DependentUpon>ingresar.cs</DependentUpon>
-    </Compile>
-    <Compile Include="IngresarNuevoGrupo.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="IngresarNuevoGrupo.Designer.cs">
-      <DependentUpon>IngresarNuevoGrupo.cs</DependentUpon>
-    </Compile>
-    <Compile Include="IngresarPregunta.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="IngresarPregunta.Designer.cs">
-      <DependentUpon>IngresarPregunta.cs</DependentUpon>
     </Compile>
     <Compile Include="Login.cs">
       <SubType>Form</SubType>
@@ -245,23 +188,28 @@
     <Compile Include="Login.designer.cs">
       <DependentUpon>Login.cs</DependentUpon>
     </Compile>
-    <Compile Include="pregunta_s.cs">
+    <Compile Include="AdministrarAlumnos.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="pregunta_s.Designer.cs">
-      <DependentUpon>pregunta_s.cs</DependentUpon>
+    <Compile Include="AdministrarLaboratorios.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="AdministrarProfesores.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PantallaAdmin.cs" />
+    <Compile Include="TablaAlumnosPdf.cs" />
+    <Compile Include="PanelLaboratoriosAhora.cs">
+      <SubType>Component</SubType>
     </Compile>
     <Compile Include="PrincipalAdministrador.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="PrincipalAdministrador.Designer.cs">
-      <DependentUpon>PrincipalAdministrador.cs</DependentUpon>
-    </Compile>
     <Compile Include="Profesor_Principal.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="Profesor_Principal.Designer.cs">
-      <DependentUpon>Profesor_Principal.cs</DependentUpon>
+    <Compile Include="TarjetasProfesor.cs">
+      <SubType>Component</SubType>
     </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
@@ -276,18 +224,6 @@
     </Compile>
     <Compile Include="RegistroAlumnos.designer.cs">
       <DependentUpon>RegistroAlumnos.cs</DependentUpon>
-    </Compile>
-    <Compile Include="RegistroProfesores.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="RegistroProfesores.Designer.cs">
-      <DependentUpon>RegistroProfesores.cs</DependentUpon>
-    </Compile>
-    <Compile Include="Registro_Bitacora.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="Registro_Bitacora.Designer.cs">
-      <DependentUpon>Registro_Bitacora.cs</DependentUpon>
     </Compile>
     <Compile Include="RJControls\Btnradius.cs">
       <SubType>Component</SubType>
@@ -311,50 +247,14 @@
     <Compile Include="RJControls\RJTextbox.Designer.cs">
       <DependentUpon>RJTextbox.cs</DependentUpon>
     </Compile>
-    <EmbeddedResource Include="actualizarLaboratorio.resx">
-      <DependentUpon>actualizarLaboratorio.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="Alumno_Principal.resx">
-      <DependentUpon>Alumno_Principal.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="borrarlab.resx">
-      <DependentUpon>borrarlab.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="Buscar_Codigo_Alumno.resx">
-      <DependentUpon>Buscar_Codigo_Alumno.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="creargrupo.resx">
-      <DependentUpon>creargrupo.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="editarLab.resx">
-      <DependentUpon>editarLab.cs</DependentUpon>
-    </EmbeddedResource>
     <EmbeddedResource Include="editar_Perfil.resx">
       <DependentUpon>editar_Perfil.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="EliminarUser.resx">
-      <DependentUpon>EliminarUser.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="ingresar.resx">
-      <DependentUpon>ingresar.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="IngresarNuevoGrupo.resx">
-      <DependentUpon>IngresarNuevoGrupo.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="IngresarPregunta.resx">
-      <DependentUpon>IngresarPregunta.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Login.resx">
       <DependentUpon>Login.cs</DependentUpon>
     </EmbeddedResource>
-    <EmbeddedResource Include="pregunta_s.resx">
-      <DependentUpon>pregunta_s.cs</DependentUpon>
-    </EmbeddedResource>
     <EmbeddedResource Include="PrincipalAdministrador.resx">
       <DependentUpon>PrincipalAdministrador.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="Profesor_Principal.resx">
-      <DependentUpon>Profesor_Principal.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>
@@ -371,12 +271,6 @@
     </EmbeddedResource>
     <EmbeddedResource Include="RegistroAlumnos.resx">
       <DependentUpon>RegistroAlumnos.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="RegistroProfesores.resx">
-      <DependentUpon>RegistroProfesores.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="Registro_Bitacora.resx">
-      <DependentUpon>Registro_Bitacora.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="RJControls\RJTextbox.resx">
       <DependentUpon>RJTextbox.cs</DependentUpon>

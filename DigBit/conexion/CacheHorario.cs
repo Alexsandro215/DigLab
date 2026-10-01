@@ -171,7 +171,7 @@ namespace DigBit.conexion
                     INNER JOIN usuarios u ON u.idusuarios = c.usuarios_idusuarios
                     INNER JOIN grupos g   ON g.idgrupos = c.grupos_idgrupos
                     INNER JOIN materias m ON m.id_materia = c.materias_id_materia
-                    WHERE c.activa = 1", conexion))
+                    WHERE c.activa = 1" + (Esquema.TieneBajas(conexion) ? " AND u.activo = 1" : ""), conexion))
                 using (MySqlDataReader reader = comando.ExecuteReader())
                 {
                     while (reader.Read())
@@ -244,13 +244,14 @@ namespace DigBit.conexion
 
                 // Alumnos: matricula, nombre y grupo. Nunca la contrasena: sin servidor
                 // el alumno entra solo con su matricula y la bitacora queda marcada.
+                // Los dados de baja no entran en la copia: sin servidor tampoco pasan.
                 using (MySqlCommand comando = new MySqlCommand(@"
                     SELECT u.idusuarios, u.numero_identificador,
                            CONCAT_WS(' ', u.nombre, u.apellido_paterno, u.apellido_materno) AS nombre,
                            COALESCE(cgs.grupos_idgrupos, 0) AS grupo_id
                     FROM usuarios u
                     LEFT JOIN carrera_grupo_semestre cgs ON cgs.usuarios_numero_identificador = u.idusuarios
-                    WHERE u.fk_tipo_usuario = 1", conexion))
+                    WHERE u.fk_tipo_usuario = 1" + (Esquema.TieneBajas(conexion) ? " AND u.activo = 1" : ""), conexion))
                 using (MySqlDataReader reader = comando.ExecuteReader())
                 {
                     while (reader.Read())
@@ -473,45 +474,45 @@ namespace DigBit.conexion
             codigo = (codigo ?? "").Trim();
             DateTime ahora = AhoraEstimado;
 
-            ClaseCache clase = Clases.FirstOrDefault(c => string.Equals(c.Codigo, codigo, StringComparison.OrdinalIgnoreCase));
-            if (clase == null)
+            // Una clase antes de la migracion 09; despues, todas las del profesor.
+            List<ClaseCache> clases = Clases.Where(c => string.Equals(c.Codigo, codigo, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (clases.Count == 0)
             {
-                return new ResultadoCodigo { Motivo = MotivoCodigo.NoExiste, Mensaje = "Codigo no valido. Revisa que este bien escrito." };
+                return new ResultadoCodigo { Motivo = MotivoCodigo.NoExiste, Mensaje = "Código no válido. Revisa que esté bien escrito." };
             }
 
-            if (ahora.Date < clase.VigenteDesde.Date || ahora.Date > clase.VigenteHasta.Date)
+            List<ClaseCache> vigentes = clases.Where(c => ahora.Date >= c.VigenteDesde.Date && ahora.Date <= c.VigenteHasta.Date).ToList();
+            if (vigentes.Count == 0)
             {
-                return new ResultadoCodigo { Motivo = MotivoCodigo.FueraDePeriodo, Mensaje = "Esa clase no esta en el periodo actual (vigente del "
-                    + clase.VigenteDesde.ToString("dd/MM/yyyy") + " al " + clase.VigenteHasta.ToString("dd/MM/yyyy") + ")." };
+                return new ResultadoCodigo { Motivo = MotivoCodigo.FueraDePeriodo, Mensaje = "Esa clase no está en el periodo actual (vigente del "
+                    + clases.Min(c => c.VigenteDesde).ToString("dd/MM/yyyy") + " al " + clases.Max(c => c.VigenteHasta).ToString("dd/MM/yyyy") + ")." };
             }
 
-            List<SesionAgenda> hoy = AgendaDelDia(ahora.Date).Where(s => s.ClaseId == clase.Id).ToList();
-            if (hoy.Count == 0)
+            // Sin servidor solo se conoce el horario de este laboratorio.
+            HashSet<int> ids = new HashSet<int>(vigentes.Select(c => c.Id));
+            List<SesionAgenda> hoy = AgendaDelDia(ahora.Date).Where(s => ids.Contains(s.ClaseId)).ToList();
+            List<Candidata> candidatas = hoy.Select(s => new Candidata
             {
-                // Sin servidor solo se conoce el horario de este laboratorio.
-                return new ResultadoCodigo { Motivo = MotivoCodigo.HoyNoHayClase, Mensaje = "Hoy no hay clase con ese codigo en este laboratorio." };
+                ClaseId = s.ClaseId,
+                EsExtra = s.EsExtra,
+                Id = s.EsExtra ? s.ExcepcionId.GetValueOrDefault() : s.FranjaId.GetValueOrDefault(),
+                LaboratorioId = LaboratorioId,
+                Laboratorio = Laboratorio,
+                Inicio = s.Inicio,
+                Fin = s.Fin,
+                Cancelada = s.Cancelada
+            }).ToList();
+
+            ResultadoCodigo rechazo;
+            Candidata elegida = ReglasCodigo.Elegir(candidatas, LaboratorioId, ahora.TimeOfDay, true, out rechazo);
+            if (elegida == null)
+            {
+                return rechazo;
             }
 
-            TimeSpan margen = TimeSpan.FromMinutes(HorariosDatos.MargenAntesDelInicioMinutos);
-            TimeSpan hora = ahora.TimeOfDay;
-            SesionAgenda vigente = hoy.FirstOrDefault(s => !s.Cancelada && hora >= s.Inicio - margen && hora <= s.Fin);
-            if (vigente == null)
-            {
-                SesionAgenda cancelada = hoy.FirstOrDefault(s => s.Cancelada && hora >= s.Inicio - margen && hora <= s.Fin);
-                if (cancelada != null)
-                {
-                    return new ResultadoCodigo { Motivo = MotivoCodigo.Cancelada, Mensaje = "La clase de hoy (" + HorariosDatos.Hora(cancelada.Inicio) + " a " + HorariosDatos.Hora(cancelada.Fin) + ") esta cancelada." };
-                }
-
-                SesionAgenda siguiente = hoy.Where(s => !s.Cancelada && hora < s.Inicio - margen).OrderBy(s => s.Inicio).FirstOrDefault();
-                if (siguiente != null)
-                {
-                    return new ResultadoCodigo { Motivo = MotivoCodigo.AunNoEmpieza, Mensaje = "Tu clase empieza a las " + HorariosDatos.Hora(siguiente.Inicio) + ". Intentalo mas cerca de la hora." };
-                }
-
-                SesionAgenda ultima = hoy.Where(s => !s.Cancelada).OrderByDescending(s => s.Fin).First();
-                return new ResultadoCodigo { Motivo = MotivoCodigo.Expirado, Mensaje = "Tu clase termino a las " + HorariosDatos.Hora(ultima.Fin) + "." };
-            }
+            ClaseCache clase = vigentes.First(c => c.Id == elegida.ClaseId);
+            SesionAgenda vigente = hoy.First(s => s.ClaseId == elegida.ClaseId && s.EsExtra == elegida.EsExtra
+                && (elegida.EsExtra ? s.ExcepcionId == elegida.Id : s.FranjaId == elegida.Id));
 
             sesionLocal = new SesionLocal
             {
@@ -546,7 +547,7 @@ namespace DigBit.conexion
             {
                 ventana.Estado = EstadoCodigo.YaRegistrado;
                 resultado.Motivo = MotivoCodigo.YaRegistrado;
-                resultado.Mensaje = "Ya registraste tu bitacora con este codigo (pendiente de enviar al servidor).";
+                resultado.Mensaje = "Ya registraste tu bitácora con este código (pendiente de enviar al servidor).";
             }
 
             return resultado;

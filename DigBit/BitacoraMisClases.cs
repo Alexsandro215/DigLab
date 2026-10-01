@@ -46,7 +46,7 @@ namespace DigBit
             MaximizeBox = true;
             MinimizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
-            Text = "Bitacora de mis clases";
+            Text = "Mi horario";
 
             int ancho = ClientSize.Width;
             int alto = ClientSize.Height;
@@ -57,7 +57,7 @@ namespace DigBit
                 Font = new DrawingFont("Century Gothic", 18F, FontStyle.Bold),
                 ForeColor = Color.DarkGreen,
                 Location = new Point(28, 18),
-                Text = "Bitacora de mis clases"
+                Text = "Mi horario"
             };
 
             lblSubtitulo = new Label
@@ -75,8 +75,8 @@ namespace DigBit
                 Font = new DrawingFont("Century Gothic", 8.5F),
                 ForeColor = Color.Gray,
                 Location = new Point(30, 84),
-                Text = "Pulsa una clase para ver quien registro su bitacora. En gris: fuera de vigencia. "
-                    + "Rayado naranja: sesion extra; rayado gris: clase cancelada ese dia."
+                Text = "Pulsa una clase para ver quién registró su bitácora la última vez que se dio. En gris: fuera de vigencia. "
+                    + "Rayado naranja: sesión extra; rayado gris: clase cancelada ese día."
             };
 
             contenedorSemana = new Panel
@@ -149,7 +149,7 @@ namespace DigBit
 
             lblSubtitulo.Text = string.IsNullOrWhiteSpace(nombreProfesor)
                 ? "Tu horario de la semana"
-                : nombreProfesor + " - tu horario de la semana";
+                : nombreProfesor + ": tu horario de la semana";
         }
 
         private void CargarHorario()

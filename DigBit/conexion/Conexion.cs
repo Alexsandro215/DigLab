@@ -23,6 +23,20 @@ namespace DigBit
         // trae su propio timeout, se respeta.
         private const uint TimeoutConexionSegundos = 5;
 
+        // Las decisiones de horario usan el reloj del servidor (NOW(), CURDATE()),
+        // no el de la PC. Pero el servidor del TESCHI (sql.teschi.edu.mx) corre en
+        // UTC, y sin esto todas las ventanas de clase quedarian corridas 6 horas.
+        // Se fija la zona de cada conexion en la hora del centro de Mexico, que
+        // desde octubre de 2022 no cambia en verano. Con un desfase numerico no
+        // hacen falta las tablas de zonas horarias de MySQL, y en un servidor que
+        // ya este en hora de Mexico no cambia nada. El esquema no tiene columnas
+        // TIMESTAMP, asi que ningun dato guardado se reinterpreta.
+        private const string ZonaHoraria = "-06:00";
+
+        // Por encima de esto se avisa en el log: el modo sin conexion usa el
+        // reloj de la PC y no cuadraria con el horario.
+        private const int DesfaseRelojAvisoSegundos = 300;
+
         private readonly string sCadenaConexion;
 
         public Conexion()
@@ -34,7 +48,25 @@ namespace DigBit
         {
             MySqlConnection conexion = new MySqlConnection(sCadenaConexion);
             conexion.Open();
+            try
+            {
+                FijarZonaHoraria(conexion);
+            }
+            catch
+            {
+                conexion.Dispose();
+                throw;
+            }
+
             return conexion;
+        }
+
+        private static void FijarZonaHoraria(MySqlConnection conexion)
+        {
+            using (MySqlCommand comando = new MySqlCommand("SET time_zone = '" + ZonaHoraria + "'", conexion))
+            {
+                comando.ExecuteNonQuery();
+            }
         }
 
         /// <summary>
@@ -49,11 +81,35 @@ namespace DigBit
             using (MySqlConnection conexion = new MySqlConnection(cadena))
             {
                 conexion.Open();
-                using (MySqlCommand comando = new MySqlCommand("SELECT 1", conexion))
+                FijarZonaHoraria(conexion);
+                using (MySqlCommand comando = new MySqlCommand("SELECT NOW()", conexion))
                 {
-                    comando.ExecuteScalar();
+                    DateTime servidor = Convert.ToDateTime(comando.ExecuteScalar());
+                    TimeSpan desfase = DateTime.Now - servidor;
+                    string mensaje = "Hora del servidor (UTC" + ZonaHoraria + "): " + servidor.ToString("yyyy-MM-dd HH:mm:ss")
+                        + "; el reloj de este equipo va " + DescribirDesfase(desfase) + ".";
+                    if (Math.Abs(desfase.TotalSeconds) > DesfaseRelojAvisoSegundos)
+                    {
+                        Log.Aviso(mensaje + " Sin conexion, el horario se decidiria con ese reloj.");
+                    }
+                    else
+                    {
+                        Log.Info(mensaje);
+                    }
                 }
             }
+        }
+
+        private static string DescribirDesfase(TimeSpan desfase)
+        {
+            double segundos = Math.Abs(desfase.TotalSeconds);
+            if (segundos < 2)
+            {
+                return "en hora";
+            }
+
+            string cuanto = segundos < 120 ? (int)segundos + " s" : (int)(segundos / 60) + " min";
+            return (desfase.Ticks > 0 ? "adelantado " : "atrasado ") + cuanto;
         }
 
         // Para el log: servidor, base, usuario y ajustes efectivos; nunca la contrasena.

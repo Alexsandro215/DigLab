@@ -143,6 +143,21 @@ UNION ALL SELECT
        'ya existe (la 04 no lo tocara)', 'no existe (la 04 lo creara con la contrasena que pongas)'),
     'info'
 UNION ALL SELECT
+    'Bajas de usuarios y laboratorios (columnas activo)',
+    IF((SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'activo'
+          AND TABLE_NAME IN ('usuarios', 'laboratorios')) = 2,
+       'ya estan', 'faltan (la 08 las crea y deja todo activo)'),
+    'info'
+UNION ALL SELECT
+    'Codigo por profesor (usuarios.codigo_clase)',
+    IF((SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'usuarios' AND COLUMN_NAME = 'codigo_clase') > 0,
+       -- Sin contar clases: antes de la 04 la tabla no existe y esta revision
+       -- se pasa tambien entonces.
+       'ya esta', 'falta (la 09 deja a cada profesor el codigo de su clase con mas sesiones)'),
+    'info'
+UNION ALL SELECT
     'Contrasenas: PBKDF2 / MD5 / total',
     CONCAT(IFNULL(SUM(password LIKE 'pbkdf2-%'), 0), ' / ',
            IFNULL(SUM(CHAR_LENGTH(password) = 32 AND password REGEXP '^[0-9a-f]{32}$'), 0), ' / ',

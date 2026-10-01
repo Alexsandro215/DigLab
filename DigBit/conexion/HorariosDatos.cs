@@ -125,10 +125,55 @@ namespace DigBit.conexion
         public TimeSpan Fin;
         public bool Cancelada;
         public string Motivo;
+        public int ProfesorId;
+        public int LaboratorioId;
+
+        // Solo los rellena PanoramaDelDia: la sesion (codigos_accesos) de esta
+        // entrada, si ya existe, y cuantos alumnos registraron en ella.
+        public int? SesionId;
+        public int Alumnos;
+        public int ConFallas;
 
         public string Descripcion
         {
             get { return Materia + " - " + Grupo + " - " + Profesor; }
+        }
+    }
+
+    /// <summary>Lo que el panel del administrador necesita de un dia.</summary>
+    public class PanoramaLaboratorios
+    {
+        public DateTime AhoraServidor;
+        public DateTime Fecha;
+        public List<OpcionCombo> Laboratorios = new List<OpcionCombo>();
+        /// <summary>Agenda efectiva del dia en todos los laboratorios, con sus conteos.</summary>
+        public List<SesionAgenda> Agenda = new List<SesionAgenda>();
+    }
+
+    /// <summary>Lo que el panel del profesor necesita: quien es, su codigo y su dia.</summary>
+    public class PanoramaProfesor
+    {
+        public DateTime AhoraServidor;
+        public int ProfesorId;
+        public string Nombre = "";
+        public string NumeroEmpleado = "";
+        /// <summary>True con un codigo por profesor (db/09).</summary>
+        public bool CodigoPorProfesor;
+        /// <summary>Su codigo (db/09), o null si todavia no tiene.</summary>
+        public string Codigo;
+        /// <summary>Sin la 09: sus clases vigentes, cada una con su propio codigo.</summary>
+        public List<ClaseInfo> Clases = new List<ClaseInfo>();
+        /// <summary>Sus clases de hoy (agenda efectiva, con canceladas y extras) y cuantos registraron.</summary>
+        public List<SesionAgenda> Hoy = new List<SesionAgenda>();
+        /// <summary>Nombre de cada laboratorio por id.</summary>
+        public Dictionary<int, string> Laboratorios = new Dictionary<int, string>();
+        /// <summary>Su horario semanal (clases activas), para decir cual es su proxima clase otro dia.</summary>
+        public List<FranjaInfo> Franjas = new List<FranjaInfo>();
+
+        public string Laboratorio(int id)
+        {
+            string nombre;
+            return Laboratorios.TryGetValue(id, out nombre) ? nombre : "";
         }
     }
 
@@ -232,24 +277,64 @@ namespace DigBit.conexion
             return lista;
         }
 
-        /// <summary>Profesores (tipo de usuario 2) para el combo de la pantalla de clases.</summary>
-        public List<OpcionCombo> ObtenerProfesores()
+        /// <summary>
+        /// Profesores (tipo de usuario 2) para el combo de la pantalla de clases.
+        /// Los dados de baja no salen, salvo el que se indique: el de la clase que
+        /// se esta editando, para que no se quede sin profesor en el combo.
+        /// </summary>
+        public List<OpcionCombo> ObtenerProfesores(int? incluir = null)
         {
             List<OpcionCombo> lista = new List<OpcionCombo>();
             using (MySqlConnection conexion = mconexion.GetConexion())
-            using (MySqlCommand comando = new MySqlCommand(@"
-                SELECT idusuarios, CONCAT_WS(' ', nombre, apellido_paterno, apellido_materno) AS nombre_completo
-                FROM usuarios
-                WHERE fk_tipo_usuario = 2
-                ORDER BY apellido_paterno, nombre", conexion))
+            {
+                string soloActivos = Esquema.TieneBajas(conexion) ? " AND (activo = 1 OR idusuarios = @Incluir)" : "";
+                using (MySqlCommand comando = new MySqlCommand(@"
+                    SELECT idusuarios, CONCAT_WS(' ', nombre, apellido_paterno, apellido_materno) AS nombre_completo
+                    FROM usuarios
+                    WHERE fk_tipo_usuario = 2" + soloActivos + @"
+                    ORDER BY apellido_paterno, nombre", conexion))
+                {
+                    comando.Parameters.AddWithValue("@Incluir", incluir ?? 0);
+                    using (MySqlDataReader reader = comando.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            lista.Add(new OpcionCombo
+                            {
+                                Id = reader.GetInt32("idusuarios"),
+                                Texto = reader.GetString("nombre_completo")
+                            });
+                        }
+                    }
+                }
+            }
+
+            return lista;
+        }
+
+        /// <summary>Laboratorios en uso (sin los desactivados), para Horarios.</summary>
+        public List<OpcionCombo> ObtenerLaboratoriosActivos()
+        {
+            using (MySqlConnection conexion = mconexion.GetConexion())
+            {
+                return LeerLaboratorios(conexion);
+            }
+        }
+
+        private static List<OpcionCombo> LeerLaboratorios(MySqlConnection conexion)
+        {
+            List<OpcionCombo> lista = new List<OpcionCombo>();
+            string soloActivos = Esquema.LaboratoriosDesactivables(conexion) ? " WHERE activo = 1" : "";
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT idlaboratorios, nombre_laboratorio FROM laboratorios" + soloActivos + " ORDER BY nombre_laboratorio", conexion))
             using (MySqlDataReader reader = comando.ExecuteReader())
             {
                 while (reader.Read())
                 {
                     lista.Add(new OpcionCombo
                     {
-                        Id = reader.GetInt32("idusuarios"),
-                        Texto = reader.GetString("nombre_completo")
+                        Id = Convert.ToInt32(reader["idlaboratorios"]),
+                        Texto = reader["nombre_laboratorio"].ToString()
                     });
                 }
             }
@@ -284,25 +369,55 @@ namespace DigBit.conexion
             }
         }
 
+        /// <summary>True si la base tiene un codigo por profesor (db/09): las clases toman el suyo.</summary>
+        public bool UsaCodigoPorProfesor()
+        {
+            using (MySqlConnection conexion = mconexion.GetConexion())
+            {
+                return Esquema.CodigoPorProfesor(conexion);
+            }
+        }
+
+        /// <summary>El codigo del profesor, o null si aun no tiene (se le da al crearle su primera clase).</summary>
+        public string CodigoDelProfesor(int idProfesor)
+        {
+            using (MySqlConnection conexion = mconexion.GetConexion())
+            {
+                return CodigosDeProfesor.Leer(conexion, null, idProfesor);
+            }
+        }
+
+        /// <summary>
+        /// Con un codigo por profesor (db/09) el codigo que llega se ignora: la
+        /// clase toma el de su profesor, que se crea si aun no tiene. Sin la 09,
+        /// cada clase lleva el suyo, como antes.
+        /// </summary>
         public int CrearClase(int idProfesor, int idGrupo, int idMateria, string codigo, DateTime desde, DateTime hasta, int creadaPor)
         {
-            ValidarClase(codigo, desde, hasta);
             try
             {
                 using (MySqlConnection conexion = mconexion.GetConexion())
-                using (MySqlCommand comando = new MySqlCommand(@"
-                    INSERT INTO clases (usuarios_idusuarios, grupos_idgrupos, materias_id_materia, codigo, vigente_desde, vigente_hasta, activa, creada_por, creada_en)
-                    VALUES (@Profesor, @Grupo, @Materia, @Codigo, @Desde, @Hasta, 1, @CreadaPor, NOW());
-                    SELECT LAST_INSERT_ID();", conexion))
+                using (MySqlTransaction transaccion = conexion.BeginTransaction())
                 {
-                    comando.Parameters.AddWithValue("@Profesor", idProfesor);
-                    comando.Parameters.AddWithValue("@Grupo", idGrupo);
-                    comando.Parameters.AddWithValue("@Materia", idMateria);
-                    comando.Parameters.AddWithValue("@Codigo", codigo.Trim());
-                    comando.Parameters.AddWithValue("@Desde", desde.Date);
-                    comando.Parameters.AddWithValue("@Hasta", hasta.Date);
-                    comando.Parameters.AddWithValue("@CreadaPor", creadaPor > 0 ? (object)creadaPor : DBNull.Value);
-                    int id = Convert.ToInt32(comando.ExecuteScalar());
+                    codigo = CodigoParaClase(conexion, transaccion, idProfesor, codigo);
+                    ValidarClase(codigo, desde, hasta);
+                    int id;
+                    using (MySqlCommand comando = new MySqlCommand(@"
+                        INSERT INTO clases (usuarios_idusuarios, grupos_idgrupos, materias_id_materia, codigo, vigente_desde, vigente_hasta, activa, creada_por, creada_en)
+                        VALUES (@Profesor, @Grupo, @Materia, @Codigo, @Desde, @Hasta, 1, @CreadaPor, NOW());
+                        SELECT LAST_INSERT_ID();", conexion, transaccion))
+                    {
+                        comando.Parameters.AddWithValue("@Profesor", idProfesor);
+                        comando.Parameters.AddWithValue("@Grupo", idGrupo);
+                        comando.Parameters.AddWithValue("@Materia", idMateria);
+                        comando.Parameters.AddWithValue("@Codigo", codigo);
+                        comando.Parameters.AddWithValue("@Desde", desde.Date);
+                        comando.Parameters.AddWithValue("@Hasta", hasta.Date);
+                        comando.Parameters.AddWithValue("@CreadaPor", creadaPor > 0 ? (object)creadaPor : DBNull.Value);
+                        id = Convert.ToInt32(comando.ExecuteScalar());
+                    }
+
+                    transaccion.Commit();
                     Log.Info("Clase creada: id " + id + ", codigo " + codigo + ".");
                     return id;
                 }
@@ -315,30 +430,44 @@ namespace DigBit.conexion
 
         public void ActualizarClase(int idClase, int idProfesor, int idGrupo, int idMateria, string codigo, DateTime desde, DateTime hasta)
         {
-            ValidarClase(codigo, desde, hasta);
             try
             {
                 using (MySqlConnection conexion = mconexion.GetConexion())
-                using (MySqlCommand comando = new MySqlCommand(@"
-                    UPDATE clases
-                       SET usuarios_idusuarios = @Profesor, grupos_idgrupos = @Grupo, materias_id_materia = @Materia,
-                           codigo = @Codigo, vigente_desde = @Desde, vigente_hasta = @Hasta
-                     WHERE idclases = @Id", conexion))
+                using (MySqlTransaction transaccion = conexion.BeginTransaction())
                 {
-                    comando.Parameters.AddWithValue("@Id", idClase);
-                    comando.Parameters.AddWithValue("@Profesor", idProfesor);
-                    comando.Parameters.AddWithValue("@Grupo", idGrupo);
-                    comando.Parameters.AddWithValue("@Materia", idMateria);
-                    comando.Parameters.AddWithValue("@Codigo", codigo.Trim());
-                    comando.Parameters.AddWithValue("@Desde", desde.Date);
-                    comando.Parameters.AddWithValue("@Hasta", hasta.Date);
-                    comando.ExecuteNonQuery();
+                    // Si cambia de profesor, pasa a tener el codigo del nuevo.
+                    codigo = CodigoParaClase(conexion, transaccion, idProfesor, codigo);
+                    ValidarClase(codigo, desde, hasta);
+                    using (MySqlCommand comando = new MySqlCommand(@"
+                        UPDATE clases
+                           SET usuarios_idusuarios = @Profesor, grupos_idgrupos = @Grupo, materias_id_materia = @Materia,
+                               codigo = @Codigo, vigente_desde = @Desde, vigente_hasta = @Hasta
+                         WHERE idclases = @Id", conexion, transaccion))
+                    {
+                        comando.Parameters.AddWithValue("@Id", idClase);
+                        comando.Parameters.AddWithValue("@Profesor", idProfesor);
+                        comando.Parameters.AddWithValue("@Grupo", idGrupo);
+                        comando.Parameters.AddWithValue("@Materia", idMateria);
+                        comando.Parameters.AddWithValue("@Codigo", codigo);
+                        comando.Parameters.AddWithValue("@Desde", desde.Date);
+                        comando.Parameters.AddWithValue("@Hasta", hasta.Date);
+                        comando.ExecuteNonQuery();
+                    }
+
+                    transaccion.Commit();
                 }
             }
             catch (MySqlException ex) when (ex.Number == 1062)
             {
                 throw new InvalidOperationException("El codigo '" + codigo + "' ya esta en uso por otra clase.");
             }
+        }
+
+        private static string CodigoParaClase(MySqlConnection conexion, MySqlTransaction transaccion, int idProfesor, string codigo)
+        {
+            return Esquema.CodigoPorProfesor(conexion, transaccion)
+                ? CodigosDeProfesor.ObtenerOCrear(conexion, transaccion, idProfesor)
+                : (codigo ?? "").Trim();
         }
 
         public void CambiarEstadoClase(int idClase, bool activa)
@@ -791,12 +920,29 @@ namespace DigBit.conexion
         /// </summary>
         public List<SesionAgenda> AgendaDelDia(int idLaboratorio, DateTime fecha)
         {
-            List<SesionAgenda> lista = new List<SesionAgenda>();
             using (MySqlConnection conexion = mconexion.GetConexion())
+            {
+                return LeerAgenda(conexion, idLaboratorio, fecha);
+            }
+        }
+
+        /// <summary>
+        /// La agenda efectiva de un dia en un laboratorio o, sin laboratorio, en
+        /// todos (ordenada por laboratorio y hora).
+        /// </summary>
+        private static List<SesionAgenda> LeerAgenda(MySqlConnection conexion, int? idLaboratorio, DateTime fecha)
+        {
+            string filtroFranja = idLaboratorio.HasValue ? "h.laboratorios_idlaboratorios = @Lab AND " : "";
+            string filtroExtra = idLaboratorio.HasValue ? " AND x.laboratorios_idlaboratorios = @Lab" : "";
+            string orden = idLaboratorio.HasValue ? "inicio" : "laboratorio_id, inicio";
+
+            List<SesionAgenda> lista = new List<SesionAgenda>();
             using (MySqlCommand comando = new MySqlCommand(@"
                 SELECT 0 AS es_extra, h.idhorarios AS franja_id, NULL AS excepcion_id, c.idclases, c.codigo,
+                       c.usuarios_idusuarios AS profesor_id,
                        CONCAT_WS(' ', u.nombre, u.apellido_paterno, u.apellido_materno) AS profesor,
-                       g.nombre_grupo, m.nombre_materia, h.hora_inicio AS inicio, h.hora_fin AS fin,
+                       g.nombre_grupo, m.nombre_materia, h.laboratorios_idlaboratorios AS laboratorio_id,
+                       h.hora_inicio AS inicio, h.hora_fin AS fin,
                        (x.idhorario_excepciones IS NOT NULL) AS cancelada, x.motivo
                 FROM horarios h
                 INNER JOIN clases c   ON c.idclases = h.clases_idclases
@@ -804,23 +950,28 @@ namespace DigBit.conexion
                 INNER JOIN grupos g   ON g.idgrupos = c.grupos_idgrupos
                 INNER JOIN materias m ON m.id_materia = c.materias_id_materia
                 LEFT JOIN horario_excepciones x ON x.tipo = 'cancelada' AND x.horarios_idhorarios = h.idhorarios AND x.fecha = @Fecha
-                WHERE h.laboratorios_idlaboratorios = @Lab
-                  AND h.dia_semana = WEEKDAY(@Fecha) + 1
+                WHERE " + filtroFranja + @"h.dia_semana = WEEKDAY(@Fecha) + 1
                   AND c.activa = 1
                   AND @Fecha BETWEEN c.vigente_desde AND c.vigente_hasta
                 UNION ALL
                 SELECT 1, NULL, x.idhorario_excepciones, c.idclases, c.codigo,
+                       c.usuarios_idusuarios,
                        CONCAT_WS(' ', u.nombre, u.apellido_paterno, u.apellido_materno),
-                       g.nombre_grupo, m.nombre_materia, x.hora_inicio, x.hora_fin, 0, x.motivo
+                       g.nombre_grupo, m.nombre_materia, x.laboratorios_idlaboratorios,
+                       x.hora_inicio, x.hora_fin, 0, x.motivo
                 FROM horario_excepciones x
                 INNER JOIN clases c   ON c.idclases = x.clases_idclases
                 INNER JOIN usuarios u ON u.idusuarios = c.usuarios_idusuarios
                 INNER JOIN grupos g   ON g.idgrupos = c.grupos_idgrupos
                 INNER JOIN materias m ON m.id_materia = c.materias_id_materia
-                WHERE x.tipo = 'extra' AND x.laboratorios_idlaboratorios = @Lab AND x.fecha = @Fecha
-                ORDER BY inicio", conexion))
+                WHERE x.tipo = 'extra'" + filtroExtra + @" AND x.fecha = @Fecha
+                ORDER BY " + orden, conexion))
             {
-                comando.Parameters.AddWithValue("@Lab", idLaboratorio);
+                if (idLaboratorio.HasValue)
+                {
+                    comando.Parameters.AddWithValue("@Lab", idLaboratorio.Value);
+                }
+
                 comando.Parameters.AddWithValue("@Fecha", fecha.Date);
                 using (MySqlDataReader reader = comando.ExecuteReader())
                 {
@@ -839,13 +990,134 @@ namespace DigBit.conexion
                             Inicio = reader.GetTimeSpan("inicio"),
                             Fin = reader.GetTimeSpan("fin"),
                             Cancelada = Convert.ToInt32(reader["cancelada"]) == 1,
-                            Motivo = reader.IsDBNull(reader.GetOrdinal("motivo")) ? "" : reader.GetString("motivo")
+                            Motivo = reader.IsDBNull(reader.GetOrdinal("motivo")) ? "" : reader.GetString("motivo"),
+                            ProfesorId = Convert.ToInt32(reader["profesor_id"]),
+                            LaboratorioId = reader.IsDBNull(reader.GetOrdinal("laboratorio_id")) ? 0 : Convert.ToInt32(reader["laboratorio_id"])
                         });
                     }
                 }
             }
 
             return lista;
+        }
+
+        /// <summary>
+        /// Para el panel del administrador: todos los laboratorios, la agenda de
+        /// un dia en cada uno y, por cada clase que ya tenga sesion, cuantos
+        /// alumnos registraron bitacora y cuantos reportaron alguna falla (el
+        /// mismo criterio que la pantalla de bitacoras). Una conexion, cuatro
+        /// consultas. Sin fecha, el dia de hoy segun el servidor.
+        /// </summary>
+        public PanoramaLaboratorios PanoramaDelDia(DateTime? fecha = null)
+        {
+            PanoramaLaboratorios panorama = new PanoramaLaboratorios();
+            using (MySqlConnection conexion = mconexion.GetConexion())
+            {
+                using (MySqlCommand comando = new MySqlCommand("SELECT NOW()", conexion))
+                {
+                    panorama.AhoraServidor = Convert.ToDateTime(comando.ExecuteScalar());
+                }
+
+                panorama.Fecha = (fecha ?? panorama.AhoraServidor).Date;
+                panorama.Laboratorios = LeerLaboratorios(conexion);
+                panorama.Agenda = LeerAgenda(conexion, null, panorama.Fecha);
+
+                // La sesion de una franja es la de su dia; la de una sesion extra,
+                // la de su excepcion (ver codigos_accesos en db/01_schema.sql).
+                using (MySqlCommand comando = new MySqlCommand(@"
+                    SELECT ca.idcodigos_accesos, ca.horarios_idhorarios, ca.horario_excepciones_id,
+                           COUNT(DISTINCT rb.fk_usuario) AS alumnos,
+                           COUNT(DISTINCT CASE WHEN " + Consultas.CondicionConFalla + @" THEN rb.fk_usuario END) AS con_fallas
+                    FROM codigos_accesos ca
+                    LEFT JOIN registros_bitacoras rb ON rb.fk_codigo_accesos = ca.idcodigos_accesos
+                    WHERE ca.fecha = @Fecha
+                    GROUP BY ca.idcodigos_accesos, ca.horarios_idhorarios, ca.horario_excepciones_id", conexion))
+                {
+                    comando.Parameters.AddWithValue("@Fecha", panorama.Fecha);
+                    using (MySqlDataReader reader = comando.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            int? franja = reader.IsDBNull(reader.GetOrdinal("horarios_idhorarios")) ? (int?)null : Convert.ToInt32(reader["horarios_idhorarios"]);
+                            int? excepcion = reader.IsDBNull(reader.GetOrdinal("horario_excepciones_id")) ? (int?)null : Convert.ToInt32(reader["horario_excepciones_id"]);
+                            SesionAgenda entrada = panorama.Agenda.FirstOrDefault(s => s.EsExtra
+                                ? excepcion.HasValue && s.ExcepcionId == excepcion
+                                : franja.HasValue && s.FranjaId == franja);
+                            if (entrada == null)
+                            {
+                                continue;
+                            }
+
+                            entrada.SesionId = Convert.ToInt32(reader["idcodigos_accesos"]);
+                            entrada.Alumnos = Convert.ToInt32(reader["alumnos"]);
+                            entrada.ConFallas = Convert.ToInt32(reader["con_fallas"]);
+                        }
+                    }
+                }
+            }
+
+            return panorama;
+        }
+
+        /// <summary>
+        /// Para el panel del profesor (por su numero de empleado): su nombre, su
+        /// codigo, sus clases de hoy con los conteos de bitacoras (lo mismo que ve
+        /// el administrador) y su horario semanal. Hora del servidor.
+        /// </summary>
+        public PanoramaProfesor PanoramaDeProfesor(string numeroEmpleado)
+        {
+            PanoramaProfesor panorama = new PanoramaProfesor { NumeroEmpleado = numeroEmpleado ?? "" };
+            using (MySqlConnection conexion = mconexion.GetConexion())
+            {
+                using (MySqlCommand comando = new MySqlCommand(@"
+                    SELECT idusuarios, CONCAT_WS(' ', nombre, apellido_paterno, apellido_materno) AS nombre
+                    FROM usuarios
+                    WHERE numero_identificador = @Numero AND fk_tipo_usuario = 2", conexion))
+                {
+                    comando.Parameters.AddWithValue("@Numero", panorama.NumeroEmpleado);
+                    using (MySqlDataReader reader = comando.ExecuteReader())
+                    {
+                        if (!reader.Read())
+                        {
+                            throw new InvalidOperationException("No se encontró al profesor con número de empleado " + numeroEmpleado + ".");
+                        }
+
+                        panorama.ProfesorId = Convert.ToInt32(reader["idusuarios"]);
+                        panorama.Nombre = reader["nombre"].ToString();
+                    }
+                }
+
+                panorama.CodigoPorProfesor = Esquema.CodigoPorProfesor(conexion);
+                if (panorama.CodigoPorProfesor)
+                {
+                    panorama.Codigo = CodigosDeProfesor.Leer(conexion, null, panorama.ProfesorId);
+                }
+            }
+
+            PanoramaLaboratorios dia = PanoramaDelDia();
+            panorama.AhoraServidor = dia.AhoraServidor;
+            panorama.Hoy = dia.Agenda.Where(s => s.ProfesorId == panorama.ProfesorId).OrderBy(s => s.Inicio).ToList();
+            foreach (OpcionCombo laboratorio in dia.Laboratorios)
+            {
+                panorama.Laboratorios[laboratorio.Id] = laboratorio.Texto;
+            }
+
+            panorama.Franjas = ObtenerFranjasDeProfesor(panorama.ProfesorId);
+            foreach (FranjaInfo franja in panorama.Franjas)
+            {
+                // Un laboratorio desactivado no esta en la lista de arriba.
+                if (!panorama.Laboratorios.ContainsKey(franja.LaboratorioId))
+                {
+                    panorama.Laboratorios[franja.LaboratorioId] = franja.Laboratorio;
+                }
+            }
+
+            if (!panorama.CodigoPorProfesor)
+            {
+                panorama.Clases = ObtenerClasesDeProfesor(panorama.ProfesorId).Where(c => c.VigenteEn(dia.AhoraServidor)).ToList();
+            }
+
+            return panorama;
         }
 
         /// <summary>
@@ -876,84 +1148,75 @@ namespace DigBit.conexion
         {
             codigo = (codigo ?? string.Empty).Trim();
 
-            // 1) La clase.
-            int idClase, idProfesor, idGrupo, idMateria;
-            bool activa;
-            DateTime desde, hasta, ahora, hoy;
+            // 1) Las clases con ese codigo: una sola antes de la migracion 09;
+            // despues, todas las del profesor.
+            List<ClaseDelCodigo> clases = new List<ClaseDelCodigo>();
+            DateTime ahora = DateTime.MinValue;
+            DateTime hoy = DateTime.MinValue;
             using (MySqlConnection conexion = mconexion.GetConexion())
-            using (MySqlCommand comando = new MySqlCommand(@"
-                SELECT idclases, usuarios_idusuarios, grupos_idgrupos, materias_id_materia, activa,
-                       vigente_desde, vigente_hasta, NOW() AS ahora, CURDATE() AS hoy
-                FROM clases WHERE codigo = @Codigo", conexion))
             {
-                comando.Parameters.AddWithValue("@Codigo", codigo);
-                using (MySqlDataReader reader = comando.ExecuteReader())
+                string profesorActivo = Esquema.TieneBajas(conexion) ? "u.activo" : "1";
+                using (MySqlCommand comando = new MySqlCommand(@"
+                    SELECT c.idclases, c.usuarios_idusuarios, c.grupos_idgrupos, c.materias_id_materia, c.activa,
+                           c.vigente_desde, c.vigente_hasta, " + profesorActivo + @" AS profesor_activo,
+                           NOW() AS ahora, CURDATE() AS hoy
+                    FROM clases c
+                    INNER JOIN usuarios u ON u.idusuarios = c.usuarios_idusuarios
+                    WHERE c.codigo = @Codigo", conexion))
                 {
-                    if (!reader.Read())
+                    comando.Parameters.AddWithValue("@Codigo", codigo);
+                    using (MySqlDataReader reader = comando.ExecuteReader())
                     {
-                        return Rechazo(MotivoCodigo.NoExiste, "Codigo no valido. Revisa que este bien escrito.");
+                        while (reader.Read())
+                        {
+                            clases.Add(new ClaseDelCodigo
+                            {
+                                Id = reader.GetInt32("idclases"),
+                                ProfesorId = reader.GetInt32("usuarios_idusuarios"),
+                                GrupoId = reader.GetInt32("grupos_idgrupos"),
+                                MateriaId = reader.GetInt32("materias_id_materia"),
+                                Activa = reader.GetBoolean("activa") && Convert.ToInt32(reader["profesor_activo"]) == 1,
+                                Desde = reader.GetDateTime("vigente_desde"),
+                                Hasta = reader.GetDateTime("vigente_hasta")
+                            });
+                            ahora = reader.GetDateTime("ahora");
+                            hoy = reader.GetDateTime("hoy");
+                        }
                     }
-
-                    idClase = reader.GetInt32("idclases");
-                    idProfesor = reader.GetInt32("usuarios_idusuarios");
-                    idGrupo = reader.GetInt32("grupos_idgrupos");
-                    idMateria = reader.GetInt32("materias_id_materia");
-                    activa = reader.GetBoolean("activa");
-                    desde = reader.GetDateTime("vigente_desde");
-                    hasta = reader.GetDateTime("vigente_hasta");
-                    ahora = reader.GetDateTime("ahora");
-                    hoy = reader.GetDateTime("hoy");
                 }
             }
 
-            if (!activa)
+            if (clases.Count == 0)
             {
-                return Rechazo(MotivoCodigo.Inactiva, "Ese codigo ya no esta activo. Pregunta a tu profesor.");
+                return Rechazo(MotivoCodigo.NoExiste, "Código no válido. Revisa que esté bien escrito.");
             }
 
-            if (hoy.Date < desde.Date || hoy.Date > hasta.Date)
+            List<ClaseDelCodigo> activas = clases.Where(c => c.Activa).ToList();
+            if (activas.Count == 0)
             {
-                return Rechazo(MotivoCodigo.FueraDePeriodo, "Esa clase no esta en el periodo actual (vigente del "
+                return Rechazo(MotivoCodigo.Inactiva, "Ese código ya no está activo. Pregúntale a tu profesor.");
+            }
+
+            if (!activas.Any(c => hoy.Date >= c.Desde.Date && hoy.Date <= c.Hasta.Date))
+            {
+                DateTime desde = activas.Min(c => c.Desde);
+                DateTime hasta = activas.Max(c => c.Hasta);
+                return Rechazo(MotivoCodigo.FueraDePeriodo, "Esa clase no está en el periodo actual (vigente del "
                     + desde.ToString("dd/MM/yyyy") + " al " + hasta.ToString("dd/MM/yyyy") + ").");
             }
 
-            // 2) Candidatas de hoy para esa clase, en todos los laboratorios.
-            List<Candidata> candidatas = LeerCandidatas(idClase);
-            if (candidatas.Count == 0)
-            {
-                return Rechazo(MotivoCodigo.HoyNoHayClase, "Hoy no hay clase con ese codigo.");
-            }
-
-            List<Candidata> aqui = candidatas.Where(c => c.LaboratorioId == idLaboratorio).ToList();
-            if (aqui.Count == 0)
-            {
-                string otros = string.Join(" / ", candidatas.Select(c => c.Laboratorio).Distinct());
-                return Rechazo(MotivoCodigo.OtroLaboratorio, "Ese codigo es de " + otros + ", no de este laboratorio.");
-            }
-
-            TimeSpan ahoraHora = ahora.TimeOfDay;
-            TimeSpan margen = TimeSpan.FromMinutes(MargenAntesDelInicioMinutos);
-            Candidata vigente = aqui.FirstOrDefault(c => !c.Cancelada && ahoraHora >= c.Inicio - margen && ahoraHora <= c.Fin);
+            // 2) Candidatas de hoy de esas clases, en todos los laboratorios, y la que toca aqui y ahora.
+            List<Candidata> candidatas = LeerCandidatas(codigo);
+            ResultadoCodigo rechazo;
+            Candidata vigente = ReglasCodigo.Elegir(candidatas, idLaboratorio, ahora.TimeOfDay, false, out rechazo);
             if (vigente == null)
             {
-                Candidata cancelada = aqui.FirstOrDefault(c => c.Cancelada && ahoraHora >= c.Inicio - margen && ahoraHora <= c.Fin);
-                if (cancelada != null)
-                {
-                    return Rechazo(MotivoCodigo.Cancelada, "La clase de hoy (" + Hora(cancelada.Inicio) + " a " + Hora(cancelada.Fin) + ") esta cancelada.");
-                }
-
-                Candidata siguiente = aqui.Where(c => !c.Cancelada && ahoraHora < c.Inicio - margen).OrderBy(c => c.Inicio).FirstOrDefault();
-                if (siguiente != null)
-                {
-                    return Rechazo(MotivoCodigo.AunNoEmpieza, "Tu clase empieza a las " + Hora(siguiente.Inicio) + ". Intentalo mas cerca de la hora.");
-                }
-
-                Candidata ultima = aqui.Where(c => !c.Cancelada).OrderByDescending(c => c.Fin).First();
-                return Rechazo(MotivoCodigo.Expirado, "Tu clase termino a las " + Hora(ultima.Fin) + ". Pide a tu profesor que avise al administrador si necesitas una sesion extra.");
+                return rechazo;
             }
 
-            // 3) La sesion de hoy (se crea al primer uso).
-            int idSesion = ObtenerOCrearSesion(codigo, vigente, idMateria, idGrupo, idProfesor);
+            // 3) La sesion de hoy (se crea al primer uso), con la materia y el grupo de SU clase.
+            ClaseDelCodigo clase = clases.First(c => c.Id == vigente.ClaseId);
+            int idSesion = ObtenerOCrearSesion(codigo, vigente, clase.MateriaId, clase.GrupoId, clase.ProfesorId);
             Consultas consultas = new Consultas();
             VentanaCodigo ventana = consultas.ObtenerVentanaSesion(idSesion);
             if (ventana == null)
@@ -966,48 +1229,59 @@ namespace DigBit.conexion
             {
                 ventana.Estado = EstadoCodigo.YaRegistrado;
                 resultado.Motivo = MotivoCodigo.YaRegistrado;
-                resultado.Mensaje = "Ya registraste tu bitacora con este codigo.";
+                resultado.Mensaje = "Ya registraste tu bitácora con este código.";
             }
 
             return resultado;
         }
 
-        private class Candidata
+        /// <summary>Una de las clases que comparten el codigo tecleado.</summary>
+        private class ClaseDelCodigo
         {
-            public bool EsExtra;
             public int Id;
-            public int LaboratorioId;
-            public string Laboratorio;
-            public TimeSpan Inicio;
-            public TimeSpan Fin;
-            public bool Cancelada;
+            public int ProfesorId;
+            public int GrupoId;
+            public int MateriaId;
+            /// <summary>La clase esta activa y su profesor no esta dado de baja.</summary>
+            public bool Activa;
+            public DateTime Desde;
+            public DateTime Hasta;
         }
 
-        private List<Candidata> LeerCandidatas(int idClase)
+        /// <summary>
+        /// Franjas y sesiones extra de hoy de las clases activas y vigentes con ese
+        /// codigo (las de un profesor), en todos los laboratorios.
+        /// </summary>
+        private List<Candidata> LeerCandidatas(string codigo)
         {
             List<Candidata> lista = new List<Candidata>();
             using (MySqlConnection conexion = mconexion.GetConexion())
             using (MySqlCommand comando = new MySqlCommand(@"
-                SELECT 0 AS es_extra, h.idhorarios AS id, h.laboratorios_idlaboratorios AS lab, l.nombre_laboratorio,
+                SELECT 0 AS es_extra, h.idhorarios AS id, h.clases_idclases AS clase, h.laboratorios_idlaboratorios AS lab, l.nombre_laboratorio,
                        h.hora_inicio AS inicio, h.hora_fin AS fin, (x.idhorario_excepciones IS NOT NULL) AS cancelada
                 FROM horarios h
+                INNER JOIN clases c       ON c.idclases = h.clases_idclases
                 INNER JOIN laboratorios l ON l.idlaboratorios = h.laboratorios_idlaboratorios
                 LEFT JOIN horario_excepciones x ON x.tipo = 'cancelada' AND x.horarios_idhorarios = h.idhorarios AND x.fecha = CURDATE()
-                WHERE h.clases_idclases = @Clase AND h.dia_semana = WEEKDAY(CURDATE()) + 1
+                WHERE c.codigo = @Codigo AND c.activa = 1 AND CURDATE() BETWEEN c.vigente_desde AND c.vigente_hasta
+                  AND h.dia_semana = WEEKDAY(CURDATE()) + 1
                 UNION ALL
-                SELECT 1, x.idhorario_excepciones, x.laboratorios_idlaboratorios, l.nombre_laboratorio, x.hora_inicio, x.hora_fin, 0
+                SELECT 1, x.idhorario_excepciones, x.clases_idclases, x.laboratorios_idlaboratorios, l.nombre_laboratorio, x.hora_inicio, x.hora_fin, 0
                 FROM horario_excepciones x
+                INNER JOIN clases c       ON c.idclases = x.clases_idclases
                 INNER JOIN laboratorios l ON l.idlaboratorios = x.laboratorios_idlaboratorios
-                WHERE x.tipo = 'extra' AND x.clases_idclases = @Clase AND x.fecha = CURDATE()
+                WHERE c.codigo = @Codigo AND c.activa = 1 AND CURDATE() BETWEEN c.vigente_desde AND c.vigente_hasta
+                  AND x.tipo = 'extra' AND x.fecha = CURDATE()
                 ORDER BY inicio", conexion))
             {
-                comando.Parameters.AddWithValue("@Clase", idClase);
+                comando.Parameters.AddWithValue("@Codigo", codigo);
                 using (MySqlDataReader reader = comando.ExecuteReader())
                 {
                     while (reader.Read())
                     {
                         lista.Add(new Candidata
                         {
+                            ClaseId = Convert.ToInt32(reader["clase"]),
                             EsExtra = Convert.ToInt32(reader["es_extra"]) == 1,
                             Id = Convert.ToInt32(reader["id"]),
                             LaboratorioId = Convert.ToInt32(reader["lab"]),

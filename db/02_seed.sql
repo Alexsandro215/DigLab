@@ -264,3 +264,22 @@ VALUES
     -- QW7pz del miercoles en el Lab 2: dos alumnos, uno registrado sin conexion.
     (4, 2,  'PC-21', 'Ninguno', 'Ninguno', 'Ninguno', 'Ninguno', 'Ninguno', '', 0, NULL),
     (4, 13, 'PC-22', 'Otro', 'Sin salida a internet', 'Ninguno', 'Ninguno', 'Ninguno', '', 1, NOW() - INTERVAL 5 DAY);
+
+-- Un codigo por profesor (db/09_codigo_por_profesor.sql): cada maestro se queda
+-- con el de su clase con mas sesiones y todas sus clases lo comparten. Asi los
+-- datos de prueba siguen la misma regla que la aplicacion.
+UPDATE usuarios u
+INNER JOIN (
+    SELECT t.profesor,
+           SUBSTRING_INDEX(GROUP_CONCAT(t.codigo ORDER BY t.sesiones DESC, t.idclases ASC SEPARATOR '|'), '|', 1) AS codigo
+    FROM (SELECT c.idclases, c.usuarios_idusuarios AS profesor, c.codigo,
+                 (SELECT COUNT(*) FROM codigos_accesos ca WHERE ca.codigo = c.codigo) AS sesiones
+            FROM clases c) t
+    GROUP BY t.profesor
+) elegido ON elegido.profesor = u.idusuarios
+SET u.codigo_clase = elegido.codigo;
+
+UPDATE clases c
+INNER JOIN usuarios u ON u.idusuarios = c.usuarios_idusuarios
+SET c.codigo = u.codigo_clase
+WHERE u.codigo_clase IS NOT NULL;

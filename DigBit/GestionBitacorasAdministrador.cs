@@ -1,798 +1,897 @@
-using DigBit.conexion;
-using iTextSharp.text;
-using iTextSharp.text.pdf;
-using iTextSharp.tool.xml;
 using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
+using DigBit.conexion;
+using DigBit.Infraestructura;
+using iTextSharp.text;
+using iTextSharp.text.pdf;
+using iTextSharp.tool.xml;
 using DrawingFont = System.Drawing.Font;
+using Timer = System.Windows.Forms.Timer;
 
 namespace DigBit
 {
     /// <summary>
-    /// Bitacoras para el administrador, en dos niveles: arriba las SESIONES (una
-    /// clase en una fecha, que es la bitacora de esa hora) y abajo los alumnos
-    /// que registraron en la sesion elegida. Antes era una sola tabla con una
-    /// fila por alumno y los datos de la sesion repetidos en cada una.
+    /// Seccion Bitacoras del administrador. Arriba las SESIONES (una clase en una
+    /// fecha, que es la bitacora de esa hora), con filtros que se aplican al
+    /// momento; abajo, quien registro en la sesion elegida y que reporto, en una
+    /// sola columna en vez de seis. Desde aqui se corrige un registro y se
+    /// descargan los PDF de una sesion o de todas las que quedan en la lista.
+    /// El profesor la abre como "Mis bitácoras": solo sus sesiones y sin corregir.
     /// </summary>
-    public class GestionBitacorasAdministrador : Form
+    public class GestionBitacorasAdministrador : PantallaAdmin
     {
-        // Fila de una bitacora que reporta algo: fondo suave. La celda con la
-        // falla concreta va en un tono fuerte, para localizarla de un vistazo.
+        // Fila de una bitacora que reporta algo: fondo suave. La celda con el
+        // reporte (o la cuenta de fallas de la sesion) va en un tono fuerte.
         private static readonly Color ColorConFalla = Color.FromArgb(255, 240, 214);
         private static readonly Color ColorFallaCelda = Color.FromArgb(255, 176, 79);
+        private static readonly string[] DiasCortos = { "dom", "lun", "mar", "mié", "jue", "vie", "sáb" };
+        private static readonly string[] Dias = { "domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado" };
 
-        private readonly Consultas consultas;
-        private readonly bool permitirEdicion;
-        private DataTable tablaSesiones;
-        private DataTable tablaDetalle;
-        private int idSesionMostrada;
+        private const string TodasLasFechas = "Todas las fechas";
+        private const string Hoy = "Hoy";
+        private const string UltimaSemana = "Últimos 7 días";
+        private const string EsteMes = "Este mes";
+        private const string UnDia = "Un día...";
+        private const string TodosLosLaboratorios = "Todos los laboratorios";
 
-        private Label lblTitulo;
-        private Label lblSubtitulo;
-        private Label lblBusqueda;
-        private Label lblDocente;
-        private Label lblFecha;
-        private Label lblSesiones;
-        private Label lblDetalle;
-        private Label lblCantidad;
-        private Panel pnlLeyenda;
-        private Label lblLeyenda;
+        private readonly Consultas consultas = new Consultas();
+        private readonly int idProfesor;
+        private readonly Timer esperaDetalle = new Timer { Interval = 120 };
+        private readonly DrawingFont negrita;
+        private List<SesionInfo> sesiones = new List<SesionInfo>();
+        private List<SesionInfo> visibles = new List<SesionInfo>();
+        private int idSesionMostrada = -1;
+        private bool cargandoFiltros;
 
-        /// <summary>Lo que hace falta de una sesion para nombrar y generar su PDF.</summary>
-        private sealed class SesionFila
+        private readonly TextBox txtBuscar;
+        private readonly ComboBox cboPeriodo;
+        private readonly DateTimePicker dtpDia;
+        private readonly ComboBox cboLaboratorio;
+        private readonly CheckBox chkSoloFallas;
+        private readonly LinkLabel lnkQuitarFiltros;
+        private readonly Label lblSesionTitulo;
+        private readonly Label lblSesionDetalle;
+        private readonly DataGridView gridAlumnos;
+        private readonly Button btnPdf;
+        private readonly Button btnLote;
+        private readonly Button btnCorregir;
+
+        /// <summary>Una fila de ObtenerSesionesAdministrador, ya interpretada.</summary>
+        private sealed class SesionInfo
         {
-            public int IdSesion;
+            public int Id;
+            public DateTime? Fecha;
+            public TimeSpan? Entrada;
+            public TimeSpan? Salida;
             public string Codigo;
+            public string Materia;
+            public string Grupo;
+            public string NumeroEmpleado;
             public string Profesor;
-            public string Fecha;
-            public string HoraEntrada;
+            public string Laboratorio;
+            public int Alumnos;
+            public int ConFallas;
+            public int SinConexion;
+            public string TextoBusqueda;
+
+            public string FechaCorta
+            {
+                get { return Fecha.HasValue ? DiasCortos[(int)Fecha.Value.DayOfWeek] + " " + Fecha.Value.ToString("dd/MM/yyyy") : "—"; }
+            }
+
+            public string FechaLarga
+            {
+                get { return Fecha.HasValue ? Dias[(int)Fecha.Value.DayOfWeek] + " " + Fecha.Value.ToString("dd/MM/yyyy") : "Sin fecha"; }
+            }
+
+            public string Horario
+            {
+                get { return HoraCorta(Entrada) + " – " + HoraCorta(Salida); }
+            }
+
+            /// <summary>Hoy y dentro de su horario: todavia pueden llegar bitacoras.</summary>
+            public bool EnCurso
+            {
+                get
+                {
+                    DateTime ahora = DateTime.Now;
+                    return Fecha.HasValue && Fecha.Value.Date == ahora.Date && Entrada.HasValue && Salida.HasValue
+                        && ahora.TimeOfDay >= Entrada.Value && ahora.TimeOfDay <= Salida.Value;
+                }
+            }
         }
 
-        private TextBox txtBusqueda;
-        private TextBox txtDocente;
-        private DateTimePicker dtpFecha;
-        private CheckBox chkFiltrarFecha;
-        private CheckBox chkSeleccionarTodo;
-        private DataGridView dgvSesiones;
-        private DataGridView dgvDetalle;
-        private Button btnAplicarFiltro;
-        private Button btnLimpiarFiltro;
-        private Button btnDescargarPdf;
-        private Button btnDescargarLote;
-        private Button btnEditarSeleccion;
-        private Button btnCerrar;
-
-        public GestionBitacorasAdministrador(bool permitirEdicion)
+        public GestionBitacorasAdministrador()
+            : this(0)
         {
-            this.permitirEdicion = permitirEdicion;
-            consultas = new Consultas();
-
-            InicializarComponentes();
-            CargarSesiones();
         }
 
-        private void InicializarComponentes()
+        /// <summary>Con un profesor (su id): su "Mis bitácoras", solo sus sesiones y sin corregir registros.</summary>
+        public GestionBitacorasAdministrador(int idProfesor)
+            : base(idProfesor == 0 ? "Bitácoras" : "Mis bitácoras",
+                (idProfesor == 0 ? "Cada sesión es una clase en una fecha." : "Cada sesión es una de tus clases en una fecha.")
+                    + " Elige una para ver quién registró y qué reportó. F5 actualiza.",
+                new Size(1240, 780))
         {
-            BackColor = Color.White;
-            ClientSize = new Size(1280, 726);
-            MinimumSize = new Size(1100, 640);
-            FormBorderStyle = FormBorderStyle.Sizable;
-            MaximizeBox = true;
-            MinimizeBox = false;
-            StartPosition = FormStartPosition.CenterScreen;
-            Text = permitirEdicion ? "Modificar bitacoras" : "Ver bitacoras";
+            this.idProfesor = idProfesor;
+            MinimumSize = new Size(1100, 620);
+            KeyPreview = true;
 
-            lblTitulo = new Label
+            // --- Filtros: se aplican al momento, sin boton ---------------------
+            txtBuscar = CrearBuscador(new Point(Margen, 112), 300);
+            ayuda.SetToolTip(txtBuscar, (idProfesor == 0 ? "Materia, profesor, grupo" : "Materia, grupo")
+                + ", laboratorio, código o fecha (13/07/2026)");
+
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Fecha", new Point(350, 88)));
+            cboPeriodo = EstiloHorarios.CrearCombo(new Point(350, 111), 160);
+            cboPeriodo.Items.AddRange(new object[] { TodasLasFechas, Hoy, UltimaSemana, EsteMes, UnDia });
+            cboPeriodo.SelectedIndex = 0;
+            cboPeriodo.SelectedIndexChanged += (s, e) =>
             {
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 18F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
-                Location = new Point(28, 18),
-                Text = permitirEdicion ? "Modificar bitacoras" : "Ver bitacoras"
+                dtpDia.Visible = (string)cboPeriodo.SelectedItem == UnDia;
+                Aplicar(null);
             };
+            Controls.Add(cboPeriodo);
 
-            lblSubtitulo = new Label
-            {
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 10.5F),
-                ForeColor = Color.FromArgb(50, 50, 50),
-                Location = new Point(30, 55),
-                Text = permitirEdicion
-                    ? "Elige una sesion arriba y, abajo, el alumno cuyo registro quieres editar."
-                    : "Cada sesion es la bitacora de una clase en una fecha. Elige una para ver quien registro."
-            };
-
-            lblBusqueda = new Label
-            {
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 10F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
-                Location = new Point(30, 98),
-                Text = "Buscar"
-            };
-
-            txtBusqueda = new TextBox
-            {
-                Font = new DrawingFont("Century Gothic", 10F),
-                Location = new Point(33, 120),
-                Size = new Size(350, 24)
-            };
-            txtBusqueda.KeyDown += txtBusqueda_KeyDown;
-
-            lblDocente = new Label
-            {
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 10F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
-                Location = new Point(405, 98),
-                Text = "Docente"
-            };
-
-            txtDocente = new TextBox
-            {
-                Font = new DrawingFont("Century Gothic", 10F),
-                Location = new Point(408, 120),
-                Size = new Size(240, 24)
-            };
-            txtDocente.KeyDown += txtBusqueda_KeyDown;
-
-            chkFiltrarFecha = new CheckBox
-            {
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 9.75F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
-                Location = new Point(670, 122),
-                Text = "Filtrar por fecha"
-            };
-
-            lblFecha = new Label
-            {
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 10F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
-                Location = new Point(830, 98),
-                Text = "Fecha"
-            };
-
-            dtpFecha = new DateTimePicker
+            dtpDia = new DateTimePicker
             {
                 Format = DateTimePickerFormat.Short,
-                Location = new Point(833, 120),
-                Size = new Size(120, 24),
-                Value = DateTime.Today
+                Font = new DrawingFont("Century Gothic", 10F),
+                Location = new Point(520, 111),
+                Size = new Size(130, 26),
+                Value = DateTime.Today,
+                Visible = false
             };
+            dtpDia.ValueChanged += (s, e) => Aplicar(null);
+            Controls.Add(dtpDia);
 
-            btnAplicarFiltro = CrearBoton("Aplicar filtro", new Point(980, 112), new Size(120, 38));
-            btnAplicarFiltro.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnAplicarFiltro.Click += btnAplicarFiltro_Click;
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Laboratorio", new Point(670, 88)));
+            cboLaboratorio = EstiloHorarios.CrearCombo(new Point(670, 111), 220);
+            cboLaboratorio.SelectedIndexChanged += (s, e) => { if (!cargandoFiltros) Aplicar(null); };
+            Controls.Add(cboLaboratorio);
 
-            btnLimpiarFiltro = CrearBoton("Limpiar", new Point(1115, 112), new Size(120, 38));
-            btnLimpiarFiltro.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnLimpiarFiltro.Click += btnLimpiarFiltro_Click;
-
-            // --- Nivel 1: sesiones ------------------------------------------
-            lblSesiones = new Label
+            chkSoloFallas = new CheckBox
             {
                 AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 10.5F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
-                Location = new Point(30, 160),
-                Text = "Sesiones"
-            };
-
-            dgvSesiones = CrearTabla(new Point(33, 184), new Size(1210, 236));
-            dgvSesiones.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            dgvSesiones.MultiSelect = true;
-            // Los dos eventos: al pulsar una fila, SelectionChanged puede llegar
-            // antes de que CurrentRow apunte a la nueva. CargarDetalle se protege
-            // de la repeticion comparando con la sesion que ya esta mostrada.
-            dgvSesiones.SelectionChanged += (s, e) => CargarDetalle();
-            dgvSesiones.CurrentCellChanged += (s, e) => CargarDetalle();
-            dgvSesiones.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) DescargarSeleccionado(); };
-            dgvSesiones.CellFormatting += dgvSesiones_CellFormatting;
-
-            // --- Nivel 2: alumnos de la sesion -------------------------------
-            lblDetalle = new Label
-            {
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 10.5F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
-                Location = new Point(30, 430),
-                Text = "Alumnos registrados"
-            };
-
-            dgvDetalle = CrearTabla(new Point(33, 454), new Size(1210, 186));
-            dgvDetalle.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            dgvDetalle.MultiSelect = false;
-            dgvDetalle.CellDoubleClick += dgvDetalle_CellDoubleClick;
-            dgvDetalle.CellFormatting += dgvDetalle_CellFormatting;
-
-            chkSeleccionarTodo = new CheckBox
-            {
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 9.75F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
-                Location = new Point(33, 652),
-                Text = "Seleccionar todas las sesiones filtradas"
-            };
-            chkSeleccionarTodo.CheckedChanged += chkSeleccionarTodo_CheckedChanged;
-
-            lblCantidad = new Label
-            {
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 9.75F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
-                Location = new Point(30, 678),
-                Text = "Sesiones encontradas: 0"
-            };
-
-            pnlLeyenda = new Panel
-            {
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
-                BackColor = ColorFallaCelda,
-                BorderStyle = BorderStyle.FixedSingle,
-                Location = new Point(33, 703),
-                Size = new Size(14, 14)
-            };
-
-            lblLeyenda = new Label
-            {
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 8.25F),
-                ForeColor = Color.FromArgb(50, 50, 50),
-                Location = new Point(52, 702),
-                Text = "Naranja intenso: la falla reportada. Naranja claro: el resto de esa bitacora."
-            };
-
-            btnDescargarPdf = CrearBoton("Descargar PDF", new Point(650, 651), new Size(140, 42));
-            btnDescargarPdf.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
-            btnDescargarPdf.Click += btnDescargarPdf_Click;
-
-            btnDescargarLote = CrearBoton("Descargar lote", new Point(805, 651), new Size(140, 42));
-            btnDescargarLote.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
-            btnDescargarLote.Click += btnDescargarLote_Click;
-
-            btnEditarSeleccion = CrearBoton("Editar alumno", new Point(960, 651), new Size(140, 42));
-            btnEditarSeleccion.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
-            btnEditarSeleccion.Click += btnEditarSeleccion_Click;
-            btnEditarSeleccion.Visible = permitirEdicion;
-
-            btnCerrar = CrearBoton("Cerrar", new Point(1115, 651), new Size(128, 42));
-            btnCerrar.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
-            btnCerrar.Click += btnCerrar_Click;
-
-            Controls.Add(lblTitulo);
-            Controls.Add(lblSubtitulo);
-            Controls.Add(lblBusqueda);
-            Controls.Add(txtBusqueda);
-            Controls.Add(lblDocente);
-            Controls.Add(txtDocente);
-            Controls.Add(chkFiltrarFecha);
-            Controls.Add(lblFecha);
-            Controls.Add(dtpFecha);
-            Controls.Add(btnAplicarFiltro);
-            Controls.Add(btnLimpiarFiltro);
-            Controls.Add(lblSesiones);
-            Controls.Add(dgvSesiones);
-            Controls.Add(lblDetalle);
-            Controls.Add(dgvDetalle);
-            Controls.Add(chkSeleccionarTodo);
-            Controls.Add(lblCantidad);
-            Controls.Add(pnlLeyenda);
-            Controls.Add(lblLeyenda);
-            Controls.Add(btnDescargarPdf);
-            Controls.Add(btnDescargarLote);
-            Controls.Add(btnEditarSeleccion);
-            Controls.Add(btnCerrar);
-        }
-
-        private DataGridView CrearTabla(Point posicion, Size tamaño)
-        {
-            return new DataGridView
-            {
-                Location = posicion,
-                Size = tamaño,
-                AllowUserToAddRows = false,
-                AllowUserToDeleteRows = false,
-                AllowUserToResizeRows = false,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells,
-                BackgroundColor = Color.White,
-                BorderStyle = BorderStyle.FixedSingle,
-                ReadOnly = true,
-                RowHeadersVisible = false,
-                ScrollBars = ScrollBars.Both,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect
-            };
-        }
-
-        private Button CrearBoton(string texto, Point posicion, Size tamaño)
-        {
-            Button boton = new Button
-            {
-                BackColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
                 Font = new DrawingFont("Century Gothic", 10F, FontStyle.Bold),
                 ForeColor = Color.DarkGreen,
-                Location = posicion,
-                Size = tamaño,
-                Text = texto,
-                UseVisualStyleBackColor = false
+                Location = new Point(910, 113),
+                Text = "Solo con fallas"
             };
-            boton.FlatAppearance.BorderColor = Color.DarkGreen;
-            boton.FlatAppearance.BorderSize = 2;
-            return boton;
+            chkSoloFallas.CheckedChanged += (s, e) => Aplicar(null);
+            Controls.Add(chkSoloFallas);
+
+            lnkQuitarFiltros = new LinkLabel
+            {
+                AutoSize = true,
+                Font = new DrawingFont("Century Gothic", 10F),
+                LinkColor = Color.DarkGreen,
+                ActiveLinkColor = Color.Green,
+                Location = new Point(1050, 114),
+                Text = "Quitar filtros",
+                Visible = false
+            };
+            lnkQuitarFiltros.LinkClicked += (s, e) => QuitarFiltros();
+            Controls.Add(lnkQuitarFiltros);
+
+            // --- Arriba: sesiones ---------------------------------------------
+            CrearLista(156);
+            grid.Columns.Add("fecha", "Fecha");
+            grid.Columns.Add("horario", "Horario");
+            grid.Columns.Add("laboratorio", "Laboratorio");
+            grid.Columns.Add("materia", "Materia");
+            grid.Columns.Add("grupo", "Grupo");
+            grid.Columns.Add("profesor", "Profesor");
+            grid.Columns.Add("codigo", "Código");
+            grid.Columns.Add("alumnos", "Alumnos");
+            grid.Columns.Add("fallas", "Fallas");
+            EstiloHorarios.Pesos(grid, 100, 100, 170, 210, 75, 200, 65, 70, 60);
+            grid.Columns["profesor"].Visible = idProfesor == 0;
+            grid.Columns["alumnos"].ToolTipText = "Alumnos que registraron bitácora en la sesión.";
+            grid.Columns["fallas"].ToolTipText = "Alumnos que reportaron alguna falla o comentario.";
+            foreach (DataGridViewColumn columna in grid.Columns)
+            {
+                // Ya vienen de la mas reciente a la mas antigua; ordenar por el
+                // texto "lun 13/07/2026" las desordenaria.
+                columna.SortMode = DataGridViewColumnSortMode.NotSortable;
+            }
+
+            grid.Columns["alumnos"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            grid.Columns["fallas"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            grid.CellFormatting += FormatoSesion;
+            negrita = new DrawingFont(grid.Font, FontStyle.Bold);
+
+            // --- Abajo: alumnos de la sesion elegida ----------------------------
+            // Las dos listas comparten el alto; la division se arrastra.
+            SplitContainer division = new SplitContainer
+            {
+                Orientation = Orientation.Horizontal,
+                Location = grid.Location,
+                Size = grid.Size,
+                Anchor = grid.Anchor,
+                BackColor = Color.White,
+                SplitterWidth = 10,
+                TabStop = false
+            };
+            division.Panel1MinSize = 110;
+            division.Panel2MinSize = 170;
+            Controls.Remove(grid);
+            grid.Dock = DockStyle.Fill;
+            division.Panel1.Controls.Add(grid);
+            grid.Paint += PintarListaVacia;
+
+            Panel encabezado = new Panel { Dock = DockStyle.Top, Height = 60, BackColor = Color.White };
+            lblSesionTitulo = new Label
+            {
+                AutoSize = false,
+                AutoEllipsis = true,
+                Font = new DrawingFont("Century Gothic", 11.5F, FontStyle.Bold),
+                ForeColor = Color.DarkGreen,
+                Location = new Point(0, 6),
+                Size = new Size(encabezado.Width, 24),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+            lblSesionDetalle = new Label
+            {
+                AutoSize = false,
+                AutoEllipsis = true,
+                Font = new DrawingFont("Century Gothic", 9.5F),
+                ForeColor = Color.FromArgb(60, 60, 60),
+                Location = new Point(0, 32),
+                Size = new Size(encabezado.Width, 22),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+            encabezado.Controls.Add(lblSesionTitulo);
+            encabezado.Controls.Add(lblSesionDetalle);
+
+            gridAlumnos = EstiloHorarios.CrearGrid(Point.Empty, new Size(400, 200));
+            gridAlumnos.Dock = DockStyle.Fill;
+            gridAlumnos.Columns.Add("alumno", "Alumno");
+            gridAlumnos.Columns.Add("matricula", "Matrícula");
+            gridAlumnos.Columns.Add("hora", "Hora");
+            gridAlumnos.Columns.Add("equipo", "Equipo");
+            gridAlumnos.Columns.Add("reporte", "Reporte");
+            EstiloHorarios.Pesos(gridAlumnos, 240, 100, 60, 110, 430);
+            gridAlumnos.Columns["hora"].ToolTipText = "Hora de su primer registro. Las bitácoras de antes de guardarse la hora muestran «—».";
+            // El reporte completo, aunque sea largo: la fila crece.
+            gridAlumnos.Columns["reporte"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+            gridAlumnos.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
+            gridAlumnos.CellFormatting += FormatoAlumno;
+            gridAlumnos.SelectionChanged += (s, e) => { if (btnCorregir != null) btnCorregir.Enabled = AlumnoSeleccionado() != null; };
+            gridAlumnos.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) CorregirSeleccionado(); };
+            gridAlumnos.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    e.Handled = true;
+                    CorregirSeleccionado();
+                }
+            };
+
+            division.Panel2.Controls.Add(gridAlumnos);
+            division.Panel2.Controls.Add(encabezado);
+            gridAlumnos.BringToFront();
+            Controls.Add(division);
+            division.SplitterDistance = division.Height * 45 / 100;
+
+            // --- Botones -------------------------------------------------------
+            Button cerrar = BotonAbajo("Cerrar", 110);
+            cerrar.Click += (s, e) => Close();
+            CancelButton = cerrar;
+            SeparacionAbajo(20);
+            btnLote = BotonAbajo("PDF de las sesiones", 230);
+            btnLote.Click += (s, e) => DescargarLote();
+            ayuda.SetToolTip(btnLote, "Un PDF por cada sesión que muestra la lista con los filtros de arriba.");
+            btnPdf = BotonAbajo("PDF de esta sesión", 180);
+            btnPdf.Click += (s, e) => DescargarPdf();
+            SeparacionAbajo(20);
+            btnCorregir = BotonAbajo("Corregir registro", 170);
+            btnCorregir.Click += (s, e) => CorregirSeleccionado();
+            ayuda.SetToolTip(btnCorregir, "Corrige el equipo o las fallas que registró el alumno elegido abajo. También con doble clic.");
+            // Corregir un registro es del administrador; el profesor solo consulta y descarga.
+            btnCorregir.Visible = idProfesor == 0;
+
+            esperaDetalle.Tick += (s, e) =>
+            {
+                esperaDetalle.Stop();
+                CargarDetalle(false, null);
+            };
+
+            ActiveControl = txtBuscar;
+            ActualizarBotones();
         }
 
         // =====================================================================
-        // Sesiones
+        // Sesiones: carga y filtros
         // =====================================================================
 
-        private void CargarSesiones()
+        protected override void Recargar(string seleccionar)
         {
+            DataTable tabla = null;
             try
             {
-                tablaSesiones = consultas.ObtenerSesionesAdministrador();
+                tabla = consultas.ObtenerSesionesAdministrador(idProfesor);
             }
             catch (Exception ex)
             {
-                MessageBox.Show("No se pudieron leer las sesiones: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                tablaSesiones = new DataTable();
+                MostrarError("Leer las sesiones", ex, "No se pudieron leer las sesiones");
             }
 
-            dgvSesiones.DataSource = tablaSesiones;
-            ConfigurarColumnasSesiones();
-            ActualizarContador();
-            AplicarSeleccionAutomatica();
-            CargarDetalle();
+            sesiones = tabla == null ? new List<SesionInfo>() : tabla.Rows.Cast<DataRow>().Select(LeerSesion).ToList();
+            RellenarLaboratorios();
+
+            // Lo que se ve abajo tambien se vuelve a leer (pudo registrar alguien).
+            idSesionMostrada = -1;
+            Aplicar(seleccionar);
         }
 
-        private void ConfigurarColumnasSesiones()
+        protected override void AlBuscar()
         {
-            if (dgvSesiones.Columns.Count == 0)
+            Aplicar(null);
+        }
+
+        private static SesionInfo LeerSesion(DataRow fila)
+        {
+            SesionInfo sesion = new SesionInfo
+            {
+                Id = Entero(fila, "idcodigos_accesos"),
+                Fecha = LeerFecha(Texto(fila, "fecha")),
+                Entrada = LeerHora(fila["hora_entrada"]),
+                Salida = LeerHora(fila["hora_salida"]),
+                Codigo = Texto(fila, "codigo"),
+                Materia = Texto(fila, "materia"),
+                Grupo = Texto(fila, "grupo"),
+                NumeroEmpleado = Texto(fila, "numero_empleado"),
+                Profesor = Texto(fila, "profesor"),
+                Laboratorio = Texto(fila, "laboratorio"),
+                Alumnos = Entero(fila, "alumnos"),
+                ConFallas = Entero(fila, "con_fallas"),
+                SinConexion = Entero(fila, "sin_conexion")
+            };
+            sesion.TextoBusqueda = EstiloAdmin.Normalizar(string.Join(" ", sesion.FechaCorta,
+                sesion.Fecha.HasValue ? sesion.Fecha.Value.ToString("yyyy-MM-dd") : "",
+                sesion.Codigo, sesion.Materia, sesion.Grupo, sesion.NumeroEmpleado, sesion.Profesor, sesion.Laboratorio));
+            return sesion;
+        }
+
+        private void RellenarLaboratorios()
+        {
+            string anterior = cboLaboratorio.SelectedItem as string;
+            cargandoFiltros = true;
+            cboLaboratorio.Items.Clear();
+            cboLaboratorio.Items.Add(TodosLosLaboratorios);
+            foreach (string laboratorio in sesiones.Select(s => s.Laboratorio).Where(l => l.Length > 0).Distinct().OrderBy(l => l))
+            {
+                cboLaboratorio.Items.Add(laboratorio);
+            }
+
+            int indice = anterior == null ? 0 : cboLaboratorio.Items.IndexOf(anterior);
+            cboLaboratorio.SelectedIndex = indice < 0 ? 0 : indice;
+            cargandoFiltros = false;
+        }
+
+        private bool EnPeriodo(SesionInfo sesion, string periodo, DateTime hoy)
+        {
+            if (periodo == TodasLasFechas)
+            {
+                return true;
+            }
+
+            if (!sesion.Fecha.HasValue)
+            {
+                return false;
+            }
+
+            DateTime fecha = sesion.Fecha.Value.Date;
+            switch (periodo)
+            {
+                case Hoy:
+                    return fecha == hoy;
+                case UltimaSemana:
+                    return fecha > hoy.AddDays(-7) && fecha <= hoy;
+                case EsteMes:
+                    return fecha.Year == hoy.Year && fecha.Month == hoy.Month;
+                case UnDia:
+                    return fecha == dtpDia.Value.Date;
+                default:
+                    return true;
+            }
+        }
+
+        /// <summary>Filtra en memoria, vuelve a pintar la lista y deja una sesion elegida.</summary>
+        private void Aplicar(string seleccionarId)
+        {
+            if (cargandoFiltros)
             {
                 return;
             }
 
-            dgvSesiones.Columns["idcodigos_accesos"].Visible = false;
-            dgvSesiones.Columns["fecha"].HeaderText = "Fecha";
-            dgvSesiones.Columns["hora_entrada"].HeaderText = "Entrada";
-            dgvSesiones.Columns["hora_salida"].HeaderText = "Salida";
-            dgvSesiones.Columns["codigo"].HeaderText = "Codigo";
-            dgvSesiones.Columns["materia"].HeaderText = "Materia";
-            dgvSesiones.Columns["grupo"].HeaderText = "Grupo";
-            dgvSesiones.Columns["numero_empleado"].HeaderText = "No. empleado";
-            dgvSesiones.Columns["profesor"].HeaderText = "Profesor";
-            dgvSesiones.Columns["laboratorio"].HeaderText = "Laboratorio";
-            dgvSesiones.Columns["alumnos"].HeaderText = "Alumnos";
-            dgvSesiones.Columns["con_fallas"].HeaderText = "Con fallas";
-            dgvSesiones.Columns["sin_conexion"].HeaderText = "Sin conexion";
+            string periodo = (string)cboPeriodo.SelectedItem;
+            string laboratorio = cboLaboratorio.SelectedItem as string;
+            bool todosLosLaboratorios = laboratorio == null || laboratorio == TodosLosLaboratorios;
+            DateTime hoy = DateTime.Today;
 
-            dgvSesiones.Columns["materia"].FillWeight = 22;
-            dgvSesiones.Columns["profesor"].FillWeight = 22;
-            dgvSesiones.Columns["laboratorio"].FillWeight = 18;
+            visibles = sesiones.Where(s =>
+                    EnPeriodo(s, periodo, hoy)
+                    && (todosLosLaboratorios || s.Laboratorio == laboratorio)
+                    && (!chkSoloFallas.Checked || s.ConFallas > 0)
+                    && EstiloAdmin.Coincide(s.TextoBusqueda, txtBuscar.Text))
+                .ToList();
 
-            foreach (string columna in new[] { "alumnos", "con_fallas", "sin_conexion" })
-            {
-                dgvSesiones.Columns[columna].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
-            }
-        }
-
-        /// <summary>La cuenta de bitacoras con falla se marca en naranja cuando no es cero.</summary>
-        private void dgvSesiones_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
-        {
-            if (e.RowIndex < 0 || e.ColumnIndex < 0 || dgvSesiones.Columns[e.ColumnIndex].Name != "con_fallas")
-            {
-                return;
-            }
-
-            int conFallas = 0;
-            if (e.Value != null && e.Value != DBNull.Value)
-            {
-                int.TryParse(e.Value.ToString(), out conFallas);
-            }
-
-            e.CellStyle.BackColor = conFallas > 0 ? ColorFallaCelda : Color.Empty;
-            e.CellStyle.SelectionBackColor = conFallas > 0 ? ControlPaint.Dark(ColorFallaCelda, 0.12f) : dgvSesiones.DefaultCellStyle.SelectionBackColor;
-        }
-
-        private void AplicarFiltros()
-        {
-            if (tablaSesiones == null)
-            {
-                return;
-            }
-
-            List<string> filtros = new List<string>();
-            if (chkFiltrarFecha.Checked)
-            {
-                filtros.Add($"fecha = '{dtpFecha.Value:yyyy-MM-dd}'");
-            }
-
-            string textoDocente = txtDocente.Text.Trim().Replace("'", "''");
-            if (!string.IsNullOrWhiteSpace(textoDocente))
-            {
-                filtros.Add(
-                    $"profesor LIKE '%{textoDocente}%' OR " +
-                    $"numero_empleado LIKE '%{textoDocente}%'");
-            }
-
-            string textoBusqueda = txtBusqueda.Text.Trim().Replace("'", "''");
-            if (!string.IsNullOrWhiteSpace(textoBusqueda))
-            {
-                filtros.Add(
-                    $"codigo LIKE '%{textoBusqueda}%' OR " +
-                    $"fecha LIKE '%{textoBusqueda}%' OR " +
-                    $"numero_empleado LIKE '%{textoBusqueda}%' OR " +
-                    $"profesor LIKE '%{textoBusqueda}%' OR " +
-                    $"grupo LIKE '%{textoBusqueda}%' OR " +
-                    $"materia LIKE '%{textoBusqueda}%' OR " +
-                    $"laboratorio LIKE '%{textoBusqueda}%'");
-            }
-
-            tablaSesiones.DefaultView.RowFilter = filtros.Count > 0
-                ? string.Join(" AND ", filtros.Select(filtro => $"({filtro})"))
-                : string.Empty;
-
-            dgvSesiones.DataSource = tablaSesiones.DefaultView;
-            ConfigurarColumnasSesiones();
-            ActualizarContador();
-            AplicarSeleccionAutomatica();
-            CargarDetalle();
-        }
-
-        private void ActualizarContador()
-        {
-            int alumnos = 0;
-            foreach (DataGridViewRow fila in dgvSesiones.Rows)
-            {
-                alumnos += LeerEntero(fila, "alumnos");
-            }
-
-            lblCantidad.Text = $"Sesiones encontradas: {dgvSesiones.Rows.Count} · {alumnos} bitacora(s) de alumnos en total";
-        }
-
-        private void AplicarSeleccionAutomatica()
-        {
-            if (chkSeleccionarTodo != null && chkSeleccionarTodo.Checked)
-            {
-                SeleccionarTodasLasFilasVisibles();
-            }
-        }
-
-        private void SeleccionarTodasLasFilasVisibles()
-        {
-            dgvSesiones.ClearSelection();
-
-            foreach (DataGridViewRow fila in dgvSesiones.Rows)
-            {
-                if (fila.Visible)
+            LlenarLista(visibles,
+                s => new object[]
                 {
-                    fila.Selected = true;
-                }
-            }
-        }
-
-        // =====================================================================
-        // Detalle: alumnos de la sesion elegida
-        // =====================================================================
-
-        private void CargarDetalle()
-        {
-            int idSesion = ObtenerIdSesion(dgvSesiones.CurrentRow);
-            if (idSesion == idSesionMostrada)
+                    s.FechaCorta,
+                    s.Horario + (s.EnCurso ? " (en curso)" : ""),
+                    EstiloAdmin.Guion(s.Laboratorio),
+                    EstiloAdmin.Guion(s.Materia),
+                    EstiloAdmin.Guion(s.Grupo),
+                    EstiloAdmin.Guion(s.Profesor),
+                    s.Codigo,
+                    s.SinConexion > 0 ? s.Alumnos + "*" : s.Alumnos.ToString(),
+                    s.ConFallas.ToString()
+                },
+                s => false, s => s.Id.ToString(), seleccionarId);
+            foreach (DataGridViewRow fila in grid.Rows)
             {
-                return;
-            }
-
-            idSesionMostrada = idSesion;
-            if (idSesion == 0)
-            {
-                tablaDetalle = null;
-                dgvDetalle.DataSource = null;
-                lblDetalle.Text = "Alumnos registrados";
-                return;
-            }
-
-            try
-            {
-                tablaDetalle = consultas.consultaRegistroSesion(idSesion);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("No se pudieron leer los alumnos de la sesion: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                tablaDetalle = null;
-            }
-
-            dgvDetalle.DataSource = tablaDetalle;
-            ConfigurarColumnasDetalle();
-
-            DataGridViewRow fila = dgvSesiones.CurrentRow;
-            string descripcion = fila == null
-                ? ""
-                : " de " + LeerTexto(fila, "codigo") + " - " + LeerTexto(fila, "materia") + " - " + LeerTexto(fila, "grupo")
-                  + ", " + LeerTexto(fila, "fecha") + " " + LeerTexto(fila, "hora_entrada") + " a " + LeerTexto(fila, "hora_salida");
-            lblDetalle.Text = "Alumnos registrados" + descripcion + " (" + (tablaDetalle == null ? 0 : tablaDetalle.Rows.Count) + ")";
-        }
-
-        private void ConfigurarColumnasDetalle()
-        {
-            if (dgvDetalle.Columns.Count == 0)
-            {
-                return;
-            }
-
-            foreach (string oculta in new[] { "fk_codigo_accesos", "fk_usuario", "nombre", "apellido_paterno", "apellido_materno", "con_falla", "sin_conexion" })
-            {
-                if (dgvDetalle.Columns.Contains(oculta))
+                SesionInfo sesion = (SesionInfo)fila.Tag;
+                if (sesion.SinConexion > 0)
                 {
-                    dgvDetalle.Columns[oculta].Visible = false;
+                    fila.Cells["alumnos"].ToolTipText = Plural(sesion.SinConexion, "registró", "registraron") + " sin conexión con el servidor.";
                 }
             }
 
-            dgvDetalle.Columns["numero_identificador"].HeaderText = "Matricula";
-            dgvDetalle.Columns["nombre_completo"].HeaderText = "Alumno";
-            dgvDetalle.Columns["numero_computadora"].HeaderText = "Computadora";
-            dgvDetalle.Columns["falla_red"].HeaderText = "Falla red";
-            dgvDetalle.Columns["comentarios_red"].HeaderText = "Comentario red";
-            dgvDetalle.Columns["falla_hardware"].HeaderText = "Falla hardware";
-            dgvDetalle.Columns["comentarios_hardware"].HeaderText = "Comentario hardware";
-            dgvDetalle.Columns["falla_software"].HeaderText = "Falla software";
-            dgvDetalle.Columns["comentarios_software"].HeaderText = "Comentario software";
+            MostrarVacio();
 
-            dgvDetalle.Columns["nombre_completo"].DisplayIndex = 0;
-            dgvDetalle.Columns["nombre_completo"].FillWeight = 24;
-            dgvDetalle.Columns["comentarios_red"].FillWeight = 20;
-            dgvDetalle.Columns["comentarios_hardware"].FillWeight = 20;
-            dgvDetalle.Columns["comentarios_software"].FillWeight = 20;
+            // Siempre hay una elegida (la mas reciente, si no): abajo nunca queda vacio sin motivo.
+            if (grid.SelectedRows.Count == 0 && grid.Rows.Count > 0)
+            {
+                grid.Rows[0].Selected = true;
+                grid.CurrentCell = grid.Rows[0].Cells[0];
+            }
+
+            int bitacoras = visibles.Sum(s => s.Alumnos);
+            int conFallas = visibles.Sum(s => s.ConFallas);
+            if (sesiones.Count == 0)
+            {
+                lblResumen.Text = "Todavía no hay sesiones: aparecen cuando un alumno usa el código de una clase.";
+            }
+            else if (visibles.Count == 0)
+            {
+                lblResumen.Text = "Ninguna sesión coincide con los filtros.";
+            }
+            else
+            {
+                lblResumen.Text = (visibles.Count == sesiones.Count ? "" : visibles.Count + " de ")
+                    + Plural(sesiones.Count, "sesión", "sesiones") + ": "
+                    + Plural(bitacoras, "bitácora", "bitácoras")
+                    + (conFallas > 0 ? ", " + conFallas + " con fallas" : ", ninguna con fallas") + ".";
+            }
+
+            ActualizarBotones();
         }
 
-        /// <summary>
-        /// La fila de una bitacora con reportes va en tono suave y la celda que
-        /// contiene la falla, en tono fuerte: asi se localiza sin leer toda la
-        /// fila. Se decide en cada pintado, por si la tabla se recarga o reordena.
-        /// </summary>
-        private void dgvDetalle_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
+        private bool HayFiltros
+        {
+            get
+            {
+                return txtBuscar.Text.Trim().Length > 0 || cboPeriodo.SelectedIndex > 0
+                    || cboLaboratorio.SelectedIndex > 0 || chkSoloFallas.Checked;
+            }
+        }
+
+        private void MostrarVacio()
+        {
+            lnkQuitarFiltros.Visible = HayFiltros;
+            grid.Invalidate();
+        }
+
+        /// <summary>Con la lista vacia se dice por que, en medio de la lista.</summary>
+        private void PintarListaVacia(object sender, PaintEventArgs e)
+        {
+            if (visibles.Count > 0)
+            {
+                return;
+            }
+
+            string texto = sesiones.Count == 0
+                ? "Todavía no hay sesiones. Aparecen cuando un alumno usa el código de una clase."
+                : "Ninguna sesión coincide con los filtros. «Quitar filtros», arriba, los deja como al abrir.";
+            System.Drawing.Rectangle area = new System.Drawing.Rectangle(0, grid.ColumnHeadersHeight, grid.ClientSize.Width, grid.ClientSize.Height - grid.ColumnHeadersHeight);
+            TextRenderer.DrawText(e.Graphics, texto, grid.Font, area, Color.Gray,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak);
+        }
+
+        private void QuitarFiltros()
+        {
+            cargandoFiltros = true;
+            txtBuscar.Text = "";
+            cboPeriodo.SelectedIndex = 0;
+            cboLaboratorio.SelectedIndex = 0;
+            chkSoloFallas.Checked = false;
+            cargandoFiltros = false;
+            Aplicar(null);
+        }
+
+        protected override void ActualizarBotones()
+        {
+            if (btnPdf == null)
+            {
+                return;
+            }
+
+            btnPdf.Enabled = Seleccionado<SesionInfo>() != null;
+            btnLote.Enabled = visibles.Count > 0;
+            btnLote.Text = visibles.Count == 0 ? "PDF de las sesiones"
+                : visibles.Count == 1 ? "PDF de 1 sesión"
+                : "PDF de las " + visibles.Count + " sesiones";
+            btnCorregir.Enabled = AlumnoSeleccionado() != null;
+
+            // Al moverse por la lista con las flechas no se consulta en cada fila.
+            esperaDetalle.Stop();
+            esperaDetalle.Start();
+        }
+
+        /// <summary>Enter o doble clic en una sesion: a sus alumnos.</summary>
+        protected override void AlDobleClic()
+        {
+            esperaDetalle.Stop();
+            CargarDetalle(false, null);
+            if (gridAlumnos.Rows.Count > 0)
+            {
+                if (gridAlumnos.SelectedRows.Count == 0)
+                {
+                    gridAlumnos.Rows[0].Selected = true;
+                    gridAlumnos.CurrentCell = gridAlumnos.Rows[0].Cells[0];
+                }
+
+                gridAlumnos.Focus();
+            }
+        }
+
+        /// <summary>La cuenta de fallas en naranja cuando no es cero; los ceros, en gris.</summary>
+        private void FormatoSesion(object sender, DataGridViewCellFormattingEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0)
             {
                 return;
             }
 
-            DataRowView vista = dgvDetalle.Rows[e.RowIndex].DataBoundItem as DataRowView;
-            if (vista == null || !Consultas.ConFalla(vista.Row))
+            SesionInfo sesion = grid.Rows[e.RowIndex].Tag as SesionInfo;
+            string columna = grid.Columns[e.ColumnIndex].Name;
+            if (sesion == null)
             {
                 return;
             }
 
-            string area;
-            bool esLaFalla = Consultas.EsColumnaDeFalla(dgvDetalle.Columns[e.ColumnIndex].Name, out area)
-                && Consultas.ConFallaEn(vista.Row, area);
-
-            Color fondo = esLaFalla ? ColorFallaCelda : ColorConFalla;
-            e.CellStyle.BackColor = fondo;
-            e.CellStyle.SelectionBackColor = ControlPaint.Dark(fondo, 0.12f);
-            e.CellStyle.SelectionForeColor = Color.Black;
-            if (esLaFalla)
+            if (columna == "fallas" && sesion.ConFallas > 0)
             {
-                e.CellStyle.Font = new DrawingFont(dgvDetalle.Font, FontStyle.Bold);
+                // Elegida o no, la cuenta sigue en naranja; el resto de la fila marca la seleccion.
+                e.CellStyle.BackColor = ColorFallaCelda;
+                e.CellStyle.SelectionBackColor = ColorFallaCelda;
+                e.CellStyle.SelectionForeColor = Color.Black;
+                e.CellStyle.Font = negrita;
+            }
+            else if ((columna == "fallas" && sesion.ConFallas == 0) || (columna == "alumnos" && sesion.Alumnos == 0))
+            {
+                e.CellStyle.ForeColor = Color.Gray;
+            }
+            else if (columna == "horario" && sesion.EnCurso)
+            {
+                e.CellStyle.ForeColor = Color.DarkGreen;
+                e.CellStyle.Font = negrita;
             }
         }
 
         // =====================================================================
-        // Lectura de filas
+        // Abajo: alumnos de la sesion elegida
         // =====================================================================
 
-        private static string LeerTexto(DataGridViewRow fila, string columna)
+        private void CargarDetalle(bool forzar, string seleccionarAlumno)
         {
-            if (fila == null || !fila.DataGridView.Columns.Contains(columna))
-            {
-                return string.Empty;
-            }
-
-            object valor = fila.Cells[columna].Value;
-            return valor == null || valor == DBNull.Value ? string.Empty : valor.ToString();
-        }
-
-        private static int LeerEntero(DataGridViewRow fila, string columna)
-        {
-            int numero;
-            return int.TryParse(LeerTexto(fila, columna), out numero) ? numero : 0;
-        }
-
-        /// <summary>Sesion (idcodigos_accesos) de una fila de la tabla de sesiones; 0 si no la tiene.</summary>
-        private static int ObtenerIdSesion(DataGridViewRow fila)
-        {
-            return LeerEntero(fila, "idcodigos_accesos");
-        }
-
-        private static SesionFila LeerSesionFila(DataGridViewRow fila)
-        {
-            return new SesionFila
-            {
-                IdSesion = ObtenerIdSesion(fila),
-                Codigo = LeerTexto(fila, "codigo"),
-                Profesor = string.IsNullOrWhiteSpace(LeerTexto(fila, "profesor")) ? "Bitacora" : LeerTexto(fila, "profesor"),
-                Fecha = LeerTexto(fila, "fecha"),
-                HoraEntrada = LeerTexto(fila, "hora_entrada")
-            };
-        }
-
-        /// <summary>
-        /// Nombre de archivo "codigo_fecha_HHmm_profesor.pdf": el mismo codigo tiene
-        /// una sesion por fecha, asi que la fecha y la hora de entrada las distinguen.
-        /// </summary>
-        private string NombreArchivoSesion(SesionFila sesion)
-        {
-            string fecha = sesion.Fecha.Length >= 10 ? sesion.Fecha.Substring(0, 10) : sesion.Fecha;
-            string hora = sesion.HoraEntrada.Replace(":", "");
-            if (hora.Length > 4)
-            {
-                hora = hora.Substring(0, 4);
-            }
-
-            string[] partes = { sesion.Codigo, fecha, hora, sesion.Profesor };
-            string nombre = string.Join("_", partes.Where(parte => !string.IsNullOrWhiteSpace(parte)));
-            return SanitizarNombreArchivo(nombre) + ".pdf";
-        }
-
-        // =====================================================================
-        // Acciones
-        // =====================================================================
-
-        private void DescargarSeleccionado()
-        {
-            if (dgvSesiones.CurrentRow == null)
-            {
-                MessageBox.Show("Selecciona una sesion de la tabla de arriba.", "Seleccion requerida", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            SesionFila sesion = LeerSesionFila(dgvSesiones.CurrentRow);
-            if (sesion.IdSesion == 0)
-            {
-                MessageBox.Show("La fila seleccionada no tiene una sesion valida.", "Informacion", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            DescargarPdfSesion(sesion);
-        }
-
-        private void DescargarPorLote()
-        {
-            List<DataGridViewRow> filasOrigen = dgvSesiones.SelectedRows.Count > 0
-                ? dgvSesiones.SelectedRows.Cast<DataGridViewRow>().ToList()
-                : dgvSesiones.Rows.Cast<DataGridViewRow>().Where(fila => fila.Visible).ToList();
-
-            List<SesionFila> sesiones = filasOrigen
-                .Select(LeerSesionFila)
-                .Where(sesion => sesion.IdSesion != 0)
-                .GroupBy(sesion => sesion.IdSesion)
-                .Select(grupo => grupo.First())
-                .ToList();
-
-            if (sesiones.Count == 0)
-            {
-                MessageBox.Show("No hay sesiones disponibles para descargar.", "Informacion", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            string carpetaDestino = ObtenerCarpetaDestinoLote();
-            if (string.IsNullOrWhiteSpace(carpetaDestino))
+            SesionInfo sesion = Seleccionado<SesionInfo>();
+            int id = sesion == null ? 0 : sesion.Id;
+            if (!forzar && id == idSesionMostrada)
             {
                 return;
             }
 
-            int descargadas = 0;
-            HashSet<string> nombresUsados = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (SesionFila sesion in sesiones)
+            idSesionMostrada = id;
+            gridAlumnos.Rows.Clear();
+            if (sesion == null)
             {
-                string nombreArchivo = NombreArchivoSesion(sesion);
-                if (!nombresUsados.Add(nombreArchivo))
+                lblSesionTitulo.Text = visibles.Count == 0 ? "" : "Elige una sesión de la lista.";
+                lblSesionDetalle.Text = "";
+                btnCorregir.Enabled = false;
+                return;
+            }
+
+            lblSesionTitulo.Text = EstiloAdmin.Guion(sesion.Materia) + (sesion.Grupo.Length > 0 ? ", " + sesion.Grupo : "");
+            lblSesionDetalle.Text = DescribirSesion(sesion);
+
+            DataTable tabla;
+            try
+            {
+                tabla = consultas.consultaRegistroSesion(id);
+            }
+            catch (Exception ex)
+            {
+                lblSesionTitulo.Text += ": no se pudo leer quién registró";
+                MostrarError("Leer los alumnos de la sesion " + id, ex, "No se pudo leer quién registró en esta sesión");
+                return;
+            }
+
+            foreach (DataRow fila in tabla.Rows)
+            {
+                int indice = gridAlumnos.Rows.Add(
+                    NombreAlumno(fila),
+                    Texto(fila, "numero_identificador"),
+                    Texto(fila, "hora_registro"),
+                    EstiloAdmin.Guion(Texto(fila, "numero_computadora")),
+                    Consultas.DescribirFallas(fila));
+                gridAlumnos.Rows[indice].Tag = fila;
+            }
+
+            int conFallas = tabla.Rows.Cast<DataRow>().Count(Consultas.ConFalla);
+            lblSesionTitulo.Text += tabla.Rows.Count == 0
+                ? ": nadie registró bitácora"
+                : ": " + Plural(tabla.Rows.Count, "alumno", "alumnos") + (conFallas > 0 ? ", " + conFallas + " con fallas" : ", sin fallas");
+
+            gridAlumnos.ClearSelection();
+            if (seleccionarAlumno != null)
+            {
+                EstiloHorarios.SeleccionarFila(gridAlumnos, f => Texto((DataRow)f.Tag, "fk_usuario") == seleccionarAlumno);
+            }
+
+            btnCorregir.Enabled = AlumnoSeleccionado() != null;
+        }
+
+        /// <summary>"lunes 13/07/2026, de 08:57 a 12:00 en CISCO, con NOMBRE (NUMERO). Código CODIGO."</summary>
+        private string DescribirSesion(SesionInfo sesion)
+        {
+            string texto = char.ToUpper(sesion.FechaLarga[0]) + sesion.FechaLarga.Substring(1)
+                + ", de " + HoraCorta(sesion.Entrada) + " a " + HoraCorta(sesion.Salida)
+                + (sesion.Laboratorio.Length > 0 ? " en " + sesion.Laboratorio : "");
+            // En "Mis bitacoras" todas son del mismo profesor: no se repite.
+            if (sesion.Profesor.Length > 0 && idProfesor == 0)
+            {
+                texto += ", con " + sesion.Profesor + (sesion.NumeroEmpleado.Length > 0 ? " (" + sesion.NumeroEmpleado + ")" : "");
+            }
+
+            return texto + ". Código " + sesion.Codigo + (sesion.EnCurso ? ". En curso: pueden llegar más bitácoras (F5 actualiza)." : ".");
+        }
+
+        /// <summary>"Apellidos, Nombre", como la lista de Alumnos y el orden de la consulta.</summary>
+        private static string NombreAlumno(DataRow fila)
+        {
+            string apellidos = (Texto(fila, "apellido_paterno") + " " + Texto(fila, "apellido_materno")).Trim();
+            string nombre = apellidos.Length > 0 ? apellidos + ", " + Texto(fila, "nombre") : Texto(fila, "nombre");
+            return Entero(fila, "sin_conexion") == 1 ? nombre + " (sin conexión)" : nombre;
+        }
+
+        private DataRow AlumnoSeleccionado()
+        {
+            return gridAlumnos.SelectedRows.Count == 0 ? null : gridAlumnos.SelectedRows[0].Tag as DataRow;
+        }
+
+        /// <summary>Fila suave si el alumno reporto algo y el reporte en tono fuerte; "Sin novedad" en gris.</summary>
+        private void FormatoAlumno(object sender, DataGridViewCellFormattingEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0)
+            {
+                return;
+            }
+
+            DataRow fila = gridAlumnos.Rows[e.RowIndex].Tag as DataRow;
+            if (fila == null)
+            {
+                return;
+            }
+
+            string columna = gridAlumnos.Columns[e.ColumnIndex].Name;
+            if (!Consultas.ConFalla(fila))
+            {
+                if (columna == "reporte" || (columna == "hora" && Texto(fila, "hora_registro") == "—"))
                 {
-                    // Dos sesiones con el mismo codigo, fecha y hora: se distinguen por su id.
-                    nombreArchivo = Path.GetFileNameWithoutExtension(nombreArchivo) + "_" + sesion.IdSesion + ".pdf";
-                    nombresUsados.Add(nombreArchivo);
+                    e.CellStyle.ForeColor = Color.Gray;
                 }
 
-                string rutaCompleta = Path.Combine(carpetaDestino, nombreArchivo);
-
-                if (GenerarPdfSesion(sesion.IdSesion, sesion.Profesor, rutaCompleta))
-                {
-                    descargadas++;
-                }
+                return;
             }
 
-            MessageBox.Show(
-                $"Se descargaron {descargadas} bitacoras en:{Environment.NewLine}{carpetaDestino}",
-                "Descarga completa",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-
-            AbrirCarpetaDestino(carpetaDestino);
+            // Elegida, la fila va con el color de seleccion de siempre y el reporte
+            // sigue en naranja.
+            if (columna == "reporte")
+            {
+                e.CellStyle.BackColor = ColorFallaCelda;
+                e.CellStyle.SelectionBackColor = ColorFallaCelda;
+                e.CellStyle.SelectionForeColor = Color.Black;
+                e.CellStyle.Font = negrita;
+            }
+            else
+            {
+                e.CellStyle.BackColor = ColorConFalla;
+            }
         }
 
-        private void EditarSeleccionado()
+        private void CorregirSeleccionado()
         {
-            if (!permitirEdicion)
+            DataRow fila = AlumnoSeleccionado();
+            SesionInfo sesion = Seleccionado<SesionInfo>();
+            if (fila == null || sesion == null || idProfesor != 0)
             {
                 return;
             }
 
-            if (dgvDetalle.CurrentRow == null)
+            string alumno = NombreAlumno(fila);
+            string idAlumno = Texto(fila, "fk_usuario");
+            using (EditarBitacoraAdministrador editor = new EditarBitacoraAdministrador(fila, alumno,
+                sesion.FechaCorta + ", " + sesion.Horario + ", " + EstiloAdmin.Guion(sesion.Materia)))
             {
-                MessageBox.Show("Selecciona el alumno cuyo registro quieres editar, en la tabla de abajo.", "Seleccion requerida", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            using (EditarBitacoraAdministrador editor = new EditarBitacoraAdministrador(dgvDetalle.CurrentRow))
-            {
-                if (editor.ShowDialog() == DialogResult.OK)
+                if (editor.ShowDialog(this) != DialogResult.OK)
                 {
-                    int idSesion = idSesionMostrada;
-                    CargarSesiones();
-                    AplicarFiltros();
-                    SeleccionarSesion(idSesion);
-                }
-            }
-        }
-
-        /// <summary>Vuelve a dejar seleccionada una sesion tras recargar la tabla.</summary>
-        private void SeleccionarSesion(int idSesion)
-        {
-            foreach (DataGridViewRow fila in dgvSesiones.Rows)
-            {
-                if (ObtenerIdSesion(fila) == idSesion)
-                {
-                    dgvSesiones.ClearSelection();
-                    fila.Selected = true;
-                    dgvSesiones.CurrentCell = fila.Cells[dgvSesiones.Columns["codigo"].Index];
                     return;
                 }
             }
+
+            Recargar(sesion.Id.ToString());
+            esperaDetalle.Stop();
+            CargarDetalle(true, idAlumno);
+            Avisar("Se corrigió el registro de " + alumno + ".");
         }
 
-        private void DescargarPdfSesion(SesionFila sesion)
+        // =====================================================================
+        // PDF
+        // =====================================================================
+
+        private void DescargarPdf()
         {
-            string rutaCompleta = ObtenerRutaDestinoPdf(NombreArchivoSesion(sesion));
-            if (string.IsNullOrWhiteSpace(rutaCompleta))
+            SesionInfo sesion = Seleccionado<SesionInfo>();
+            if (sesion == null)
             {
                 return;
             }
 
-            if (GenerarPdfSesion(sesion.IdSesion, sesion.Profesor, rutaCompleta))
+            string ruta;
+            using (SaveFileDialog dialogo = new SaveFileDialog
             {
-                MessageBox.Show("El PDF se guardo correctamente en: " + rutaCompleta, "Informacion", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                AbrirVistaPreviaPdf(rutaCompleta);
+                Title = "Guardar la bitácora en PDF",
+                Filter = "Archivo PDF (*.pdf)|*.pdf",
+                DefaultExt = "pdf",
+                FileName = NombreArchivo(sesion),
+                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+            })
+            {
+                if (dialogo.ShowDialog(this) != DialogResult.OK)
+                {
+                    return;
+                }
+
+                ruta = dialogo.FileName;
+            }
+
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                GenerarPdfSesion(sesion, ruta);
+            }
+            catch (IOException ex)
+            {
+                Log.Error("Guardar el PDF " + ruta, ex);
+                MessageBox.Show(this, "No se pudo escribir el archivo. ¿Lo tienes abierto en el lector de PDF?\n\n" + ex.Message,
+                    Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            catch (Exception ex)
+            {
+                MostrarError("Generar el PDF de la sesion " + sesion.Id, ex, "No se pudo generar el PDF");
+                return;
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+
+            Avisar("PDF guardado: " + ruta);
+            Abrir(ruta);
+        }
+
+        /// <summary>Un PDF por cada sesion de la lista (la que dejan los filtros), en una carpeta.</summary>
+        private void DescargarLote()
+        {
+            List<SesionInfo> lote = visibles.ToList();
+            if (lote.Count == 0)
+            {
+                return;
+            }
+
+            string carpeta;
+            using (FolderBrowserDialog dialogo = new FolderBrowserDialog
+            {
+                Description = "Carpeta donde guardar " + (lote.Count == 1 ? "el PDF de 1 sesión" : "los PDF de las " + lote.Count + " sesiones de la lista"),
+                SelectedPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+            })
+            {
+                if (dialogo.ShowDialog(this) != DialogResult.OK)
+                {
+                    return;
+                }
+
+                carpeta = dialogo.SelectedPath;
+            }
+
+            int hechos = 0;
+            List<string> fallidos = new List<string>();
+            HashSet<string> nombresUsados = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                foreach (SesionInfo sesion in lote)
+                {
+                    string nombre = NombreArchivo(sesion);
+                    if (!nombresUsados.Add(nombre))
+                    {
+                        // Dos sesiones con el mismo codigo, fecha y hora: se distinguen por su id.
+                        nombre = Path.GetFileNameWithoutExtension(nombre) + "_" + sesion.Id + ".pdf";
+                        nombresUsados.Add(nombre);
+                    }
+
+                    try
+                    {
+                        GenerarPdfSesion(sesion, Path.Combine(carpeta, nombre));
+                        hechos++;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error("Generar el PDF de la sesion " + sesion.Id + " en el lote", ex);
+                        fallidos.Add(nombre + ": " + ex.Message);
+                    }
+                }
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+
+            if (fallidos.Count > 0)
+            {
+                MessageBox.Show(this, "No se pudieron guardar " + fallidos.Count + " de " + lote.Count + " PDF:\n\n"
+                    + string.Join("\n", fallidos.Take(6)) + (fallidos.Count > 6 ? "\n..." : ""),
+                    Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+
+            if (hechos > 0)
+            {
+                Avisar(Plural(hechos, "PDF guardado", "PDF guardados") + " en " + carpeta);
+                Abrir(carpeta);
             }
         }
 
-        private bool GenerarPdfSesion(int idSesion, string nombreProfesor, string rutaCompleta)
+        /// <summary>El PDF de una sesion: encabezado de la plantilla, logos y la tabla de alumnos.</summary>
+        private void GenerarPdfSesion(SesionInfo sesion, string ruta)
         {
-            Usuario datos = consultas.ConsultarDatosPdfSesion(idSesion);
+            Usuario datos = consultas.ConsultarDatosPdfSesion(sesion.Id);
             if (datos == null)
             {
-                MessageBox.Show("No se encontraron datos de la sesion seleccionada.", "Informacion", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return false;
+                throw new InvalidOperationException("La sesión ya no existe en la base (F5 actualiza la lista).");
             }
 
-            string paginahtml_texto = Properties.Resources.plantilla.ToString();
-            paginahtml_texto = paginahtml_texto.Replace("@HORARIODEENTRADA", datos.HoraEntrada);
-            paginahtml_texto = paginahtml_texto.Replace("@HORARIODESALIDA", datos.HoraSalida);
-            paginahtml_texto = paginahtml_texto.Replace("@PROFESOR", nombreProfesor ?? string.Empty);
-            paginahtml_texto = paginahtml_texto.Replace("@GRUPO", datos.GruposId);
-            paginahtml_texto = paginahtml_texto.Replace("@MATERIA", datos.MateriasId);
-            paginahtml_texto = paginahtml_texto.Replace("@FECHA", datos.HoraRegistro);
+            string html = Properties.Resources.plantilla.ToString()
+                .Replace("@HORARIODEENTRADA", datos.HoraEntrada)
+                .Replace("@HORARIODESALIDA", datos.HoraSalida)
+                .Replace("@PROFESOR", sesion.Profesor)
+                .Replace("@GRUPO", datos.GruposId)
+                .Replace("@MATERIA", datos.MateriasId)
+                .Replace("@FECHA", datos.HoraRegistro);
 
-            using (FileStream stream = new FileStream(rutaCompleta, FileMode.Create))
+            using (FileStream stream = new FileStream(ruta, FileMode.Create))
             {
                 Document pdfDoc = new Document(PageSize.A4, 25, 25, 25, 25);
                 PdfWriter writer = PdfWriter.GetInstance(pdfDoc, stream);
@@ -812,219 +911,126 @@ namespace DigBit
                 logoEDOMEX.SetAbsolutePosition(40, 750);
                 pdfDoc.Add(logoEDOMEX);
 
-                using (StringReader sr = new StringReader(paginahtml_texto))
+                using (StringReader sr = new StringReader(html))
                 {
                     XMLWorkerHelper.GetInstance().ParseXHtml(writer, pdfDoc, sr);
                 }
 
-                DataTable detalles = consultas.consultaRegistroSesion(idSesion);
-                AgregarTablaAlPDF(pdfDoc, detalles);
+                TablaAlumnosPdf.Agregar(pdfDoc, consultas.consultaRegistroSesion(sesion.Id));
                 pdfDoc.Close();
             }
-
-            return true;
         }
 
-        private string ObtenerRutaDestinoPdf(string nombreArchivo)
+        /// <summary>
+        /// "codigo_fecha_HHmm_profesor.pdf": el mismo codigo tiene una sesion por
+        /// fecha, asi que la fecha y la hora de entrada las distinguen.
+        /// </summary>
+        private static string NombreArchivo(SesionInfo sesion)
         {
-            using (SaveFileDialog saveFileDialog = new SaveFileDialog())
+            string[] partes =
             {
-                saveFileDialog.Title = "Guardar bitacora PDF";
-                saveFileDialog.Filter = "Archivo PDF (*.pdf)|*.pdf";
-                saveFileDialog.DefaultExt = "pdf";
-                saveFileDialog.FileName = nombreArchivo;
-                saveFileDialog.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-
-                return saveFileDialog.ShowDialog() == DialogResult.OK
-                    ? saveFileDialog.FileName
-                    : null;
+                sesion.Codigo,
+                sesion.Fecha.HasValue ? sesion.Fecha.Value.ToString("yyyy-MM-dd") : "",
+                sesion.Entrada.HasValue ? sesion.Entrada.Value.ToString("hhmm") : "",
+                sesion.Profesor.Length > 0 ? sesion.Profesor : "Bitacora"
+            };
+            string nombre = string.Join("_", partes.Where(p => !string.IsNullOrWhiteSpace(p)));
+            foreach (char invalido in Path.GetInvalidFileNameChars())
+            {
+                nombre = nombre.Replace(invalido, '_');
             }
+
+            return nombre + ".pdf";
         }
 
-        private string ObtenerCarpetaDestinoLote()
-        {
-            using (FolderBrowserDialog folderBrowserDialog = new FolderBrowserDialog())
-            {
-                folderBrowserDialog.Description = "Selecciona la carpeta donde se guardaran las bitacoras";
-                folderBrowserDialog.SelectedPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-
-                return folderBrowserDialog.ShowDialog() == DialogResult.OK
-                    ? folderBrowserDialog.SelectedPath
-                    : null;
-            }
-        }
-
-        private void AbrirVistaPreviaPdf(string rutaCompleta)
+        private void Abrir(string ruta)
         {
             try
             {
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = rutaCompleta,
-                    UseShellExecute = true
-                });
+                Process.Start(new ProcessStartInfo { FileName = ruta, UseShellExecute = true });
             }
             catch (Exception ex)
             {
-                MessageBox.Show("El PDF se guardó, pero no se pudo abrir la vista previa automáticamente: " + ex.Message,
-                    "Vista previa no disponible",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-            }
-        }
-
-        private void AbrirCarpetaDestino(string carpetaDestino)
-        {
-            try
-            {
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = carpetaDestino,
-                    UseShellExecute = true
-                });
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Las bitacoras se guardaron, pero no se pudo abrir la carpeta automáticamente: " + ex.Message,
-                    "Carpeta no disponible",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-            }
-        }
-
-        private string SanitizarNombreArchivo(string nombreArchivo)
-        {
-            if (string.IsNullOrWhiteSpace(nombreArchivo))
-            {
-                return "Bitacora";
-            }
-
-            foreach (char caracterInvalido in Path.GetInvalidFileNameChars())
-            {
-                nombreArchivo = nombreArchivo.Replace(caracterInvalido, '_');
-            }
-
-            return nombreArchivo;
-        }
-
-        private void AgregarTablaAlPDF(Document pdfDoc, DataTable detalles)
-        {
-            PdfPTable pdfTable = new PdfPTable(4);
-            pdfTable.WidthPercentage = 100;
-            pdfTable.SetWidths(new float[] { 8f, 28f, 20f, 44f });
-
-            pdfTable.AddCell(new PdfPCell(new Phrase("No.")) { BackgroundColor = BaseColor.LIGHT_GRAY, Padding = 4f });
-            pdfTable.AddCell(new PdfPCell(new Phrase("Nombre Completo")) { BackgroundColor = BaseColor.LIGHT_GRAY, Padding = 4f });
-            pdfTable.AddCell(new PdfPCell(new Phrase("Numero de Computadora")) { BackgroundColor = BaseColor.LIGHT_GRAY, Padding = 4f });
-            pdfTable.AddCell(new PdfPCell(new Phrase("Comentarios")) { BackgroundColor = BaseColor.LIGHT_GRAY, Padding = 4f });
-
-            BaseColor suave = new BaseColor(ColorConFalla.R, ColorConFalla.G, ColorConFalla.B);
-            BaseColor fuerte = new BaseColor(ColorFallaCelda.R, ColorFallaCelda.G, ColorFallaCelda.B);
-            iTextSharp.text.Font negrita = FontFactory.GetFont(FontFactory.HELVETICA_BOLD, 10f);
-            bool hayFallas = false;
-
-            int numeroFila = 1;
-            foreach (DataRow row in detalles.Rows)
-            {
-                // Fila en tono suave si reporto algo; la celda de la falla, en tono fuerte.
-                bool conFalla = Consultas.ConFalla(row);
-                hayFallas |= conFalla;
-
-                string[] celdas = { numeroFila.ToString(), row["nombre_completo"].ToString(), row["numero_computadora"].ToString(), Consultas.DescribirFallas(row) };
-                for (int i = 0; i < celdas.Length; i++)
-                {
-                    bool esLaFalla = conFalla && i == celdas.Length - 1;
-                    PdfPCell celda = new PdfPCell(new Phrase(celdas[i], esLaFalla ? negrita : null)) { Padding = 4f };
-                    if (conFalla)
-                    {
-                        celda.BackgroundColor = esLaFalla ? fuerte : suave;
-                    }
-
-                    pdfTable.AddCell(celda);
-                }
-
-                numeroFila++;
-            }
-
-            pdfDoc.Add(pdfTable);
-
-            if (hayFallas)
-            {
-                pdfDoc.Add(new Paragraph("Celda naranja intensa: la falla o el comentario que reporto el alumno.",
-                    FontFactory.GetFont(FontFactory.HELVETICA, 8f)) { SpacingBefore = 6f });
+                Log.Error("Abrir " + ruta, ex);
+                Avisar("Se guardó, pero no se pudo abrir: " + ruta);
             }
         }
 
         // =====================================================================
-        // Eventos
+        // Utilidades
         // =====================================================================
 
-        private void btnAplicarFiltro_Click(object sender, EventArgs e)
+        protected override void OnKeyDown(KeyEventArgs e)
         {
-            AplicarFiltros();
-        }
-
-        private void btnLimpiarFiltro_Click(object sender, EventArgs e)
-        {
-            txtBusqueda.Clear();
-            txtDocente.Clear();
-            chkFiltrarFecha.Checked = false;
-            dtpFecha.Value = DateTime.Today;
-            AplicarFiltros();
-        }
-
-        private void btnDescargarPdf_Click(object sender, EventArgs e)
-        {
-            DescargarSeleccionado();
-        }
-
-        private void btnDescargarLote_Click(object sender, EventArgs e)
-        {
-            DescargarPorLote();
-        }
-
-        private void chkSeleccionarTodo_CheckedChanged(object sender, EventArgs e)
-        {
-            if (chkSeleccionarTodo.Checked)
+            base.OnKeyDown(e);
+            if (e.KeyCode == Keys.F5)
             {
-                SeleccionarTodasLasFilasVisibles();
-                return;
-            }
-
-            dgvSesiones.ClearSelection();
-        }
-
-        private void btnEditarSeleccion_Click(object sender, EventArgs e)
-        {
-            EditarSeleccionado();
-        }
-
-        private void dgvDetalle_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
-        {
-            if (e.RowIndex < 0)
-            {
-                return;
-            }
-
-            if (permitirEdicion)
-            {
-                EditarSeleccionado();
-            }
-        }
-
-        private void btnCerrar_Click(object sender, EventArgs e)
-        {
-            Close();
-        }
-
-        private void txtBusqueda_KeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.KeyCode == Keys.Enter)
-            {
-                AplicarFiltros();
                 e.Handled = true;
-                e.SuppressKeyPress = true;
+                SesionInfo sesion = Seleccionado<SesionInfo>();
+                Cursor = Cursors.WaitCursor;
+                try
+                {
+                    Recargar(sesion == null ? null : sesion.Id.ToString());
+                }
+                finally
+                {
+                    Cursor = Cursors.Default;
+                }
             }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                esperaDetalle.Dispose();
+                negrita.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        private static string HoraCorta(TimeSpan? hora)
+        {
+            return hora.HasValue ? hora.Value.ToString(@"hh\:mm") : "?";
+        }
+
+        private static string Plural(int n, string uno, string varios)
+        {
+            return n + " " + (n == 1 ? uno : varios);
+        }
+
+        private static string Texto(DataRow fila, string columna)
+        {
+            return !fila.Table.Columns.Contains(columna) || fila[columna] == DBNull.Value ? "" : fila[columna].ToString().Trim();
+        }
+
+        private static int Entero(DataRow fila, string columna)
+        {
+            int numero;
+            return int.TryParse(Texto(fila, columna), out numero) ? numero : 0;
+        }
+
+        private static DateTime? LeerFecha(string texto)
+        {
+            DateTime fecha;
+            return DateTime.TryParseExact(texto, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out fecha)
+                ? fecha
+                : (DateTime?)null;
+        }
+
+        /// <summary>La hora puede llegar como TIME (TimeSpan) o, por el COALESCE de la consulta, como texto "08:57:07".</summary>
+        private static TimeSpan? LeerHora(object valor)
+        {
+            if (valor is TimeSpan)
+            {
+                return (TimeSpan)valor;
+            }
+
+            TimeSpan hora;
+            return valor != null && valor != DBNull.Value && TimeSpan.TryParse(valor.ToString(), CultureInfo.InvariantCulture, out hora)
+                ? hora
+                : (TimeSpan?)null;
         }
     }
 }

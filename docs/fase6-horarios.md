@@ -1,5 +1,19 @@
 # Fase 6 — Horarios por laboratorio
 
+> **Cambio del 2026-09-29: un código por profesor.** Con un código por clase,
+> un profesor con seis grupos tenía seis códigos que recordar y repartir. Desde
+> `db/09_codigo_por_profesor.sql` cada profesor tiene **uno** (`usuarios.codigo_clase`),
+> el mismo para todas sus clases, grupos y materias; se copia a `clases.codigo`,
+> que deja de ser único. Al teclearlo en un equipo, la aplicación busca, entre
+> las clases de ese profesor, la que tiene horario en **ese laboratorio a esa
+> hora** (`conexion/ReglasCodigo.cs`, la misma regla con y sin servidor). Un
+> profesor no da dos clases a la vez, así que no hay ambigüedad; el único cruce
+> es el margen de 15 minutos: con dos clases seguidas en el mismo laboratorio,
+> gana la que está en curso. El código se asigna y se cambia en **Profesores**;
+> en Horarios la clase solo lo muestra. El alumno ya no declara grupo.
+>
+> Donde este documento dice "código de la clase", léase "código de su profesor".
+
 ## Objetivo
 
 Hoy el profesor genera un código al llegar a clase y ese código vale en
