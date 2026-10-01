@@ -1,0 +1,221 @@
+laboratorio;dia;hora;materia;grupo;profesor
+DESARROLLO DE SOFTWARE;1;07:00;Tecnologías emergentes de base de datos;6ISC11;TREJO
+DESARROLLO DE SOFTWARE;1;08:00;Estructura de datos;3ISC11;MENDEZ
+DESARROLLO DE SOFTWARE;1;09:00;Fundamentos de programación;1ISC12;TREJO
+DESARROLLO DE SOFTWARE;1;10:00;Fundamentos de programación;1ISC11;MENDEZ
+DESARROLLO DE SOFTWARE;1;11:00;Fundamentos de programación;1ISC11;MENDEZ
+DESARROLLO DE SOFTWARE;1;12:00;Programación orientada a objetos;2ISC11;MENDEZ
+DESARROLLO DE SOFTWARE;1;13:00;Lenguajes y autómatas 1;6ISC21;FLORES
+DESARROLLO DE SOFTWARE;1;14:00;Administración de base de datos;6ISC21;MARTINEZ
+DESARROLLO DE SOFTWARE;1;16:00;Inteligencia artificial;8ISC21;HERNANDEZ
+DESARROLLO DE SOFTWARE;1;17:00;Inteligencia artificial;8ISC21;HERNANDEZ
+DESARROLLO DE SOFTWARE;1;18:00;Tecnologías emergentes de base de datos;6ISC21;CASTRO
+DESARROLLO DE SOFTWARE;1;19:00;Inteligencia de negocios y analítica de negocios;8ISC22;ZITA
+DESARROLLO DE SOFTWARE;1;20:00;Inteligencia de negocios y analítica de negocios;8ISC22;ZITA
+DESARROLLO DE SOFTWARE;2;07:00;Tópicos avanzados de programación;4ISC11;LLINAS
+DESARROLLO DE SOFTWARE;2;08:00;Tópicos avanzados de programación;4ISC11;LLINAS
+DESARROLLO DE SOFTWARE;2;09:00;Fundamentos de programación;1ISC11;MENDEZ
+DESARROLLO DE SOFTWARE;2;10:00;Fundamentos de programación;1ISC11;MENDEZ
+DESARROLLO DE SOFTWARE;2;11:00;Graficación;5ISC12;GALICIA
+DESARROLLO DE SOFTWARE;2;12:00;Graficación;5ISC12;GALICIA
+DESARROLLO DE SOFTWARE;2;13:00;Administración de base de datos;6ISC21;MARTINEZ
+DESARROLLO DE SOFTWARE;2;14:00;Lenguajes y autómatas 1;6ISC21;FLORES
+DESARROLLO DE SOFTWARE;2;15:00;Lenguajes y autómatas 1;6ISC21;FLORES
+DESARROLLO DE SOFTWARE;2;17:00;Lenguajes y autómatas 2;7ISC21;FLORES
+DESARROLLO DE SOFTWARE;2;18:00;Graficación;5ISC21;HERNANDEZ
+DESARROLLO DE SOFTWARE;2;19:00;Tecnologías emergentes de base de datos;6ISC21;CASTRO
+DESARROLLO DE SOFTWARE;2;20:00;Inteligencia artificial;8ISC21;HERNANDEZ
+DESARROLLO DE SOFTWARE;3;07:00;Programación orientada a objetos;2ISC11;MENDEZ
+DESARROLLO DE SOFTWARE;3;08:00;Estructura de datos;3ISC12;MENDEZ
+DESARROLLO DE SOFTWARE;3;09:00;Programación orientada a objetos;2ISC11;MENDEZ
+DESARROLLO DE SOFTWARE;3;10:00;Simulación;4ISC11;MENDEZ
+DESARROLLO DE SOFTWARE;3;11:00;Simulación;4ISC11;MENDEZ
+DESARROLLO DE SOFTWARE;3;12:00;Simulación;4ISC11;MENDEZ
+DESARROLLO DE SOFTWARE;3;13:00;Minería de datos;7ISC21;TREJO
+DESARROLLO DE SOFTWARE;3;14:00;Minería de datos;7ISC21;TREJO
+DESARROLLO DE SOFTWARE;3;16:00;Programación lógica y funcional;8ISC21;GOMEZ
+DESARROLLO DE SOFTWARE;3;17:00;Programación lógica y funcional;8ISC21;GOMEZ
+DESARROLLO DE SOFTWARE;3;18:00;Programación web;7ISC21;GARDUNO
+DESARROLLO DE SOFTWARE;3;19:00;Tecnologías emergentes de base de datos;6ISC21;CASTRO
+DESARROLLO DE SOFTWARE;3;20:00;Estructura de datos;3ISC21;LOPEZ
+DESARROLLO DE SOFTWARE;4;07:00;Estructura de datos;3ISC12;MENDEZ
+DESARROLLO DE SOFTWARE;4;08:00;Estructura de datos;3ISC12;MENDEZ
+DESARROLLO DE SOFTWARE;4;09:00;Sistemas operativos;5ISC12;AMADOR
+DESARROLLO DE SOFTWARE;4;10:00;Sistemas operativos;5ISC12;AMADOR
+DESARROLLO DE SOFTWARE;4;12:00;Métodos numéricos;4ISC11;RAMIREZ
+DESARROLLO DE SOFTWARE;4;13:00;Minería de datos;7ISC21;TREJO
+DESARROLLO DE SOFTWARE;4;14:00;Minería de datos;7ISC21;TREJO
+DESARROLLO DE SOFTWARE;4;15:00;Programación lógica y funcional;8ISC21;GOMEZ
+DESARROLLO DE SOFTWARE;4;16:00;Administración de redes;8ISC21;GARDUNO
+DESARROLLO DE SOFTWARE;4;17:00;Programación web;7ISC22;GARDUNO
+DESARROLLO DE SOFTWARE;4;18:00;Ingeniería del conocimiento;8ISC21;JIMENEZ
+DESARROLLO DE SOFTWARE;4;19:00;Ingeniería del conocimiento;8ISC21;JIMENEZ
+DESARROLLO DE SOFTWARE;4;20:00;Ingeniería del conocimiento;8ISC21;JIMENEZ
+DESARROLLO DE SOFTWARE;5;07:00;Lenguajes de interfaz;6ISC11;RAMIREZ
+DESARROLLO DE SOFTWARE;5;08:00;Lenguajes de interfaz;6ISC11;RAMIREZ
+DESARROLLO DE SOFTWARE;5;09:00;Fundamentos de programación;1ISC12;TREJO
+DESARROLLO DE SOFTWARE;5;10:00;Fundamentos de programación;1ISC12;TREJO
+DESARROLLO DE SOFTWARE;5;11:00;Principios electrónicos y aplicaciones digitales;4ISC11;GALICIA
+DESARROLLO DE SOFTWARE;5;12:00;Matemáticas discretas;1ISC12;RAMIREZ
+DESARROLLO DE SOFTWARE;5;13:00;Inteligencia artificial;8ISC22;HERNANDEZ
+DESARROLLO DE SOFTWARE;5;14:00;Inteligencia artificial;8ISC22;HERNANDEZ
+DESARROLLO DE SOFTWARE;5;15:00;Inteligencia artificial;8ISC22;HERNANDEZ
+DESARROLLO DE SOFTWARE;5;16:00;Ingeniería del conocimiento;8ISC22;CASTRO
+DESARROLLO DE SOFTWARE;5;17:00;Lenguajes y autómatas 2;7ISC21;FLORES
+DESARROLLO DE SOFTWARE;5;18:00;Programación web;7ISC21;GARDUNO
+DESARROLLO DE SOFTWARE;5;19:00;Inteligencia de negocios y analítica de negocios;8ISC22;ZITA
+DESARROLLO DE SOFTWARE;5;20:00;Inteligencia de negocios y analítica de negocios;8ISC22;ZITA
+BASE DE DE DATOS;1;07:00;Taller de base de datos;5ISC11;RIVERA
+BASE DE DE DATOS;1;08:00;Taller de base de datos;5ISC11;RIVERA
+BASE DE DE DATOS;1;09:00;Taller de base de datos;5ISC12;RIVERA
+BASE DE DE DATOS;1;10:00;Taller de base de datos;5ISC12;RIVERA
+BASE DE DE DATOS;1;11:00;Administración de base de datos;6ISC11;RIVERA
+BASE DE DE DATOS;1;12:00;Administración de base de datos;6ISC11;RIVERA
+BASE DE DE DATOS;1;13:00;Programación orientada a objetos;2ISC21;MARTINEZ
+BASE DE DE DATOS;1;14:00;Programación web;7ISC22;GARDUNO
+BASE DE DE DATOS;1;15:00;Tópicos avanzados de programación;4ISC21;MARTINEZ
+BASE DE DE DATOS;1;16:00;Tópicos avanzados de programación;4ISC21;MARTINEZ
+BASE DE DE DATOS;1;17:00;Fundamentos de base de datos;4ISC21;GARDUNO
+BASE DE DE DATOS;1;18:00;Inteligencia de negocios y analítica de negocios;8ISC21;ZITA
+BASE DE DE DATOS;1;19:00;Administración de redes;8ISC21;GARDUNO
+BASE DE DE DATOS;1;20:00;Ingeniería del conocimiento;8ISC21;JIMENEZ
+BASE DE DE DATOS;2;07:00;Taller de base de datos;5ISC11;RIVERA
+BASE DE DE DATOS;2;08:00;Taller de base de datos;5ISC11;RIVERA
+BASE DE DE DATOS;2;09:00;Administración de base de datos;6ISC11;RIVERA
+BASE DE DE DATOS;2;10:00;Administración de base de datos;6ISC11;RIVERA
+BASE DE DE DATOS;2;12:00;Tecnologías emergentes de base de datos;6ISC11;TREJO
+BASE DE DE DATOS;2;13:00;Tecnologías emergentes de base de datos;6ISC11;TREJO
+BASE DE DE DATOS;2;14:00;Programación web;7ISC22;GARDUNO
+BASE DE DE DATOS;2;15:00;Programación web;7ISC22;GARDUNO
+BASE DE DE DATOS;2;16:00;Inteligencia de negocios y analítica de negocios;8ISC21;ZITA
+BASE DE DE DATOS;2;17:00;Inteligencia de negocios y analítica de negocios;8ISC21;ZITA
+BASE DE DE DATOS;2;18:00;Inteligencia de negocios y analítica de negocios;8ISC21;ZITA
+BASE DE DE DATOS;2;19:00;Inteligencia de negocios y analítica de negocios;8ISC22;ZITA
+BASE DE DE DATOS;2;20:00;Inteligencia de negocios y analítica de negocios;8ISC22;ZITA
+BASE DE DE DATOS;3;07:00;Tecnologías emergentes de base de datos;6ISC11;TREJO
+BASE DE DE DATOS;3;08:00;Fundamentos de programación;1ISC12;TREJO
+BASE DE DE DATOS;3;09:00;Fundamentos de base de datos;4ISC11;RIVERA
+BASE DE DE DATOS;3;12:00;Probabilidad y estadísticas;2ISC11;RAMIREZ
+BASE DE DE DATOS;3;13:00;Ingeniería de software;6ISC21;LOPEZ
+BASE DE DE DATOS;3;14:00;Programación orientada a objetos;2ISC21;MARTINEZ
+BASE DE DE DATOS;3;15:00;Administración de redes;8ISC21;GARDUNO
+BASE DE DE DATOS;3;16:00;Lenguajes de interfaz;6ISC21;HERNANDEZ
+BASE DE DE DATOS;3;17:00;Lenguajes y autómatas 2;7ISC21;FLORES
+BASE DE DE DATOS;3;18:00;Inteligencia de negocios y analítica de negocios;8ISC21;ZITA
+BASE DE DE DATOS;3;19:00;Inteligencia de negocios y analítica de negocios;8ISC21;ZITA
+BASE DE DE DATOS;3;20:00;Inteligencia de negocios y analítica de negocios;8ISC21;ZITA
+BASE DE DE DATOS;4;07:00;Taller de base de datos;5ISC12;RIVERA
+BASE DE DE DATOS;4;08:00;Taller de base de datos;5ISC12;RIVERA
+BASE DE DE DATOS;4;09:00;Fundamentos de base de datos;4ISC11;RIVERA
+BASE DE DE DATOS;4;11:00;Lenguajes y autómatas 1;6ISC11;FLORES
+BASE DE DE DATOS;4;12:00;Lenguajes y autómatas 1;6ISC11;FLORES
+BASE DE DE DATOS;4;13:00;Lenguajes y autómatas 1;6ISC11;FLORES
+BASE DE DE DATOS;4;14:00;Fundamentos de programación;1ISC21;MARTINEZ
+BASE DE DE DATOS;4;15:00;Fundamentos de programación;1ISC21;MARTINEZ
+BASE DE DE DATOS;4;17:00;Inteligencia de negocios y analítica de negocios;8ISC22;ZITA
+BASE DE DE DATOS;4;18:00;Inteligencia artificial;8ISC22;HERNANDEZ
+BASE DE DE DATOS;4;19:00;Administración de redes;8ISC22;GARDUNO
+BASE DE DE DATOS;4;20:00;Administración de redes;8ISC22;GARDUNO
+BASE DE DE DATOS;5;08:00;Fundamentos de base de datos;4ISC11;RIVERA
+BASE DE DE DATOS;5;09:00;Fundamentos de base de datos;4ISC11;RIVERA
+BASE DE DE DATOS;5;10:00;Matemáticas discretas;1ISC11;RAMIREZ
+BASE DE DE DATOS;5;11:00;Estructura de datos;3ISC11;MENDEZ
+BASE DE DE DATOS;5;12:00;Graficación;5ISC12;GALICIA
+BASE DE DE DATOS;5;13:00;Minería de datos;7ISC21;TREJO
+BASE DE DE DATOS;5;14:00;Minería de datos;7ISC21;TREJO
+BASE DE DE DATOS;5;15:00;Sistemas operativos;5ISC21;GARDUNO
+BASE DE DE DATOS;5;16:00;Sistemas operativos;5ISC21;GARDUNO
+BASE DE DE DATOS;5;17:00;Administración de redes;8ISC21;GARDUNO
+BASE DE DE DATOS;5;18:00;Inteligencia artificial;8ISC21;HERNANDEZ
+BASE DE DE DATOS;5;19:00;Ingeniería del conocimiento;8ISC21;JIMENEZ
+BASE DE DE DATOS;5;20:00;Ingeniería del conocimiento;8ISC21;JIMENEZ
+CISCO;1;07:00;Tópicos avanzados de programación;4ISC11;LLINAS
+CISCO;1;08:00;Redes de computadoras;6ISC11;LLINAS
+CISCO;1;09:00;Redes de computadoras;6ISC11;LLINAS
+CISCO;1;11:00;Fundamentos de telecomunicaciones;5ISC12;LLINAS
+CISCO;1;13:00;Simulación;4ISC21;AMADOR
+CISCO;1;15:00;Taller de sistemas operativos;6ISC21;GARDUNO
+CISCO;1;16:00;Taller de sistemas operativos;6ISC21;GARDUNO
+CISCO;1;17:00;Lenguajes y autómatas 2;7ISC22;FLORES
+CISCO;1;18:00;Minería de datos;7ISC22;JIMENEZ
+CISCO;1;19:00;Minería de datos;7ISC22;JIMENEZ
+CISCO;2;07:00;Lenguajes de interfaz;6ISC11;RAMIREZ
+CISCO;2;08:00;Estructura de datos;3ISC11;MENDEZ
+CISCO;2;10:00;Fundamentos de telecomunicaciones;5ISC12;LLINAS
+CISCO;2;11:00;Graficación;5ISC11;MENDEZ
+CISCO;2;12:00;Graficación;5ISC11;MENDEZ
+CISCO;2;13:00;Simulación;4ISC21;AMADOR
+CISCO;2;14:00;Fundamentos de telecomunicaciones;5ISC21;LOPEZ
+CISCO;2;15:00;Fundamentos de telecomunicaciones;5ISC21;LOPEZ
+CISCO;2;16:00;Redes de computadoras;6ISC21;AMADOR
+CISCO;2;17:00;Programación orientada a objetos;2ISC21;MARTINEZ
+CISCO;2;18:00;Lenguajes y autómatas 2;7ISC22;FLORES
+CISCO;2;19:00;Minería de datos;7ISC22;JIMENEZ
+CISCO;2;20:00;Minería de datos;7ISC22;JIMENEZ
+CISCO;3;08:00;Fundamentos de telecomunicaciones;5ISC12;LLINAS
+CISCO;3;09:00;Lenguajes de interfaz;6ISC11;RAMIREZ
+CISCO;3;10:00;Sistemas operativos;5ISC11;GALICIA
+CISCO;3;11:00;Sistemas operativos;5ISC11;GALICIA
+CISCO;3;12:00;Taller de sistemas operativos;6ISC11;GARDUNO
+CISCO;3;13:00;Taller de sistemas operativos;6ISC11;GARDUNO
+CISCO;3;14:00;Métodos numéricos;4ISC21;RAMIREZ
+CISCO;3;15:00;Ingeniería de software;6ISC21;LOPEZ
+CISCO;3;16:00;Simulación;4ISC21;AMADOR
+CISCO;3;17:00;Taller de base de datos;5ISC21;MARTINEZ
+CISCO;3;18:00;Ingeniería del conocimiento;8ISC22;CASTRO
+CISCO;3;19:00;Minería de datos;7ISC22;JIMENEZ
+CISCO;3;20:00;Minería de datos;7ISC22;JIMENEZ
+CISCO;4;07:00;Tópicos avanzados de programación;4ISC11;LLINAS
+CISCO;4;09:00;Graficación;5ISC11;MENDEZ
+CISCO;4;10:00;Redes de computadoras;6ISC11;LLINAS
+CISCO;4;13:00;Ingeniería del conocimiento;8ISC22;CASTRO
+CISCO;4;14:00;Ingeniería del conocimiento;8ISC22;CASTRO
+CISCO;4;15:00;Ingeniería del conocimiento;8ISC22;CASTRO
+CISCO;4;16:00;Ingeniería del conocimiento;8ISC22;CASTRO
+CISCO;4;17:00;Redes de computadoras;6ISC21;AMADOR
+CISCO;4;18:00;Taller de sistemas operativos;6ISC21;GARDUNO
+CISCO;4;19:00;Administración de base de datos;6ISC21;MARTINEZ
+CISCO;4;20:00;Administración de base de datos;6ISC21;MARTINEZ
+CISCO;5;07:00;Tópicos avanzados de programación;4ISC11;LLINAS
+CISCO;5;09:00;Fundamentos de telecomunicaciones;5ISC11;LLINAS
+CISCO;5;10:00;Fundamentos de telecomunicaciones;5ISC11;LLINAS
+CISCO;5;11:00;Fundamentos de telecomunicaciones;5ISC12;LLINAS
+CISCO;5;14:00;Lenguajes y autómatas 2;7ISC22;FLORES
+CISCO;5;15:00;Ingeniería de software;6ISC21;LOPEZ
+CISCO;5;16:00;Lenguajes de interfaz;6ISC21;HERNANDEZ
+CISCO;5;17:00;Lenguajes de interfaz;6ISC21;HERNANDEZ
+CISCO;5;19:00;Fundamentos de base de datos;4ISC21;GARDUNO
+CISCO;5;20:00;Fundamentos de base de datos;4ISC21;GARDUNO
+SISTEMAS PROGRAMABLES;1;14:00;Arquitectura de computadoras;5ISC21;AMADOR
+SISTEMAS PROGRAMABLES;1;15:00;Arquitectura de computadoras;5ISC21;AMADOR
+SISTEMAS PROGRAMABLES;1;16:00;Programación lógica y funcional;8ISC22;GOMEZ
+SISTEMAS PROGRAMABLES;1;17:00;Programación lógica y funcional;8ISC22;GOMEZ
+SISTEMAS PROGRAMABLES;1;18:00;Principios electrónicos y aplicaciones digitales;4ISC21;GOMEZ
+SISTEMAS PROGRAMABLES;1;19:00;Principios electrónicos y aplicaciones digitales;4ISC21;GOMEZ
+SISTEMAS PROGRAMABLES;2;13:00;Arquitectura de computadoras;5ISC11;GOMEZ
+SISTEMAS PROGRAMABLES;2;16:00;Programación lógica y funcional;8ISC22;GOMEZ
+SISTEMAS PROGRAMABLES;2;17:00;Programación lógica y funcional;8ISC22;GOMEZ
+SISTEMAS PROGRAMABLES;2;18:00;Principios electrónicos y aplicaciones digitales;4ISC21;GOMEZ
+SISTEMAS PROGRAMABLES;2;19:00;Principios electrónicos y aplicaciones digitales;4ISC21;GOMEZ
+SISTEMAS PROGRAMABLES;3;10:00;Arquitectura de computadoras;5ISC12;GOMEZ
+SISTEMAS PROGRAMABLES;3;11:00;Arquitectura de computadoras;5ISC12;GOMEZ
+SISTEMAS PROGRAMABLES;3;12:00;Arquitectura de computadoras;5ISC11;GOMEZ
+SISTEMAS PROGRAMABLES;3;13:00;Arquitectura de computadoras;5ISC11;GOMEZ
+SISTEMAS PROGRAMABLES;3;14:00;Arquitectura de computadoras;5ISC21;AMADOR
+SISTEMAS PROGRAMABLES;3;15:00;Arquitectura de computadoras;5ISC21;AMADOR
+SISTEMAS PROGRAMABLES;3;18:00;Principios electrónicos y aplicaciones digitales;4ISC21;GOMEZ
+SISTEMAS PROGRAMABLES;3;19:00;Sistemas programables;7ISC21;HERNANDEZ
+SISTEMAS PROGRAMABLES;3;20:00;Sistemas programables;7ISC21;HERNANDEZ
+SISTEMAS PROGRAMABLES;4;13:00;Arquitectura de computadoras;5ISC12;GOMEZ
+SISTEMAS PROGRAMABLES;4;16:00;Tópicos avanzados de programación;4ISC21;MARTINEZ
+SISTEMAS PROGRAMABLES;4;17:00;Tópicos avanzados de programación;4ISC21;MARTINEZ
+SISTEMAS PROGRAMABLES;4;18:00;Fundamentos de ingeniería de software;5ISC21;CASTRO
+SISTEMAS PROGRAMABLES;4;19:00;Sistemas programables;7ISC22;HERNANDEZ
+SISTEMAS PROGRAMABLES;4;20:00;Sistemas programables;7ISC22;HERNANDEZ
+SISTEMAS PROGRAMABLES;5;09:00;Arquitectura de computadoras;5ISC12;GOMEZ
+SISTEMAS PROGRAMABLES;5;10:00;Arquitectura de computadoras;5ISC12;GOMEZ
+SISTEMAS PROGRAMABLES;5;12:00;Arquitectura de computadoras;5ISC11;GOMEZ
+SISTEMAS PROGRAMABLES;5;17:00;Fundamentos de ingeniería de software;5ISC21;CASTRO
+SISTEMAS PROGRAMABLES;5;18:00;Fundamentos de ingeniería de software;5ISC21;CASTRO
+SISTEMAS PROGRAMABLES;5;19:00;Sistemas programables;7ISC22;HERNANDEZ
+SISTEMAS PROGRAMABLES;5;20:00;Sistemas programables;7ISC22;HERNANDEZ
