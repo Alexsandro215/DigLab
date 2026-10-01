@@ -12,13 +12,50 @@ pantalla y con qué usuario de base de datos se conecta.
 | Profesor | no | `digbit_equipo` | ninguna |
 | Máquina de laboratorio | **sí** | `digbit_equipo` | laboratorio + número |
 
+## Con la base de la escuela: `DigBit-Instalador.exe`, un solo archivo
+
+Cuando la base ya existe en un servidor (la del TESCHI está en `sql.teschi.edu.mx`)
+no hace falta el paquete entero: basta **un solo `.exe`** que lleva dentro
+DigBit, el vigilante y los guiones de instalación.
+
+**Generarlo** (en el equipo de desarrollo, con DigBit cerrado):
+
+```powershell
+.\crear_instalador.ps1
+```
+
+Deja `DigBit-Instalador.exe` junto a la carpeta del proyecto (unos 6 MB). La
+conexión (servidor, base, usuario y puerto) la toma del `connections.config` de
+`DigBit\bin\Release`, o de `-Servidor`, `-Base` y `-Usuario`. **La contraseña de la
+base no va dentro**: se teclea al instalar cada equipo, así el `.exe` puede
+circular sin exponer la base.
+
+**Usarlo**: doble clic en el equipo, aceptar el permiso de administrador y elegir:
+
+| Tipo | Qué queda |
+|---|---|
+| Administrador | DigBit en `C:\DigBit` como programa normal, con acceso directo en el escritorio |
+| Maestro | Igual que el administrador |
+| Alumno (máquina del laboratorio) | Modo kiosco: la cuenta del laboratorio entra sola y DigBit es su pantalla, con el vigilante |
+
+Luego la contraseña de la base y, solo para Alumno: el laboratorio (sale de la
+base; si hay más de uno, hay que elegirlo), el número de la máquina, la cuenta
+del laboratorio y su contraseña, y la carpeta de datos si tiene Deep Freeze.
+Antes de tocar nada prueba la contraseña contra la base: si la rechaza (distingue
+mayúsculas), avisa y no instala. Al terminar ofrece abrir DigBit (Administrador y
+Maestro) o reiniciar (Alumno).
+
+Por debajo ejecuta `deploy\configurar_equipo.ps1`, igual que el instalador del
+paquete, y lo extraído se borra al cerrar la ventana. Lo de Deep Freeze sigue
+siendo tuyo: descongelar antes y volver a congelar después de comprobarlo.
+
 ## Qué trae este paquete
 
 ```
-preparar_bd.ps1     Deja MySQL listo con el esquema y datos de prueba
 servidor.config     A que equipo apunta esta copia (lo escribe el instalador)
 mysql/              MySQL portátil (no hace falta instalarlo aparte)
-deploy\             Los guiones de instalación y diagnóstico
+deploy\             Los guiones de instalación y diagnóstico (preparar_bd.ps1
+                    deja MySQL listo con el esquema y datos de prueba)
 db\                 Esquema, datos de prueba y migraciones
 DigBit\bin\Release  La aplicación
 DigBit.Vigilante\bin\Release  El servicio que cierra la sesión a la hora
@@ -171,7 +208,7 @@ desde aquí, y el instalador de las máquinas comprueba contra la base que exist
 ## A1. La base de datos
 
 ```powershell
-.\preparar_bd.ps1 -Destino C:\DigBitDB
+.\deploy\preparar_bd.ps1 -Destino C:\DigBitDB
 ```
 
 Deja MySQL como servicio automático, con el esquema y los usuarios de prueba.
@@ -398,7 +435,7 @@ archivos, la cuenta, la carpeta de datos y la base:
 
 ```powershell
 .\deploy\configurar_equipo.ps1 -Cuenta laboratorio -Revertir
-.\preparar_bd.ps1 -Quitar
+.\deploy\preparar_bd.ps1 -Quitar
 ```
 
 Quita el kiosco, las directivas, el inicio automático y el servicio. **No** borra

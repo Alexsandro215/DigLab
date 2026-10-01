@@ -149,7 +149,14 @@ if (-not $Revertir -and -not $SoloMostrar) {
     if ($deepFreeze.Presente -and $null -eq $deepFreeze.Congelado) {
         Write-Warning 'No se pudo confirmar que Deep Freeze este descongelado. Si estuviera congelado, esta instalacion se perderia al reiniciar.'
     }
-    if ($deepFreeze.Presente -and -not $CarpetaDatos -and -not $AceptarSinPersistencia) {
+    # Solo el kiosco guarda algo que no se puede perder (la cola de bitacoras sin
+    # servidor). En adm y maestro lo local son registros y ajustes de ventana: si
+    # se exigia la carpeta, el instalador no podia con esos equipos, porque no la
+    # pide para ellos.
+    if (-not $esKiosco -and $deepFreeze.Presente) {
+        Write-Warning 'Con Deep Freeze, los registros locales de DigBit se pierden al reiniciar. Las bitacoras no: van al servidor.'
+    }
+    if ($esKiosco -and $deepFreeze.Presente -and -not $CarpetaDatos -and -not $AceptarSinPersistencia) {
         throw 'Este equipo tiene Deep Freeze y no indicaste -CarpetaDatos. Las bitacoras registradas sin servidor, el horario local y los registros viven en el perfil del usuario, que se borra en cada reinicio: se perderian datos de alumnos. Indica -CarpetaDatos con un ThawSpace (por ejemplo T:\DigBitDatos) o una particion sin congelar. Si este equipo nunca se queda sin servidor y aceptas perder los registros, repite con -AceptarSinPersistencia.'
     }
 }
@@ -668,7 +675,7 @@ if ($AutorizarMemoria -and -not $SoloMostrar) {
         )
     }
     Write-Host "   memoria autorizada: $($series[0])" -ForegroundColor Green
-    Write-Host '   (el numero se guarda hasheado; esta linea es lo unico que lo enseña)' -ForegroundColor DarkGray
+    Write-Host '   (el numero se guarda hasheado; esta linea es lo unico que lo muestra)' -ForegroundColor DarkGray
 }
 
 # --- 2b. Comprobar que el laboratorio existe de verdad -----------------------------

@@ -16,7 +16,11 @@ param(
 
     [switch]$Rebuild,
     [switch]$NoRun,
-    [switch]$Wait
+    [switch]$Wait,
+
+    # No cerrar los DigBit abiertos (lo usa crear_instalador.ps1). Si hay uno
+    # abierto desde la carpeta de salida, la compilacion falla y lo dice.
+    [switch]$SinCerrar
 )
 
 $ErrorActionPreference = 'Stop'
@@ -87,7 +91,7 @@ if ($LASTEXITCODE -ne 0) {
 $sesionActual = (Get-Process -Id $PID).SessionId
 $abiertos = Get-Process -Name 'DigBit', 'DigBit.Vigilante' -ErrorAction SilentlyContinue |
             Where-Object { $_.SessionId -eq $sesionActual }
-if ($abiertos) {
+if ($abiertos -and -not $SinCerrar) {
     Write-Host "Cerrando $($abiertos.Count) instancia(s) de DigBit / DigBit.Vigilante en ejecucion..." -ForegroundColor Yellow
     $abiertos | Stop-Process -Force
     Start-Sleep -Milliseconds 500

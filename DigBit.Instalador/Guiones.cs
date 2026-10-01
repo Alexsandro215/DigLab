@@ -202,12 +202,28 @@ namespace DigBit.Instalador
 
         /// <summary>
         /// Envuelve un valor para pasarlo a PowerShell entre comillas simples,
-        /// duplicando las que lleve dentro. Sin esto, una contrasena con un
-        /// apostrofo rompe la linea entera o, peor, ejecuta otra cosa.
+        /// duplicando las que lleve dentro. Sin esto, un valor con un apostrofo
+        /// rompe la linea entera o, peor, ejecuta otra cosa.
         /// </summary>
+        /// <remarks>
+        /// PowerShell toma como comilla simple tambien las tipograficas (U+2018 a
+        /// U+201B), que Word y el movil ponen solas al escribir un apostrofo. Se
+        /// duplican igual: de cada pareja PowerShell se queda con la segunda, asi
+        /// que el valor llega tal cual.
+        /// </remarks>
         public static string Comillas(string valor)
         {
-            return "'" + (valor ?? string.Empty).Replace("'", "''") + "'";
+            StringBuilder texto = new StringBuilder("'");
+            foreach (char c in valor ?? string.Empty)
+            {
+                texto.Append(c);
+                if (c == '\'' || (c >= '‘' && c <= '‛'))
+                {
+                    texto.Append(c);
+                }
+            }
+
+            return texto.Append('\'').ToString();
         }
     }
 }

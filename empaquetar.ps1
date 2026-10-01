@@ -65,6 +65,16 @@ if (Test-Path $rutaServidor) {
     $servidorPrevio = Get-Content -Raw $rutaServidor
 }
 
+# La carpeta mysql\ (binarios portatiles, ~94 MB) tampoco sale de aqui: no se
+# versiona y preparar_bd.ps1 la busca junto al paquete para montar el servidor.
+# Borrar el destino entero la perdia; se aparta y se devuelve.
+$rutaMysql = Join-Path $Destino 'mysql'
+$mysqlApartado = "$Destino.mysql-apartado"
+if (Test-Path $rutaMysql) {
+    if (Test-Path $mysqlApartado) { throw "Ya existe $mysqlApartado (de un empaquetado cortado). Devuelvela a $rutaMysql o borrala y repite." }
+    Move-Item $rutaMysql $mysqlApartado
+}
+
 if (Test-Path $Destino) {
     Remove-Item $Destino -Recurse -Force
 }
@@ -73,6 +83,11 @@ New-Item -ItemType Directory -Path $Destino | Out-Null
 if ($servidorPrevio) {
     [IO.File]::WriteAllText($rutaServidor, $servidorPrevio, (New-Object Text.UTF8Encoding $false))
     Write-Host 'Conservado el servidor.config del paquete anterior.' -ForegroundColor DarkGray
+}
+
+if (Test-Path $mysqlApartado) {
+    Move-Item $mysqlApartado $rutaMysql
+    Write-Host 'Conservada la carpeta mysql\ del paquete anterior.' -ForegroundColor DarkGray
 }
 
 Write-Host "Armando el paquete en $Destino..." -ForegroundColor Cyan
@@ -98,6 +113,12 @@ foreach ($relativa in $carpetas.Keys) {
 
 # Los .pdb solo sirven para depurar y pesan; fuera del paquete que se reparte.
 Get-ChildItem $Destino -Recurse -Filter '*.pdb' | Remove-Item -Force
+
+# El connections.config de la compilacion es el del equipo donde se compila y
+# puede llevar la contrasena real de la base. En el paquete va la PLANTILLA: es
+# lo que esperan configurar_equipo.ps1 y actualizar_digbit.ps1, que escriben la
+# conexion buena en cada equipo; asi la contrasena no viaja en la memoria USB.
+Copy-Item (Join-Path $PSScriptRoot 'DigBit\connections.config.example') (Join-Path $Destino 'DigBit\bin\Release\connections.config') -Force
 
 foreach ($doc in @('INSTALAR.md', 'README.md')) {
     Copy-Item (Join-Path $PSScriptRoot $doc) $Destino -Force

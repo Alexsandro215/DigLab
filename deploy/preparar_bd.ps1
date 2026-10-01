@@ -67,6 +67,18 @@ if ($Quitar) {
     return
 }
 
+# El esquema y los datos (db\) se buscan como mysql\: junto al guion o un nivel
+# por encima. Y ANTES de tocar nada: se miraba solo junto al guion, y desde
+# deploy\ del paquete fallaba en el paso 5, con el servicio ya instalado y la
+# base vacia.
+$db = $null
+foreach ($candidata in @((Join-Path $PSScriptRoot 'db'), (Join-Path $PSScriptRoot '..\db'))) {
+    if (Test-Path (Join-Path $candidata '01_schema.sql')) { $db = [IO.Path]::GetFullPath($candidata); break }
+}
+if (-not $db) {
+    throw "No encuentro la carpeta 'db' (01_schema.sql y 02_seed.sql) junto a este guion ni un nivel por encima."
+}
+
 # --- 1. Archivos ---------------------------------------------------------------
 Paso "1. Copiar MySQL a $Destino"
 # En el paquete este guion esta junto a la carpeta 'mysql'; en el repositorio
@@ -170,7 +182,6 @@ Write-Host '   acepta conexiones'
 
 # --- 5. Esquema y datos --------------------------------------------------------
 Paso '5. Cargar el esquema y los datos de prueba'
-$db = Join-Path $PSScriptRoot 'db'
 foreach ($archivo in @('01_schema.sql', '02_seed.sql')) {
     $ruta = Join-Path $db $archivo
     if (-not (Test-Path $ruta)) { throw "Falta $ruta." }

@@ -42,15 +42,28 @@
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.Data" />
     <Reference Include="System.Drawing" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="System.Management" />
     <Reference Include="System.Windows.Forms" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="Carga.cs" />
     <Compile Include="FormInstalador.cs" />
     <Compile Include="Guiones.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+  <!-- El instalador de un solo archivo: crear_instalador.ps1 pasa aqui el zip con
+       DigBit, el vigilante y deploy\ (/p:CargaInstalador=...) y queda dentro del
+       .exe (ver Carga.cs). Sin la propiedad, se compila el instalador de siempre,
+       el que busca el paquete junto a el. -->
+  <ItemGroup Condition=" '$(CargaInstalador)' != '' ">
+    <EmbeddedResource Include="$(CargaInstalador)">
+      <LogicalName>DigBit.Instalador.Carga.zip</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
   <ItemGroup>
     <None Include="app.manifest" />

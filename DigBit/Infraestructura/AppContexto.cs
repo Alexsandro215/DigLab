@@ -268,12 +268,41 @@ namespace DigBit.Infraestructura
             catch (Exception ex)
             {
                 Log.Error("Prueba de conexion con el servidor", ex);
+
+                // El servidor contesto y rechazo el usuario o la contrasena: no es
+                // un problema de red, y decir "comprueba la red" mandaba a buscar
+                // donde no era (paso al instalar con la contrasena en mayusculas).
+                if (AccesoDenegado(ex))
+                {
+                    return "El servidor de bitacoras rechazo el usuario o la contrasena de la base." +
+                           Environment.NewLine + Environment.NewLine +
+                           "La contrasena distingue mayusculas y minusculas. Vuelve a instalar este equipo con " +
+                           "DigBit-Instalador.exe y escribela bien, o corrige C:\\DigBit\\connections.config." +
+                           Environment.NewLine + Environment.NewLine +
+                           "Detalle: " + ex.Message;
+                }
+
                 return "No hay conexion con el servidor de bitacoras." +
                        Environment.NewLine + Environment.NewLine +
                        "Comprueba que el equipo tiene red y que el servidor esta encendido." +
                        Environment.NewLine + Environment.NewLine +
                        "Detalle: " + ex.Message;
             }
+        }
+
+        /// <summary>Error 1045 de MySQL (Access denied), en la excepcion o en alguna de las internas.</summary>
+        private static bool AccesoDenegado(Exception ex)
+        {
+            for (Exception e = ex; e != null; e = e.InnerException)
+            {
+                MySql.Data.MySqlClient.MySqlException mysql = e as MySql.Data.MySqlClient.MySqlException;
+                if ((mysql != null && mysql.Number == 1045) || e.Message.IndexOf("Access denied", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }

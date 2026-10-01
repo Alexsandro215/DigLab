@@ -167,7 +167,8 @@ if ($hayExe) {
     if (Test-Path $conexion) {
         $cadena = ([xml](Get-Content -Raw $conexion)).connectionStrings.add | Where-Object { $_.name -eq 'DigBit' }
         if ($cadena) {
-            $texto = $cadena.connectionString -replace '(?i)(password\s*=\s*)[^;]*', '$1***'
+            # Tambien entre comillas: el instalador las pone si la contrasena lleva ';'.
+            $texto = $cadena.connectionString -replace '(?i)(password\s*=\s*)("(?:[^"]|"")*"|''(?:[^'']|'''')*''|[^;]*)', '$1***'
             Linea 'connections.config' $texto ($texto -notmatch 'SERVIDOR|NOMBRE_BD|USUARIO')
             if ($texto -match 'SERVIDOR|NOMBRE_BD|USUARIO') {
                 Write-Host '     -> es la PLANTILLA, no una cadena real. DigBit no podra conectar.' -ForegroundColor Yellow

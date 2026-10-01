@@ -122,7 +122,8 @@ if (Test-Path $rutaConexion) {
     $conexionGuardada = Get-Content -Raw $rutaConexion
     $cadena = ([xml]$conexionGuardada).connectionStrings.add | Where-Object { $_.name -eq 'DigBit' }
     if ($cadena) {
-        $visible = $cadena.connectionString -replace '(?i)(password\s*=\s*)[^;]*', '$1***'
+        # Tambien entre comillas: el instalador las pone si la contrasena lleva ';'.
+        $visible = $cadena.connectionString -replace '(?i)(password\s*=\s*)("(?:[^"]|"")*"|''(?:[^'']|'''')*''|[^;]*)', '$1***'
         Write-Host ("   connections.config: " + $visible)
     }
 } else {
