@@ -94,18 +94,40 @@ namespace DigBit.Infraestructura
         /// <summary>
         /// Busca el laboratorio configurado en la base. Devuelve null si quedo
         /// resuelto, o el problema en texto (sin configurar, o no existe) si no.
-        /// Se llama al arrancar, despues de comprobar el servidor.
+        /// Se llama al arrancar, despues de comprobar el servidor. Si la consulta
+        /// falla (se fue la red), el laboratorio que hubiera se queda: antes se
+        /// ponia a 0 ANTES de consultar y una caida en ese momento dejaba el
+        /// equipo rechazando a todos los alumnos hasta reiniciar.
         /// </summary>
         public static string Resolver()
         {
-            Id = 0;
-            Nombre = null;
+            int id;
+            string nombre;
+            string problema = Buscar(out id, out nombre);
+            if (problema == null)
+            {
+                Fijar(id, nombre);
+            }
 
+            return problema;
+        }
+
+        /// <summary>
+        /// Solo la consulta, sin tocar el laboratorio de este equipo: la usa la
+        /// vigilancia de conexion desde su hilo. Lanza si no hay servidor.
+        /// </summary>
+        public static string Buscar(out int id, out string nombre)
+        {
+            id = 0;
+            nombre = null;
+
+            // En pantalla, que hacer; lo tecnico (el archivo y la clave), al log.
             string configurado = NombreConfigurado;
             if (configurado == null)
             {
+                Log.Aviso("Este equipo no tiene laboratorio: falta 'Laboratorio' en DigBit.exe.config (o la variable DIGBIT_LABORATORIO) con el nombre exacto.");
                 return "Este equipo no tiene laboratorio asignado." + Environment.NewLine + Environment.NewLine
-                    + "Configura 'Laboratorio' en DigBit.exe.config (o la variable DIGBIT_LABORATORIO) con el nombre exacto del laboratorio.";
+                    + "Vuelve a instalarlo con DigBit-Instalador.exe y elige su laboratorio; si no puedes, avisa a la persona responsable del laboratorio.";
             }
 
             using (MySqlConnection conexion = new Conexion().GetConexion())
@@ -117,17 +139,30 @@ namespace DigBit.Infraestructura
                 {
                     if (!reader.Read())
                     {
-                        return "El laboratorio configurado en este equipo ('" + configurado + "') no existe en la base de datos." + Environment.NewLine + Environment.NewLine
-                            + "Revisa el nombre en DigBit.exe.config o da de alta el laboratorio.";
+                        Log.Aviso("El laboratorio de este equipo ('" + configurado + "', DigBit.exe.config) no esta en laboratorios.nombre_laboratorio.");
+                        return "El laboratorio de este equipo («" + configurado + "») no está dado de alta en DigBit." + Environment.NewLine + Environment.NewLine
+                            + "Pide a la administración de DigBit que lo dé de alta con ese nombre, o vuelve a instalar este equipo con "
+                            + "DigBit-Instalador.exe y elige uno de la lista.";
                     }
 
-                    Id = reader.GetInt32("idlaboratorios");
-                    Nombre = reader.GetString("nombre_laboratorio");
+                    id = reader.GetInt32("idlaboratorios");
+                    nombre = reader.GetString("nombre_laboratorio");
                 }
             }
 
-            Log.Info("Laboratorio del equipo: " + Nombre + " (id " + Id + ").");
             return null;
+        }
+
+        /// <summary>Deja fijado el laboratorio de este equipo (lo que encontro Buscar).</summary>
+        public static void Fijar(int id, string nombre)
+        {
+            bool cambia = Id != id || Nombre != nombre;
+            Id = id;
+            Nombre = nombre;
+            if (cambia)
+            {
+                Log.Info("Laboratorio del equipo: " + Nombre + " (id " + Id + ").");
+            }
         }
     }
 }

@@ -33,19 +33,23 @@ namespace DigBit
         private readonly string alumno;
         private readonly string matricula;
         private readonly string laboratorio;
-        private readonly string codigo;
+        // "Taller de base de datos, 5ISC21": la clase, nunca su codigo (fuera del
+        // codigo fijo seria el del profesor, que no debe salir en pantalla).
+        private readonly string clase;
+        private readonly bool enEsteEquipo;
 
         private int segundosRestantes = SegundosParaVolver;
         private Opcion eleccion = Opcion.Login;
         private Timer temporizador;
         private Label lblCuentaAtras;
 
-        private RegistroExitoso(string alumno, string matricula, string laboratorio, string codigo)
+        private RegistroExitoso(string alumno, string matricula, string laboratorio, string clase, bool enEsteEquipo)
         {
             this.alumno = alumno;
             this.matricula = matricula;
             this.laboratorio = laboratorio;
-            this.codigo = codigo;
+            this.clase = clase;
+            this.enEsteEquipo = enEsteEquipo;
             InicializarComponentes();
         }
 
@@ -53,9 +57,11 @@ namespace DigBit
         /// Muestra la pantalla y devuelve lo que eligio el alumno. Quien la llama
         /// es el responsable de apagar o de volver al login: aqui solo se decide.
         /// </summary>
-        public static Opcion Mostrar(string alumno, string matricula, string laboratorio, string codigo)
+        /// <param name="enEsteEquipo">La bitacora quedo en la cola de este equipo (sin conexion): se envia sola si se deja encendido.</param>
+        /// <param name="clase">"Materia, Grupo".</param>
+        public static Opcion Mostrar(string alumno, string matricula, string laboratorio, string clase, bool enEsteEquipo)
         {
-            using (RegistroExitoso pantalla = new RegistroExitoso(alumno, matricula, laboratorio, codigo))
+            using (RegistroExitoso pantalla = new RegistroExitoso(alumno, matricula, laboratorio, clase, enEsteEquipo))
             {
                 pantalla.ShowDialog();
                 return pantalla.eleccion;
@@ -73,7 +79,7 @@ namespace DigBit
             ShowInTaskbar = true;
             StartPosition = FormStartPosition.CenterScreen;
             TopMost = Kiosco.Activo;
-            Text = "DigBit - Bitacora registrada";
+            Text = "DigBit - Bitácora registrada";
 
             Panel palomita = new Panel
             {
@@ -90,7 +96,7 @@ namespace DigBit
                 ForeColor = Color.DarkGreen,
                 Location = new Point(30, 125),
                 Size = new Size(640, 40),
-                Text = "Bitacora registrada",
+                Text = "Bitácora registrada",
                 TextAlign = ContentAlignment.MiddleCenter
             };
 
@@ -123,9 +129,14 @@ namespace DigBit
                 ForeColor = Color.FromArgb(70, 70, 70),
                 Location = new Point(60, 240),
                 Size = new Size(580, 60),
-                Text = "Registraste tu asistencia con tu propia computadora, asi que no necesitas "
-                    + "usar este equipo. Apagalo si eres el ultimo, o dejalo en la pantalla de "
-                    + "inicio para el siguiente alumno.",
+                // Si la bitacora quedo en la cola, apagar es lo unico que puede
+                // perderla: se pide dejarlo encendido.
+                Text = enEsteEquipo
+                    ? "Sin conexión con el servidor: tu bitácora quedó guardada en este equipo y se enviará sola. "
+                      + "Si puedes, déjalo encendido en la pantalla de inicio para que la envíe."
+                    : "Registraste tu asistencia con tu propia computadora, así que no necesitas "
+                      + "usar este equipo. Apágalo si nadie más lo va a usar, o déjalo en la pantalla de "
+                      + "inicio para la siguiente persona.",
                 TextAlign = ContentAlignment.TopCenter
             };
 
@@ -196,10 +207,10 @@ namespace DigBit
 
         private string DescribirSesion()
         {
-            string texto = "Registrado con equipo propio";
-            if (!string.IsNullOrWhiteSpace(codigo))
+            string texto = "Registro con equipo propio";
+            if (!string.IsNullOrWhiteSpace(clase))
             {
-                texto += ", clase " + codigo.Trim();
+                texto += " en " + clase.Trim();
             }
             if (!string.IsNullOrWhiteSpace(laboratorio))
             {
@@ -269,7 +280,7 @@ namespace DigBit
 
         private void ActualizarCuentaAtras()
         {
-            lblCuentaAtras.Text = "Si no eliges nada, se volvera a la pantalla de inicio en "
+            lblCuentaAtras.Text = "Si no eliges nada, se volverá a la pantalla de inicio en "
                 + segundosRestantes + " s.";
         }
 

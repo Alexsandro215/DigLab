@@ -10,11 +10,13 @@ namespace DigBit
     {
         private Conexion mconexion;
         private Consultas consultas = new Consultas();
-        private RegistroAlumnos regAlum;
-        private recuperarContraseña recupCont;
+        // "INICIAR  SESION" del disenador, para volver a el despues de "ENTRANDO...".
+        private readonly string textoIniciarSesion;
+
         public Login()
         {
             InitializeComponent();
+            textoIniciarSesion = btnIniciarSesion.Text;
             mconexion = new Conexion();
             Kiosco.Aplicar(this);
             if (AppContexto.Actual != null)
@@ -26,14 +28,17 @@ namespace DigBit
             imgSalir.Visible = !Kiosco.Activo;
             imgMinimizar.Visible = !Kiosco.Activo;
 
-            // Darse de alta uno mismo no tiene sentido en un equipo del
-            // laboratorio: los alumnos los carga la escuela. Y tiene un coste
-            // real, porque obliga a que el usuario de MySQL de los equipos
-            // pueda INSERTAR en usuarios, y ese usuario y su contrasena estan
-            // en connections.config, que el alumno puede leer. Con ese permiso,
-            // desde cualquier cliente de MySQL se puede crear un usuario de
-            // tipo 3, que es administrador. Ver db/07_usuarios_minimos.sql.
-            btnRegistro.Visible = !Kiosco.Activo;
+            // "USUARIO" y "CONTRASENA" como texto guia (gris, tambien con el cursor
+            // dentro): antes eran el texto de la caja y se borraban al entrar.
+            EstiloHorarios.PonerTextoGuia(txtUsuario, "USUARIO");
+            EstiloHorarios.PonerTextoGuia(txtPassword, "CONTRASEÑA");
+            // Se escribe en cuanto aparece la ventana; Enter es "Iniciar sesion"
+            // (AcceptButton, en el disenador). Con el foco en el enlace, Enter lo
+            // abre: un LinkLabel es IButtonControl y entonces es el boton por defecto.
+            ActiveControl = txtUsuario;
+            // El enlace va sobre las franjas verdes: con fondo blanco, como los
+            // botones, y centrado bajo "Iniciar sesion".
+            linkPasswd.Left = btnIniciarSesion.Left + (btnIniciarSesion.Width - linkPasswd.Width) / 2;
 
             // Fase 4: franja de aviso cuando se trabaja con la copia local.
             lblSinConexion = new Label
@@ -168,7 +173,7 @@ namespace DigBit
                 this.Show();
                 MessageBox.Show(
                     "No se pudo abrir el escritorio." + Environment.NewLine + Environment.NewLine +
-                    "Avisa al encargado del laboratorio.",
+                    "Avisa a la persona responsable del laboratorio.",
                     "Acceso de emergencia", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
@@ -203,11 +208,18 @@ namespace DigBit
                 return;
             }
 
+            // Con bitacoras sin enviar, primero se intenta enviarlas.
+            if (!AvisoApagado.PuedeApagar(this))
+            {
+                return;
+            }
+
             if (!SesionEquipo.ApagarEquipo())
             {
+                // ApagarEquipo ya dejo en el registro que fallo (el privilegio o la orden).
                 MessageBox.Show(
-                    "No se pudo apagar el equipo." + Environment.NewLine + Environment.NewLine +
-                    "Avisa al encargado del laboratorio.",
+                    "No se pudo apagar el equipo: Windows no aceptó la orden de apagado." + Environment.NewLine + Environment.NewLine +
+                    "Avisa a la persona responsable del laboratorio.",
                     "Apagar el equipo",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
@@ -224,6 +236,16 @@ namespace DigBit
             string texto = SinConexion.TextoAviso();
             lblSinConexion.Text = texto;
             lblSinConexion.Visible = texto.Length > 0;
+            // En el kiosco la franja va a todo lo ancho de la pantalla y crece con el
+            // texto (con "la persona responsable del laboratorio" puede pasar de dos
+            // lineas). En una ventana de 400 se queda en 34: mas alta taparia los botones.
+            if (Kiosco.Activo && texto.Length > 0)
+            {
+                int alto = TextRenderer.MeasureText(texto, lblSinConexion.Font, new Size(Math.Max(100, ClientSize.Width - 8), int.MaxValue),
+                    TextFormatFlags.WordBreak).Height + 14;
+                lblSinConexion.Height = Math.Max(34, alto);
+            }
+
             ColocarBotonApagar();
             ColocarBotonEmergencia();
         }
@@ -240,50 +262,6 @@ namespace DigBit
             base.OnFormClosed(e);
         }
 
-
-        //Evento Enter para que el texto "USUARIO e encuentra dentro del TextBox se borre al momento de dar clic 
-        private void txtUsuario_Enter(object sender, EventArgs e)
-        {
-            if (txtUsuario.Text == "USUARIO")
-            {
-                txtUsuario.Text = "";
-                txtUsuario.ForeColor = Color.DarkGreen;
-            }
-        }
-
-        //Evento para que cuando el texto dentro del TextBox se encuentre vacio se vuelva a mostrar el texto "USUARIO"
-        private void txtUsuario_Leave(object sender, EventArgs e)
-        {
-            if (txtUsuario.Text == "")
-            {
-                txtUsuario.Text = "USUARIO";
-                txtUsuario.ForeColor = Color.DarkGreen;
-            }
-        }
-
-        //Evento Enter para que el texto "CONTRASEÑA" que se encuentra dentro del TextBox se borre al momento de dar clic 
-        private void txtPassword_Enter(object sender, EventArgs e)
-        {
-            if (txtPassword.Text == "CONTRASEÑA")
-            {
-                txtPassword.Text = "";
-                txtPassword.ForeColor = Color.DarkGreen;
-                txtPassword.UseSystemPasswordChar = true; // El texto ingresado se mostrara como caracteres de contraseña
-
-            }
-
-        }
-
-        //Evento para que cuando el texto dentro del TextBox se encuentre vacio se vuelva a mostrar el texto "CONTRASEÑA"
-        private void txtPassword_Leave(object sender, EventArgs e)
-        {
-            if (txtPassword.Text == "")
-            {
-                txtPassword.Text = "CONTRASEÑA";
-                txtPassword.ForeColor = Color.DarkGreen;
-                txtPassword.UseSystemPasswordChar = false;
-            }
-        }
 
         //Se configura la imagen "imgSalir" para que al momento de dar clic se cierre la aplicacion (solo fuera del kiosco)
         private void imgSalir_Click(object sender, EventArgs e)
@@ -302,106 +280,284 @@ namespace DigBit
 
         private void btnIniciarSesion_Click(object sender, EventArgs e)
         {
+            // Una matricula no lleva espacios: los de mas al principio o al final se quitan.
+            string numeroIdentificadorIngresado = txtUsuario.Text.Trim();
+            string contraseñaIngresada = txtPassword.Text;
+
+            // Con el texto guia, una caja sin escribir esta vacia de verdad.
+            bool sinUsuario = numeroIdentificadorIngresado.Length == 0;
+            bool sinContrasena = string.IsNullOrWhiteSpace(contraseñaIngresada);
+            if (sinUsuario || sinContrasena)
+            {
+                MessageBox.Show(sinUsuario && sinContrasena ? "Escribe tu usuario y tu contraseña."
+                    : sinUsuario ? "Escribe tu usuario." : "Escribe tu contraseña.",
+                    "Iniciar sesión", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                (sinUsuario ? txtUsuario : txtPassword).Focus();
+                return;
+            }
+
+            // Validar que el usuario no contenga caracteres especiales
+            if (!System.Text.RegularExpressions.Regex.IsMatch(numeroIdentificadorIngresado, @"^[a-zA-Z0-9]+$"))
+            {
+                MessageBox.Show("Tu usuario solo puede llevar letras y números, sin espacios ni símbolos.",
+                    "Iniciar sesión", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                txtUsuario.SelectAll();
+                txtUsuario.Focus();
+                return;
+            }
+
+            bool entro = false;
+            MostrarEntrando(true);
             try
             {
-                // Obtener los valores de los campos de usuario y contraseña
-                string numeroIdentificadorIngresado = txtUsuario.Text;
-                string contraseñaIngresada = txtPassword.Text;
-
-                // Validar que los campos no estén vacíos y no contengan los valores por defecto
-                if (numeroIdentificadorIngresado == "USUARIO" || contraseñaIngresada == "CONTRASEÑA" ||
-                    string.IsNullOrWhiteSpace(numeroIdentificadorIngresado) || string.IsNullOrWhiteSpace(contraseñaIngresada))
-                {
-                    MessageBox.Show("Por favor, ingrese un usuario y una contraseña válidos.", "Campos Vacíos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return; // Salir del método si algún campo está vacío o contiene el valor por defecto
-                }
-
-                // Validar que el usuario no contenga caracteres especiales
-                if (!System.Text.RegularExpressions.Regex.IsMatch(numeroIdentificadorIngresado, @"^[a-zA-Z0-9]+$"))
-                {
-                    MessageBox.Show("El usuario no puede contener caracteres especiales.", "Usuario Inválido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return; // Salir del método si el usuario contiene caracteres especiales
-                }
-
-                // Fase 4: sin servidor, el alumno entra solo con su matricula contra la
-                // copia local; su bitacora quedara marcada como registrada sin conexion.
-                if (!SinConexion.Activo)
-                {
-                    try
-                    {
-                        Conexion.Probar();
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Error("El servidor no responde al iniciar sesion", ex);
-                        if (!SinConexion.IntentarActivar(ex.Message))
-                        {
-                            MessageBox.Show("No hay conexión con el servidor y este equipo no tiene una copia del horario. Avisa al encargado del laboratorio.", "Sin conexión", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                            return;
-                        }
-
-                        ActualizarAvisoSinConexion();
-                    }
-                }
-
-                if (SinConexion.Activo)
-                {
-                    AlumnoCache alumno = SinConexion.Cache.BuscarAlumno(numeroIdentificadorIngresado);
-                    if (alumno == null)
-                    {
-                        MessageBox.Show("Sin conexión solo pueden entrar alumnos, y esa matrícula no está en la copia local de este equipo.", "Sin conexión", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                        return;
-                    }
-
-                    Log.Aviso("Alumno " + alumno.Matricula + " entra SIN CONEXION (matricula sin contrasena).");
-                    consultas.AbrirPestanaSegunTipoUsuario(1, alumno.Matricula);
-                    return;
-                }
-
-                // El administrador es un usuario mas de la base (fk_tipo_usuario = 3)
-                // desde la fase 6; antes eran credenciales escritas aqui.
-                if (consultas.RealizarInicioSesion(numeroIdentificadorIngresado, contraseñaIngresada))
-                {
-                    this.Hide();
-                }
+                entro = Entrar(numeroIdentificadorIngresado, contraseñaIngresada);
             }
             catch (Exception ex)
             {
-                // Mostrar mensaje de error si hay una excepción
-                MessageBox.Show($"Error al intentar iniciar sesión: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                // La causa y que hacer; el detalle tecnico, al registro.
+                Log.Error("Iniciar sesion de '" + numeroIdentificadorIngresado + "'", ex);
+                MostrarEntrando(false);
+                MessageBox.Show("No se pudo iniciar sesión por un error inesperado." + Environment.NewLine + Environment.NewLine
+                    + "Inténtalo de nuevo; si sigue fallando, avisa a la persona responsable del laboratorio.",
+                    "Iniciar sesión", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                MostrarEntrando(false);
             }
 
+            if (entro)
+            {
+                this.Hide();
+                return;
+            }
+
+            // Lo mas comun es una contrasena mal escrita: queda lista para escribirla otra vez.
+            if (!IsDisposed && Visible)
+            {
+                txtPassword.SelectAll();
+                txtPassword.Focus();
+            }
+        }
+
+        /// <summary>
+        /// Prueba el servidor (o sigue con la copia local) y abre la ventana de la
+        /// cuenta. True si la abrio; los avisos de por que no, los ensena por el camino.
+        /// </summary>
+        private bool Entrar(string numeroIdentificadorIngresado, string contraseñaIngresada)
+        {
+            // Fase 4: sin servidor, el alumno entra solo con su matricula contra la
+            // copia local; su bitacora quedara marcada como registrada sin conexion.
+            if (!SinConexion.Activo)
+            {
+                try
+                {
+                    Conexion.Probar();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("El servidor no responde al iniciar sesion", ex);
+                    if (!SinConexion.IntentarActivar(ex.Message))
+                    {
+                        MostrarEntrando(false);
+                        MessageBox.Show("No hay conexión con el servidor y este equipo no tiene una copia del horario. Avisa a la persona responsable del laboratorio.", "Sin conexión", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return false;
+                    }
+
+                    ActualizarAvisoSinConexion();
+                }
+            }
+
+            if (SinConexion.Activo)
+            {
+                AlumnoCache alumno = SinConexion.Cache.BuscarAlumno(numeroIdentificadorIngresado);
+                if (alumno == null)
+                {
+                    MostrarEntrando(false);
+                    MessageBox.Show("Sin conexión solo pueden entrar estudiantes, y esa matrícula no está en la copia local de este equipo.", "Sin conexión", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return false;
+                }
+
+                Log.Aviso("Alumno " + alumno.Matricula + " entra SIN CONEXION (matricula sin contrasena).");
+                // Nada de la sesion anterior (ni la cuenta de solo consulta de un encargado).
+                Datos_User.Limpiar();
+                // Con true el login se esconde, como con servidor (antes se quedaba abierto detras).
+                return consultas.AbrirPestanaSegunTipoUsuario(1, alumno.Matricula);
+            }
+
+            // Consultas abre la ventana segun el tipo de la cuenta: el alumno (1)
+            // y el profesor (2), la suya; el administrador (3) y el encargado de
+            // laboratorio (4), el panel del administrador, el encargado en solo
+            // consulta. Si esta version no conoce el tipo, devuelve false y el
+            // login se queda a la vista. El administrador es un usuario mas de la
+            // base desde la fase 6; antes eran credenciales escritas aqui.
+            return consultas.RealizarInicioSesion(numeroIdentificadorIngresado, contraseñaIngresada);
+        }
+
+        /// <summary>
+        /// Mientras se prueba el servidor y se comprueba la cuenta (sin servidor,
+        /// hasta que se agota la espera de la conexion, unos 5 s): cursor de
+        /// espera, el boton desactivado y "ENTRANDO...". Todo va en el hilo de la
+        /// ventana, asi que el boton se repinta antes de empezar. Los avisos de esta
+        /// ventana lo quitan antes de salir: detras de un aviso ya no se esta entrando.
+        /// </summary>
+        private void MostrarEntrando(bool entrando)
+        {
+            if (IsDisposed)
+            {
+                return;
+            }
+
+            btnIniciarSesion.Enabled = !entrando;
+            btnIniciarSesion.Text = entrando ? "ENTRANDO..." : textoIniciarSesion;
+            Cursor.Current = entrando ? Cursors.WaitCursor : Cursors.Default;
+            if (entrando)
+            {
+                btnIniciarSesion.Refresh();
+            }
         }
 
 
 
+        /// <summary>
+        /// "Crear cuenta", tambien en el kiosco: el alumno que no esta dado de alta
+        /// se registra aqui mismo, con los datos que le pediria el administrador.
+        /// El usuario de MySQL de los equipos, cuya contrasena esta en
+        /// connections.config y el alumno puede leer, solo tiene INSERT en usuarios
+        /// POR COLUMNA y sin fk_tipo_usuario, que vale 1 (alumno) por defecto: con
+        /// esas credenciales se crean alumnos y nada mas. Ver
+        /// db/07_usuarios_minimos.sql y db/10_red_y_autoregistro.sql.
+        /// </summary>
         private void btnRegistro_Click(object sender, EventArgs e)
         {
-            if (regAlum == null || regAlum.IsDisposed)
+            // Sin servidor no se puede: ni saber si la matricula ya existe ni
+            // guardar la cuenta. Y sin la migracion 10 la base no admite un
+            // alumno sin grupo. Las dos cosas se miran antes de que el alumno lo
+            // escriba todo.
+            bool hayServidor = !SinConexion.Activo;
+            bool disponible = false;
+            if (hayServidor)
             {
-                //Si no existe crea la instancia de la clase
-                regAlum = new RegistroAlumnos();
+                // Sin servidor la consulta tarda lo que la espera de la conexion.
+                Cursor.Current = Cursors.WaitCursor;
+                try
+                {
+                    disponible = new AlumnosDatos().AltaDisponible();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("El servidor no responde al crear una cuenta", ex);
+                    hayServidor = false;
+                    if (SinConexion.IntentarActivar(ex.Message))
+                    {
+                        ActualizarAvisoSinConexion();
+                    }
+                }
+                finally
+                {
+                    Cursor.Current = Cursors.Default;
+                }
             }
-            //Muestra el formulario
-            regAlum.Show();
 
-            //Si esta en segundo plano lo trae al frente
-            regAlum.BringToFront();
+            if (!hayServidor)
+            {
+                MessageBox.Show("Para crear tu cuenta hace falta conexión con el servidor, y ahora no la hay. "
+                    + "Inténtalo más tarde o avisa a la persona responsable del laboratorio.", "Sin conexión", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (!disponible)
+            {
+                MessageBox.Show("Todavía no se pueden crear cuentas desde el laboratorio. Pide a la administración de DigBit que te dé de alta.",
+                    "Crear cuenta", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            string matricula;
+            string contrasena;
+            if (!DialogoUsuario.CrearCuenta(this, out matricula, out contrasena))
+            {
+                return;
+            }
+
+            // Recien creada, se entra con ella sin volver a escribirla. Si eso
+            // falla (RealizarInicioSesion ya enseno su error), que el alumno sepa
+            // que la cuenta si existe: si no, la volveria a crear y le diria que
+            // esa matricula ya esta tomada.
+            bool entro = false;
+            MostrarEntrando(true);
+            try
+            {
+                entro = consultas.RealizarInicioSesion(matricula, contrasena);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Entrar con la cuenta recien creada", ex);
+            }
+            finally
+            {
+                MostrarEntrando(false);
+            }
+
+            if (entro)
+            {
+                this.Hide();
+                return;
+            }
+
+            txtUsuario.Text = matricula;
+            txtPassword.Clear();
+            MessageBox.Show("Tu cuenta quedó creada, pero no se pudo entrar con ella ahora." + Environment.NewLine + Environment.NewLine
+                + "Inicia sesión con tu matrícula y tu contraseña.", "Crear cuenta", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            // La matricula ya esta escrita: falta la contrasena.
+            txtPassword.Focus();
         }
 
+        /// <summary>
+        /// "Olvidaste tu contrasena?", tambien en el kiosco: la API de recuperacion
+        /// (api/recuperar.php, en el hosting de la escuela) le manda un codigo a su
+        /// correo y con el pone una contrasena nueva. Su direccion la pone el
+        /// administrador en Ajustes (la base) y vale para todos los equipos; sin
+        /// ella solo queda pedirle al administrador de DigBit una contrasena nueva.
+        /// </summary>
         private void linkPasswd_LinkClicked_1(object sender, LinkLabelLinkClickedEventArgs e)
         {
-            //Bucle para verificar si ya existe el objeto
-            if (recupCont == null || recupCont.IsDisposed)
+            ApiRecuperacion api;
+            Cursor anterior = Cursor.Current;
+            Cursor.Current = Cursors.WaitCursor;
+            try
             {
-                //Si no existe crea la instancia de la clase
-                recupCont = new recuperarContraseña();
-                //Muestra el formulario
-                recupCont.Show();
-
-                //Si esta en segundo plano lo trae al frente
-                recupCont.BringToFront();
+                api = RecuperacionContrasena.Buscar();
             }
+            finally
+            {
+                Cursor.Current = anterior;
+            }
+
+            if (!api.Configurada)
+            {
+                MessageBox.Show(api.NoSeSupo
+                    ? "Ahora no hay conexión con el servidor, así que no se puede recuperar la contraseña. "
+                        + "Inténtalo más tarde o pide a la administración de DigBit que te ponga una contraseña nueva."
+                    : "La recuperación de contraseña por correo todavía no está activada. "
+                        + "Pide a la administración de DigBit que te ponga una contraseña nueva.",
+                    "Recuperar contraseña", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            string escrita = txtUsuario.Text.Trim();
+            string matricula;
+            if (!DialogoRecuperarContrasena.Mostrar(this, api, escrita, out matricula))
+            {
+                return;
+            }
+
+            txtUsuario.Text = matricula;
+            // La que tuviera escrita era la vieja.
+            txtPassword.Clear();
+            MessageBox.Show("Listo: ya puedes entrar con tu contraseña nueva.", "Recuperar contraseña",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            txtPassword.Focus();
         }
     }
 }

@@ -23,12 +23,24 @@
 
     Una clase es maestro + grupo + materia, con el codigo del maestro (uno para
     todas sus clases, db/09_codigo_por_profesor.sql). Si ya hay una clase activa
-    igual en esas fechas se reutiliza, y una franja identica no se repite: el
-    guion se puede volver a ejecutar sin duplicar nada.
+    igual en esas fechas se reutiliza, y una franja identica que aun se da en
+    esas fechas no se repite: el guion se puede volver a ejecutar sin duplicar
+    nada.
+
+    Con db/20_vigencia_franjas.sql cada franja tiene su propia vigencia: una
+    franja terminada (cambiada en Horarios desde una fecha) no cuenta como
+    "ya estaba" ni choca con lo nuevo. Si ademas estan encendidos en Ajustes
+    los cambios de horario desde una fecha (configuracion.franjas_con_fecha =
+    1, como en DigBit), las franjas nuevas de una clase reutilizada que ya
+    empezo empiezan en -Desde (o hoy, si -Desde ya paso): asi no aparecen en
+    las semanas pasadas, donde Faltas las daria por no dadas. Si no, valen
+    toda la vigencia de su clase, como antes (y lo avisa).
 
     Antes de escribir comprueba que ningun laboratorio, maestro ni grupo quede
-    en dos sitios a la misma hora (entre si y contra lo que ya hay en la base),
-    igual que la pantalla de Horarios. Si algo choca, no escribe nada.
+    en dos sitios a la misma hora (entre si y contra lo que ya hay en la base,
+    con la vigencia de cada franja: solo chocan si en el cruce de las dos cae
+    su dia de la semana), igual que la pantalla de Horarios. Si algo choca, no
+    escribe nada.
 
     SIN -Aplicar es un ENSAYO: hace todo dentro de una transaccion y la deshace
     al final. Con -Aplicar respalda antes la base (mysqldump) y confirma. Los
@@ -62,24 +74,33 @@ param(
     [string]$BinMysql,
 
     # Compilacion de DigBit: de ahi salen MySql.Data y el formato de contrasena (PBKDF2).
-    [string]$CarpetaApp = (Join-Path $PSScriptRoot '..\DigBit\bin\Release'),
+    # Por defecto, DigBit\bin\Release.
+    [string]$CarpetaApp,
 
     # Carrera de las materias y grupos nuevos (1 = Sistemas Computacionales en la base del TESCHI).
     [int]$IdCarrera = 1,
 
     # Clases que se borran antes de cargar (por ejemplo, de prueba). Borrar una
-    # clase borra sus franjas y excepciones; sus sesiones pasadas se conservan.
+    # clase borra sus franjas y excepciones. Solo clases SIN sesiones: con alguna,
+    # el guion se niega (borrarla dejaria su historia sin clase); terminala en
+    # Horarios en su lugar.
     [int[]]$BorrarClases = @(),
 
     # Queda como creador de las clases.
     [string]$Administrador = 'ADMIN001',
 
-    [string]$CarpetaRespaldo = (Join-Path $PSScriptRoot '..\respaldos'),
+    # Por defecto, respaldos\ junto a deploy\.
+    [string]$CarpetaRespaldo,
 
     [switch]$Aplicar
 )
 
 $ErrorActionPreference = 'Stop'
+
+# $PSScriptRoot llega VACIO en los valores por defecto del bloque param cuando el
+# guion se lanza con "powershell -File" (igual que en migrar_bd.ps1): aqui si esta.
+if (-not $CarpetaApp) { $CarpetaApp = Join-Path $PSScriptRoot '..\DigBit\bin\Release' }
+if (-not $CarpetaRespaldo) { $CarpetaRespaldo = Join-Path $PSScriptRoot '..\respaldos' }
 
 function Paso([string]$t) { Write-Host ''; Write-Host "== $t" -ForegroundColor Cyan }
 
@@ -119,12 +140,12 @@ if ($Hasta.Date -lt $Desde.Date) { throw "-Hasta ($($Hasta.ToString('yyyy-MM-dd'
 
 $filasProfesores = @(Import-Csv -LiteralPath $Profesores -Delimiter ';' -Encoding UTF8)
 $filasFranjas = @(Import-Csv -LiteralPath $Franjas -Delimiter ';' -Encoding UTF8)
-Write-Host ("   {0} maestros y {1} horas de laboratorio" -f $filasProfesores.Count, $filasFranjas.Count)
+Write-Host ("   {0} docentes y {1} horas de laboratorio" -f $filasProfesores.Count, $filasFranjas.Count)
 
 $profesPorClave = @{}
 foreach ($p in $filasProfesores) {
     $clave = $p.clave.Trim().ToUpperInvariant()
-    if ($profesPorClave.ContainsKey($clave)) { throw "La clave de maestro $clave esta repetida en $Profesores." }
+    if ($profesPorClave.ContainsKey($clave)) { throw "La clave de docente $clave esta repetida en $Profesores." }
     if ($p.numero.Trim() -notmatch '^[A-Za-z0-9]+$') { throw "El numero '$($p.numero)' de $clave no vale: solo letras y numeros (asi lo pide el inicio de sesion)." }
     $profesPorClave[$clave] = $p
 }
@@ -208,16 +229,31 @@ function Existe([string]$tabla, [string]$columna) {
 
 $codigoPorProfesor = Existe 'usuarios' 'codigo_clase'
 $hayBajasLab = Existe 'laboratorios' 'activo'
+$conVigencia = Existe 'horarios' 'vigente_hasta'
+# Las franjas nuevas llevan fecha de inicio solo con db/20 y los cambios de horario
+# desde una fecha encendidos en Ajustes, como VigenciaFranjas.ConFecha en DigBit:
+# antes, un DigBit viejo en algun equipo no veria esa fecha.
+$conFecha = $false
+if ($conVigencia -and (Existe 'configuracion' 'valor')) {
+    $valorConFecha = Escalar "SELECT valor FROM configuracion WHERE clave = 'franjas_con_fecha'"
+    $conFecha = $null -ne $valorConFecha -and $valorConFecha -isnot [DBNull] -and "$valorConFecha".Trim() -eq '1'
+}
 # Sin la 09, clases.codigo sigue siendo UNICO (db/04) y este guion da el mismo
 # codigo a todas las clases de un maestro: la carga fallaria, y se desharia, en
 # cuanto uno tuviera dos clases nuevas. Mejor pararse ahora y decir por que.
 if (-not $codigoPorProfesor) {
-    throw 'La base no tiene la migracion 09 (usuarios.codigo_clase): un codigo por maestro no cabe en ella. Aplicala antes con deploy\migrar_bd.ps1.'
+    throw 'La base no tiene la migracion 09 (usuarios.codigo_clase): un codigo por docente no cabe en ella. Aplicala antes con deploy\migrar_bd.ps1.'
 }
-Write-Host '   codigo por profesor (db/09): si'
+Write-Host '   codigo por docente (db/09): si'
+Write-Host ('   vigencia propia de cada franja (db/20): ' + $(if ($conVigencia) { 'si' } else { 'no' }))
+if ($conVigencia) { Write-Host ('   cambios de horario desde una fecha (Ajustes): ' + $(if ($conFecha) { 'encendidos' } else { 'apagados' })) }
+
+# "Hoy" es el del servidor con la hora de la aplicacion (la base de la escuela va en UTC).
+[void](Escalar "SET time_zone = '-06:00'")
+$hoy = ([datetime](Escalar 'SELECT CURDATE()')).Date
 
 $idAdministrador = Escalar 'SELECT idusuarios FROM usuarios WHERE numero_identificador = @n' @{ '@n' = $Administrador }
-if ($null -eq $idAdministrador) { throw "No existe el usuario $Administrador (creador de las clases)." }
+if ($null -eq $idAdministrador) { throw "No existe la cuenta $Administrador (la que figura como creadora de las clases)." }
 
 $laboratorios = @{}
 foreach ($r in (Tabla ('SELECT idlaboratorios, nombre_laboratorio FROM laboratorios' + $(if ($hayBajasLab) { ' WHERE activo = 1' } else { '' })))) {
@@ -250,21 +286,42 @@ foreach ($r in (Tabla ('SELECT DISTINCT codigo FROM clases' + $(if ($codigoPorPr
 }
 
 $clasesExistentes = Tabla 'SELECT idclases, usuarios_idusuarios, grupos_idgrupos, materias_id_materia, codigo, vigente_desde, vigente_hasta, activa FROM clases'
-$franjasExistentes = Tabla @'
+# f_desde y f_hasta: la vigencia de cada franja, la de su clase recortada a la
+# suya propia (db/20; sin ella, la de la clase). Como VigenciaFranjas.Desde/Hasta.
+$vigenciaFranja = if ($conVigencia) {
+    'GREATEST(c.vigente_desde, COALESCE(h.vigente_desde, c.vigente_desde)) AS f_desde, LEAST(c.vigente_hasta, COALESCE(h.vigente_hasta, c.vigente_hasta)) AS f_hasta'
+} else { 'c.vigente_desde AS f_desde, c.vigente_hasta AS f_hasta' }
+$franjasExistentes = Tabla @"
 SELECT h.idhorarios, h.clases_idclases, h.laboratorios_idlaboratorios, h.dia_semana, h.hora_inicio, h.hora_fin,
-       c.usuarios_idusuarios, c.grupos_idgrupos, c.activa, c.vigente_desde, c.vigente_hasta,
+       c.usuarios_idusuarios, c.grupos_idgrupos, c.activa, c.vigente_desde, c.vigente_hasta, $vigenciaFranja,
        l.nombre_laboratorio, g.nombre_grupo, m.nombre_materia
 FROM horarios h
 JOIN clases c ON c.idclases = h.clases_idclases
 JOIN laboratorios l ON l.idlaboratorios = h.laboratorios_idlaboratorios
 JOIN grupos g ON g.idgrupos = c.grupos_idgrupos
 JOIN materias m ON m.id_materia = c.materias_id_materia
-'@
+"@
 Write-Host ("   {0} laboratorios, {1} grupos, {2} materias, {3} clases y {4} franjas en la base" -f `
     $laboratorios.Count, $grupos.Count, $materias.Count, $clasesExistentes.Rows.Count, $franjasExistentes.Rows.Count)
 
 foreach ($id in $BorrarClases) {
     if (-not ($clasesExistentes.Rows | Where-Object { [int]$_.idclases -eq $id })) { throw "La clase $id de -BorrarClases no existe." }
+    # Sus sesiones como las cuenta DigBit (VigenciaFranjas.SesionDeLaClase): las de
+    # sus franjas y sesiones extra, y las sin enlace de su profesor, materia y grupo
+    # en su vigencia (las de antes de los horarios, sin fecha, por el dia en que se
+    # crearon). Con alguna, borrarla le quitaria su historia (Faltas, asistencia).
+    $sesiones = [int](Escalar @'
+SELECT COUNT(*) FROM clases c JOIN codigos_accesos s
+  ON (s.horarios_idhorarios IN (SELECT hh.idhorarios FROM horarios hh WHERE hh.clases_idclases = c.idclases)
+      OR s.horario_excepciones_id IN (SELECT xx.idhorario_excepciones FROM horario_excepciones xx WHERE xx.clases_idclases = c.idclases)
+      OR (s.horarios_idhorarios IS NULL AND s.horario_excepciones_id IS NULL
+          AND s.usuarios_idusuarios = c.usuarios_idusuarios AND s.materias_id_materia = c.materias_id_materia
+          AND s.grupos_idgrupos = c.grupos_idgrupos AND COALESCE(s.fecha, DATE(s.hora_registro)) BETWEEN c.vigente_desde AND c.vigente_hasta))
+WHERE c.idclases = @id
+'@ @{ '@id' = $id })
+    if ($sesiones -gt 0) {
+        throw "La clase $id de -BorrarClases tiene $sesiones sesion(es): borrarla le quitaria su historia. Terminala en Horarios (Clases, Terminar clase...) y quitala de -BorrarClases."
+    }
 }
 
 # --- Plan -------------------------------------------------------------------------
@@ -277,7 +334,7 @@ $horas = foreach ($f in $filasFranjas) {
     $lab = Normalizar $f.laboratorio
     if (-not $laboratorios.ContainsKey($lab)) { $errores.Add("No existe (o esta desactivado) el laboratorio '$($f.laboratorio)'."); continue }
     $clave = $f.profesor.Trim().ToUpperInvariant()
-    if (-not $profesPorClave.ContainsKey($clave)) { $errores.Add("El maestro '$($f.profesor)' no esta en $Profesores."); continue }
+    if (-not $profesPorClave.ContainsKey($clave)) { $errores.Add("El docente '$($f.profesor)' no esta en $Profesores."); continue }
     $dia = [int]$f.dia
     if ($dia -lt 1 -or $dia -gt 7) { $errores.Add("Dia '$($f.dia)' no valido en $($f.laboratorio) $($f.hora)."); continue }
     $inicio = [TimeSpan]::Parse($f.hora)
@@ -307,7 +364,7 @@ foreach ($clave in ($franjasPlan | Select-Object -ExpandProperty Profesor -Uniqu
     $p = $profesPorClave[$clave]
     $numero = $p.numero.Trim()
     $existente = $usuarios[$numero.ToUpperInvariant()]
-    if ($existente -and [int]$existente.fk_tipo_usuario -ne 2) { $errores.Add("El numero $numero ($clave) ya es de un usuario que no es maestro."); continue }
+    if ($existente -and [int]$existente.fk_tipo_usuario -ne 2) { $errores.Add("El numero $numero ($clave) ya es de una cuenta que no es docente."); continue }
     $codigo = if ($existente -and $existente.codigo_clase -isnot [DBNull] -and $existente.codigo_clase) { $existente.codigo_clase.ToString() } else { $null }
     $profesPlan[$clave] = [pscustomobject]@{
         Clave = $clave; Numero = $numero; Nombre = $p.nombre.Trim(); Paterno = $p.apellido_paterno.Trim(); Materno = $p.apellido_materno.Trim()
@@ -338,10 +395,45 @@ foreach ($f in $franjasPlan) {
             -and [int]$_.activa -eq 1 -and $_.vigente_desde -le $Hasta.Date -and $_.vigente_hasta -ge $Desde.Date -and $BorrarClases -notcontains [int]$_.idclases
         } | Select-Object -First 1
     }
-    $clasesPlan[$k] = [pscustomobject]@{ Profesor = $f.Profesor; Grupo = $f.Grupo; Materia = $f.Materia; Id = $(if ($existente) { [int]$existente.idclases } else { 0 }) }
+    # Vigencia de la clase (la de la base si se reutiliza) y desde cuando valen sus
+    # franjas nuevas: si la clase ya empezo, desde -Desde o desde hoy si -Desde ya
+    # paso (con db/20 y los cambios desde una fecha encendidos); asi no salen en las
+    # semanas pasadas. Si no, toda la clase, como antes.
+    $claseDesde = if ($existente) { ([datetime]$existente.vigente_desde).Date } else { $Desde.Date }
+    $claseHasta = if ($existente) { ([datetime]$existente.vigente_hasta).Date } else { $Hasta.Date }
+    $inicioFranjas = if ($Desde.Date -gt $hoy) { $Desde.Date } else { $hoy }
+    $franjasDesde = if ($conFecha -and $inicioFranjas -gt $claseDesde) { $inicioFranjas } else { $null }
+    if ($existente -and $franjasDesde -and $franjasDesde -gt $claseHasta) {
+        $errores.Add("La clase $($existente.idclases) ($($f.Materia), $($f.Grupo), $($f.Profesor)) termina el $($claseHasta.ToString('yyyy-MM-dd')): sus franjas nuevas no se darian nunca. Alarga su vigencia en Horarios o carga con otras fechas.")
+    }
+    $clasesPlan[$k] = [pscustomobject]@{
+        Profesor = $f.Profesor; Grupo = $f.Grupo; Materia = $f.Materia; Id = $(if ($existente) { [int]$existente.idclases } else { 0 })
+        Desde = $claseDesde; Hasta = $claseHasta; FranjasDesde = $franjasDesde
+    }
 }
 
-# Franjas que ya estan tal cual (volver a ejecutar el guion no duplica).
+# Cada franja nueva vale de FranjasDesde (o el inicio de su clase) al fin de su clase.
+foreach ($f in $franjasPlan) {
+    $clase = $clasesPlan["$($f.Profesor)|$($f.Grupo)|$($f.Materia)"]
+    $f | Add-Member -NotePropertyName VigenteDesde -NotePropertyValue $(if ($clase.FranjasDesde) { $clase.FranjasDesde } else { $clase.Desde })
+    $f | Add-Member -NotePropertyName VigenteHasta -NotePropertyValue $clase.Hasta
+}
+
+# Si dos vigencias se dan a la vez algun dia de la semana $dia (1 = lunes). Con
+# db/20, la regla de HorariosDatos.ValidarFranja: en su cruce tiene que caer ese
+# dia (una franja de los lunes que termina un martes no coincide con otra de los
+# lunes que empieza el jueves de esa semana). Sin db/20 basta con cruzarse.
+function SeDanALaVez([datetime]$aDesde, [datetime]$aHasta, [datetime]$bDesde, [datetime]$bHasta, [int]$dia) {
+    $desdeComun = if ($aDesde.Date -gt $bDesde.Date) { $aDesde.Date } else { $bDesde.Date }
+    $hastaComun = if ($aHasta.Date -lt $bHasta.Date) { $aHasta.Date } else { $bHasta.Date }
+    if ($desdeComun -gt $hastaComun) { return $false }
+    if (-not $conVigencia) { return $true }
+    $diaDesde = ((([int]$desdeComun.DayOfWeek) + 6) % 7) + 1
+    return $desdeComun.AddDays(($dia - $diaDesde + 7) % 7) -le $hastaComun
+}
+
+# Franjas que ya estan tal cual y aun se dan en esas fechas (volver a ejecutar el
+# guion no duplica). Una identica ya terminada (db/20) no cuenta: se vuelve a crear.
 $repetidas = 0
 foreach ($f in $franjasPlan) {
     $clase = $clasesPlan["$($f.Profesor)|$($f.Grupo)|$($f.Materia)"]
@@ -349,7 +441,8 @@ foreach ($f in $franjasPlan) {
     if ($clase.Id -ne 0) {
         $igual = $franjasExistentes.Rows | Where-Object {
             [int]$_.clases_idclases -eq $clase.Id -and [int]$_.laboratorios_idlaboratorios -eq $laboratorios[$f.Lab] -and [int]$_.dia_semana -eq $f.Dia `
-            -and $_.hora_inicio -eq $f.Inicio -and $_.hora_fin -eq $f.Fin
+            -and $_.hora_inicio -eq $f.Inicio -and $_.hora_fin -eq $f.Fin `
+            -and (SeDanALaVez ([datetime]$_.f_desde) ([datetime]$_.f_hasta) $f.VigenteDesde $f.VigenteHasta $f.Dia)
         }
         if ($igual) { $f.Omitir = $true; $repetidas++ }
     }
@@ -357,29 +450,35 @@ foreach ($f in $franjasPlan) {
 
 # --- Choques ----------------------------------------------------------------------
 # Lo mismo que HorariosDatos.ValidarFranja: nada a la misma hora en el mismo
-# laboratorio, ni el mismo maestro ni el mismo grupo en dos sitios.
+# laboratorio, ni el mismo maestro ni el mismo grupo en dos sitios, en los dias en
+# que las dos se dan (SeDanALaVez, con la vigencia de cada franja: una terminada no
+# choca con la que la sustituye).
 function Describir($f) { return "{0} {1}-{2} {3}: {4}, {5} ({6})" -f $nombresDia[$f.Dia], (Hora $f.Inicio), (Hora $f.Fin), $f.Lab, $f.Materia, $f.Grupo, $f.Profesor }
 $nuevas = @($franjasPlan | Where-Object { -not $_.Omitir })
 for ($i = 0; $i -lt $nuevas.Count; $i++) {
     for ($j = $i + 1; $j -lt $nuevas.Count; $j++) {
         $a = $nuevas[$i]; $b = $nuevas[$j]
         if ($a.Dia -ne $b.Dia -or $a.Inicio -ge $b.Fin -or $b.Inicio -ge $a.Fin) { continue }
-        $motivo = if ($a.Lab -eq $b.Lab) { 'mismo laboratorio' } elseif ($a.Profesor -eq $b.Profesor) { 'mismo maestro' } elseif ($a.Grupo -eq $b.Grupo) { 'mismo grupo' } else { $null }
+        if (-not (SeDanALaVez $a.VigenteDesde $a.VigenteHasta $b.VigenteDesde $b.VigenteHasta $a.Dia)) { continue }
+        $motivo = if ($a.Lab -eq $b.Lab) { 'mismo laboratorio' } elseif ($a.Profesor -eq $b.Profesor) { 'misma persona docente' } elseif ($a.Grupo -eq $b.Grupo) { 'mismo grupo' } else { $null }
         if ($motivo) { $errores.Add("Choque ($motivo): $(Describir $a)  <->  $(Describir $b)") }
     }
 }
 foreach ($e in $franjasExistentes.Rows) {
     if ([int]$e.activa -ne 1 -or $BorrarClases -contains [int]$e.clases_idclases) { continue }
-    if ($e.vigente_desde -gt $Hasta.Date -or $e.vigente_hasta -lt $Desde.Date) { continue }
+    $eDesde = ([datetime]$e.f_desde).Date
+    $eHasta = ([datetime]$e.f_hasta).Date
     foreach ($n in $nuevas) {
         if ($n.Dia -ne [int]$e.dia_semana -or $n.Inicio -ge $e.hora_fin -or $e.hora_inicio -ge $n.Fin) { continue }
+        if (-not (SeDanALaVez $eDesde $eHasta $n.VigenteDesde $n.VigenteHasta $n.Dia)) { continue }
         $p = $profesPlan[$n.Profesor]
         $motivo = if ($laboratorios[$n.Lab] -eq [int]$e.laboratorios_idlaboratorios) { 'mismo laboratorio' } `
-            elseif ($p.Id -ne 0 -and $p.Id -eq [int]$e.usuarios_idusuarios) { 'mismo maestro' } `
+            elseif ($p.Id -ne 0 -and $p.Id -eq [int]$e.usuarios_idusuarios) { 'misma persona docente' } `
             elseif ($grupos.ContainsKey($n.Grupo) -and $grupos[$n.Grupo] -eq [int]$e.grupos_idgrupos) { 'mismo grupo' } else { $null }
         if ($motivo) {
-            $errores.Add("Choque con la base ($motivo): $(Describir $n)  <->  clase $($e.clases_idclases) {0} {1}-{2} {3}: {4}, {5}" -f `
-                $nombresDia[[int]$e.dia_semana], $e.hora_inicio.ToString('hh\:mm'), $e.hora_fin.ToString('hh\:mm'), $e.nombre_laboratorio, $e.nombre_materia, $e.nombre_grupo)
+            # Entre parentesis: dentro de Add(...) las comas del -f serian otros argumentos.
+            $errores.Add(("Choque con la base ($motivo): $(Describir $n)  <->  clase $($e.clases_idclases) {0} {1}-{2} {3}: {4}, {5}" -f `
+                $nombresDia[[int]$e.dia_semana], $e.hora_inicio.ToString('hh\:mm'), $e.hora_fin.ToString('hh\:mm'), $e.nombre_laboratorio, $e.nombre_materia, $e.nombre_grupo))
         }
     }
 }
@@ -387,10 +486,17 @@ foreach ($e in $franjasExistentes.Rows) {
 $clasesNuevas = @($clasesPlan.Values | Where-Object { $_.Id -eq 0 }).Count
 Write-Host ("   Grupos nuevos   ({0}): {1}" -f $gruposNuevos.Count, ($gruposNuevos.Values -join ', '))
 Write-Host ("   Materias nuevas ({0}): {1}" -f $materiasNuevas.Count, ($materiasNuevas.Values -join ', '))
-Write-Host ("   Maestros nuevos ({0}): {1}" -f @($profesPlan.Values | Where-Object Nuevo).Count, ((@($profesPlan.Values | Where-Object Nuevo) | Sort-Object Clave | ForEach-Object { $_.Numero }) -join ', '))
-Write-Host ("   Maestros que ya estaban: {0}" -f ((@($profesPlan.Values | Where-Object { -not $_.Nuevo }) | ForEach-Object { "$($_.Numero) (codigo $($_.Codigo))" }) -join ', '))
+Write-Host ("   Docentes nuevos ({0}): {1}" -f @($profesPlan.Values | Where-Object Nuevo).Count, ((@($profesPlan.Values | Where-Object Nuevo) | Sort-Object Clave | ForEach-Object { $_.Numero }) -join ', '))
+Write-Host ("   Docentes que ya estaban: {0}" -f ((@($profesPlan.Values | Where-Object { -not $_.Nuevo }) | ForEach-Object { "$($_.Numero) (codigo $($_.Codigo))" }) -join ', '))
 Write-Host ("   Clases: {0} nuevas, {1} ya existentes" -f $clasesNuevas, ($clasesPlan.Count - $clasesNuevas))
 Write-Host ("   Franjas: {0} nuevas (de {1} horas), {2} ya estaban" -f $nuevas.Count, $filasFranjas.Count, $repetidas)
+$conInicio = @($nuevas | Where-Object { $clasesPlan["$($_.Profesor)|$($_.Grupo)|$($_.Materia)"].FranjasDesde })
+if ($conInicio.Count -gt 0) {
+    Write-Host ("   {0} franja(s) nuevas de clases que ya empezaron valen desde el {1} (no cuentan en las semanas pasadas)" -f $conInicio.Count, $conInicio[0].VigenteDesde.ToString('yyyy-MM-dd'))
+} elseif (-not $conFecha -and @($nuevas | Where-Object { $clasesPlan["$($_.Profesor)|$($_.Grupo)|$($_.Materia)"].Desde -lt $hoy }).Count -gt 0) {
+    $porQue = if (-not $conVigencia) { 'sin db/20' } else { 'con los cambios de horario desde una fecha apagados en Ajustes' }
+    Write-Host "   AVISO: $porQue las franjas nuevas de clases que ya empezaron valen tambien en sus semanas pasadas (Faltas las juzgara)." -ForegroundColor Yellow
+}
 if ($BorrarClases.Count -gt 0) { Write-Host ("   Se borran antes las clases: {0}" -f ($BorrarClases -join ', ')) }
 
 if ($errores.Count -gt 0) {
@@ -467,17 +573,26 @@ VALUES (@prof, @grupo, @materia, @cod, @desde, @hasta, 1, @admin, NOW())
 
     foreach ($f in $nuevas) {
         $c = $clasesPlan["$($f.Profesor)|$($f.Grupo)|$($f.Materia)"]
-        [void](Insertar 'INSERT INTO horarios (clases_idclases, laboratorios_idlaboratorios, dia_semana, hora_inicio, hora_fin) VALUES (@c, @l, @d, @i, @f)' @{
-            '@c' = $c.Id; '@l' = $laboratorios[$f.Lab]; '@d' = $f.Dia; '@i' = $f.Inicio; '@f' = $f.Fin } $tx)
+        if ($c.FranjasDesde) {
+            [void](Insertar 'INSERT INTO horarios (clases_idclases, laboratorios_idlaboratorios, dia_semana, hora_inicio, hora_fin, vigente_desde) VALUES (@c, @l, @d, @i, @f, @v)' @{
+                '@c' = $c.Id; '@l' = $laboratorios[$f.Lab]; '@d' = $f.Dia; '@i' = $f.Inicio; '@f' = $f.Fin; '@v' = $c.FranjasDesde } $tx)
+        } else {
+            [void](Insertar 'INSERT INTO horarios (clases_idclases, laboratorios_idlaboratorios, dia_semana, hora_inicio, hora_fin) VALUES (@c, @l, @d, @i, @f)' @{
+                '@c' = $c.Id; '@l' = $laboratorios[$f.Lab]; '@d' = $f.Dia; '@i' = $f.Inicio; '@f' = $f.Fin } $tx)
+        }
     }
 
-    # Comprobacion dentro de la misma transaccion: lo que queda en la base.
-    $resumen = Tabla @'
+    # Comprobacion dentro de la misma transaccion: lo que queda en la base (las
+    # franjas que se dan algun dia de esas fechas, con su propia vigencia si la hay).
+    $franjaEnFechas = if ($conVigencia) {
+        ' AND (h.vigente_desde IS NULL OR h.vigente_desde <= @hasta) AND (h.vigente_hasta IS NULL OR h.vigente_hasta >= @desde)'
+    } else { '' }
+    $resumen = Tabla @"
 SELECT l.nombre_laboratorio AS laboratorio, COUNT(*) AS franjas, SUM(TIME_TO_SEC(TIMEDIFF(h.hora_fin, h.hora_inicio))) / 3600 AS horas
 FROM horarios h JOIN clases c ON c.idclases = h.clases_idclases JOIN laboratorios l ON l.idlaboratorios = h.laboratorios_idlaboratorios
-WHERE c.activa = 1 AND c.vigente_desde <= @hasta AND c.vigente_hasta >= @desde
+WHERE c.activa = 1 AND c.vigente_desde <= @hasta AND c.vigente_hasta >= @desde$franjaEnFechas
 GROUP BY l.nombre_laboratorio ORDER BY l.nombre_laboratorio
-'@ @{ '@desde' = $Desde.Date; '@hasta' = $Hasta.Date } $tx
+"@ @{ '@desde' = $Desde.Date; '@hasta' = $Hasta.Date } $tx
     foreach ($r in $resumen.Rows) { Write-Host ("   {0,-24} {1,3} franjas, {2,3} horas" -f $r.laboratorio, $r.franjas, [int]$r.horas) }
 
     if ($Aplicar) {
@@ -496,10 +611,10 @@ $cx.Close()
 
 # --- Lista para repartir ----------------------------------------------------------
 if ($Aplicar) {
-    Paso '6. Usuarios de los maestros'
+    Paso '6. Cuentas de los docentes'
     $lista = Join-Path $CarpetaRespaldo ('maestros-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.csv')
     $lineas = New-Object Collections.Generic.List[string]
-    $lineas.Add('Maestro;Usuario (numero de empleado);Contrasena inicial;Codigo de clase')
+    $lineas.Add('Docente;Usuario (numero de empleado);Contrasena inicial;Codigo de clase')
     foreach ($p in ($profesPlan.Values | Sort-Object Paterno, Materno, Nombre)) {
         $contrasena = if ($p.Nuevo) { $p.Contrasena } else { '(la que ya tenia)' }
         $lineas.Add(('{0} {1} {2};{3};{4};{5}' -f $p.Nombre, $p.Paterno, $p.Materno, $p.Numero, $contrasena, $p.Codigo))

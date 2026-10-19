@@ -14,9 +14,13 @@ namespace DigBit
     /// </summary>
     internal sealed class DialogoEmergencia : Form
     {
+        // El naranja de los avisos de los dialogos (DialogoUsuario): la memoria
+        // conectada no es la autorizada.
+        private static readonly Color Aviso = Color.FromArgb(190, 85, 0);
+
         private readonly Label lblTitulo = new Label();
         private readonly Label lblTexto = new Label();
-        private readonly Button btnCancelar = new Button();
+        private readonly Button btnCancelar;
         private readonly Timer buscarMemoria = new Timer();
 
         private DialogoEmergencia()
@@ -31,19 +35,18 @@ namespace DigBit
             BackColor = Color.White;
             TopMost = true;
 
+            // El estilo de los dialogos de DigBit: titulo en verde y el boton de EstiloHorarios.
             lblTitulo.SetBounds(24, 24, 412, 32);
             lblTitulo.Font = new Font("Century Gothic", 13F, FontStyle.Bold);
+            lblTitulo.ForeColor = Color.DarkGreen;
             lblTitulo.Text = "Inserta la memoria";
 
             lblTexto.SetBounds(24, 64, 412, 80);
             lblTexto.Font = new Font("Century Gothic", 9.5F);
             lblTexto.Text = "Conecta la memoria de emergencia del laboratorio." + Environment.NewLine + Environment.NewLine +
-                            "El equipo se abrira solo en cuanto la reconozca, sin pasar por la bitacora.";
+                            "El equipo se abrirá solo en cuanto la reconozca, sin pasar por la bitácora.";
 
-            btnCancelar.SetBounds(336, 160, 100, 36);
-            btnCancelar.Text = "Cancelar";
-            btnCancelar.Font = new Font("Century Gothic", 9F);
-            btnCancelar.FlatStyle = FlatStyle.Flat;
+            btnCancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(ClientSize.Width - 24 - 120, ClientSize.Height - 56), new Size(120, 40));
             btnCancelar.DialogResult = DialogResult.Cancel;
 
             Controls.AddRange(new Control[] { lblTitulo, lblTexto, btnCancelar });
@@ -76,6 +79,7 @@ namespace DigBit
             lblTitulo.Text = cuantas == 0
                 ? "Inserta la memoria"
                 : (cuantas == 1 ? "Esa no es la memoria autorizada" : "Ninguna de esas es la memoria autorizada");
+            lblTitulo.ForeColor = cuantas == 0 ? Color.DarkGreen : Aviso;
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)
@@ -92,7 +96,8 @@ namespace DigBit
             {
                 MessageBox.Show(
                     "Este equipo no tiene memoria de emergencia autorizada." + Environment.NewLine + Environment.NewLine +
-                    "La configura el encargado con configurar_equipo.ps1.",
+                    "La autoriza la persona responsable del laboratorio al instalar DigBit en el equipo con DigBit-Instalador.exe, "
+                    + "con la memoria conectada.",
                     "Acceso de emergencia", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return false;
             }

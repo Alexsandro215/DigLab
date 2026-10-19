@@ -60,3 +60,14 @@ ANTIGUOS MANUALES/
 # A que equipo apunta una copia concreta del paquete. Es de la instalacion,
 # no del codigo: lo escribe el instalador al preparar el servidor.
 servidor.config
+
+# API de recuperacion: la configuracion lleva contrasenas (base y correo), y
+# cualquier copia suya tambien ("config - copia.php", config.php.bak...).
+api/config*.php
+!api/config.example.php
+api/*.bak
+api/*~
+api/*.save
+api/*.swp
+api/*.txt
+api/error_log

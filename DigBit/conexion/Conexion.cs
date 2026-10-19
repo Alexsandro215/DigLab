@@ -2,6 +2,7 @@ using MySql.Data.MySqlClient;
 using System;
 using System.Configuration;
 using System.Text.RegularExpressions;
+using System.Threading;
 using DigBit.Infraestructura;
 
 namespace DigBit
@@ -39,6 +40,12 @@ namespace DigBit
 
         private readonly string sCadenaConexion;
 
+        // La sesion de un encargado de laboratorio (solo consulta): mientras dura,
+        // todo GetConexion va con la cuenta de MySQL de solo lectura
+        // (CuentaDeConsulta), en cualquier equipo. El envio de la cola sigue con
+        // la cuenta del equipo: es trabajo del equipo, no de quien entro.
+        private static volatile string cadenaDeSesion;
+
         public Conexion()
         {
             sCadenaConexion = AplicarTimeoutPorDefecto(ObtenerCadenaConexion());
@@ -46,8 +53,65 @@ namespace DigBit
 
         public MySqlConnection GetConexion()
         {
-            MySqlConnection conexion = new MySqlConnection(sCadenaConexion);
-            conexion.Open();
+            return Abrir(cadenaDeSesion ?? sCadenaConexion);
+        }
+
+        /// <summary>Desde ahora, hasta cerrar la sesion, todo se lee con esta cadena (la de solo consulta).</summary>
+        public static void UsarCuentaDeSesion(string cadena)
+        {
+            cadenaDeSesion = string.IsNullOrEmpty(cadena) ? null : AplicarTimeoutPorDefecto(cadena);
+        }
+
+        /// <summary>Otra vez la cuenta del equipo (al cerrar la sesion o al entrar otro).</summary>
+        public static void UsarCuentaDelEquipo()
+        {
+            cadenaDeSesion = null;
+        }
+
+        /// <summary>La sesion va con una cuenta propia (la de solo consulta).</summary>
+        public static bool ConCuentaDeSesion
+        {
+            get { return cadenaDeSesion != null; }
+        }
+
+        /// <summary>Para quien arma otra cadena con el mismo servidor y la misma base (CuentaDeConsulta).</summary>
+        internal static string CadenaDelEquipo()
+        {
+            return AplicarTimeoutPorDefecto(ObtenerCadenaConexion());
+        }
+
+        /// <summary>Abre una cadena cualquiera con la zona horaria de siempre (para probar la de solo consulta).</summary>
+        internal static MySqlConnection AbrirCadena(string cadena)
+        {
+            return Abrir(AplicarTimeoutPorDefecto(cadena));
+        }
+
+        /// <summary>
+        /// Para el envio de la cola en segundo plano: ademas del tiempo de
+        /// conexion, cada orden se rinde a los 15 s (el driver espera 30 por
+        /// defecto). Asi un corte a media subida no deja el envio colgado.
+        /// </summary>
+        public MySqlConnection GetConexionParaEnvio()
+        {
+            string cadena = sCadenaConexion;
+            try
+            {
+                MySqlConnectionStringBuilder constructor = new MySqlConnectionStringBuilder(sCadenaConexion);
+                constructor.DefaultCommandTimeout = 15;
+                cadena = constructor.ConnectionString;
+            }
+            catch (Exception)
+            {
+                // Cadena que el constructor no entiende: Open() dara el error real.
+            }
+
+            return Abrir(cadena);
+        }
+
+        private static MySqlConnection Abrir(string cadena)
+        {
+            MySqlConnection conexion = new MySqlConnection(cadena);
+            AbrirSinContexto(conexion);
             try
             {
                 FijarZonaHoraria(conexion);
@@ -59,6 +123,36 @@ namespace DigBit
             }
 
             return conexion;
+        }
+
+        /// <summary>
+        /// Open() sin el contexto de sincronizacion del hilo. En MySql.Data 8.2,
+        /// Open() es la version asincrona esperada a la fuerza, y por dentro espera
+        /// el semaforo global de los pools sin ConfigureAwait(false): si en ese
+        /// momento lo tiene otro hilo (el envio de la cola, una consulta en segundo
+        /// plano, ClearAllPools), la continuacion se manda al hilo de la pantalla,
+        /// que esta bloqueado esperando a Open(), y la pantalla se queda colgada
+        /// para siempre. Reproducido: con el contexto de WinForms se colgaba en 2 s;
+        /// sin el, 1 650 aperturas en 30 s sin fallo (scratchpad/estres).
+        /// </summary>
+        private static void AbrirSinContexto(MySqlConnection conexion)
+        {
+            SynchronizationContext previo = SynchronizationContext.Current;
+            if (previo == null)
+            {
+                conexion.Open();
+                return;
+            }
+
+            SynchronizationContext.SetSynchronizationContext(null);
+            try
+            {
+                conexion.Open();
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previo);
+            }
         }
 
         private static void FijarZonaHoraria(MySqlConnection conexion)
@@ -76,11 +170,24 @@ namespace DigBit
         /// </summary>
         public static void Probar()
         {
+            Probar(true);
+        }
+
+        /// <summary>
+        /// Con anotar = false no deja la linea "Probando conexion" en el log: la
+        /// vigilancia sin conexion prueba cada minuto, y eso llenaba el log.
+        /// </summary>
+        public static void Probar(bool anotar)
+        {
             string cadena = AplicarTimeoutPorDefecto(ObtenerCadenaConexion());
-            Log.Info("Probando conexion: " + DescribirSinSecretos(cadena));
+            if (anotar)
+            {
+                Log.Info("Probando conexion: " + DescribirSinSecretos(cadena));
+            }
+
             using (MySqlConnection conexion = new MySqlConnection(cadena))
             {
-                conexion.Open();
+                AbrirSinContexto(conexion);
                 FijarZonaHoraria(conexion);
                 using (MySqlCommand comando = new MySqlCommand("SELECT NOW()", conexion))
                 {

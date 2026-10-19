@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
 using DigBit.conexion;
+using DigBit.Infraestructura;
 using DrawingFont = System.Drawing.Font;
 
 namespace DigBit
@@ -14,6 +15,7 @@ namespace DigBit
     /// (red, hardware, software), la falla y su comentario. Las listas son las
     /// mismas que ve el alumno al registrar (Consultas.OpcionesDeFalla); se
     /// puede escribir otra. El UPDATE solo entra si el registro sigue como se leyo.
+    /// Cada correccion queda en el registro de diagnostico (Log), con lo que habia antes.
     /// </summary>
     public class EditarBitacoraAdministrador : Form
     {
@@ -23,6 +25,9 @@ namespace DigBit
         private readonly Dictionary<string, TextBox> comentarios = new Dictionary<string, TextBox>();
         private readonly TextBox txtEquipo;
         private readonly Label lblError;
+        // Para el log de la correccion: la matricula del alumno y la sesion como se ve arriba.
+        private readonly string matricula;
+        private readonly string descripcionSesion;
 
         public EditarBitacoraAdministrador(DataRow fila, string alumno, string sesion)
         {
@@ -31,6 +36,11 @@ namespace DigBit
             {
                 original[columna] = fila[columna] == DBNull.Value ? "" : fila[columna].ToString();
             }
+
+            matricula = fila.Table.Columns.Contains("numero_identificador") && fila["numero_identificador"] != DBNull.Value
+                ? fila["numero_identificador"].ToString()
+                : "";
+            descripcionSesion = sesion ?? "";
 
             EstiloHorarios.PrepararDialogo(this, "Corregir registro", new Size(680, 470));
             Controls.Add(EstiloAdmin.TituloDialogo("Registro de " + alumno, 632));
@@ -146,6 +156,16 @@ namespace DigBit
 
                 if (guardado)
                 {
+                    // Constancia de la correccion (RNF79), en el registro de diagnostico
+                    // de este equipo: quien corrigio, la sesion, el alumno y cada campo
+                    // que cambio, antes y despues. En la base no queda (haria falta una
+                    // migracion con quien y cuando la corrigio).
+                    Log.Info("Correccion de bitacora: el administrador " + ParaElLog(Datos_User.getUser())
+                        + " corrigio el registro del alumno " + ParaElLog(matricula) + " (usuario " + original["fk_usuario"] + ")"
+                        + " en la sesion " + original["fk_codigo_accesos"] + " (" + ParaElLog(descripcionSesion) + "): "
+                        + string.Join("; ", nuevo.Where(par => par.Value != original[par.Key].Trim())
+                            .Select(par => par.Key + " '" + ParaElLog(original[par.Key]) + "' -> '" + ParaElLog(par.Value) + "'"))
+                        + ".");
                     DialogResult = DialogResult.OK;
                 }
             }
@@ -153,6 +173,12 @@ namespace DigBit
             {
                 Cursor = Cursors.Default;
             }
+        }
+
+        /// <summary>Solo ASCII, como el resto del log: sin acentos y con los guiones largos de la descripcion como "-".</summary>
+        private static string ParaElLog(string texto)
+        {
+            return PersonalizacionClasesDatos.Ascii((texto ?? "").Replace('\u2013', '-').Replace('\u2014', '-'));
         }
     }
 }

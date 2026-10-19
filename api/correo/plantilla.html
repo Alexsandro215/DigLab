@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>Tu código de DigBit</title>
+</head>
+<body style="margin:0;padding:0;background-color:#EEF1EC;-webkit-text-size-adjust:100%;">
+<!-- Correo de "Olvidaste tu contrasena?" (api/recuperar.php). Colores del logo
+     del TESCHI: verde #007040, verde lima #78B838, gris #C8C0B8, rojo #C80838.
+     Lo que va entre llaves dobles lo pone correo_de_codigo() (lib/correo.php).
+     El pie del aviso de privacidad (entre las marcas aviso y /aviso) solo sale
+     con aviso_privacidad_url en config.php. -->
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#EEF1EC;font-size:1px;line-height:1px;">{{preencabezado}}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#EEF1EC" style="background-color:#EEF1EC;">
+  <tr>
+    <td align="center" style="padding:24px 12px;">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:100%;max-width:600px;background-color:#FFFFFF;border:1px solid #DCE3D8;border-radius:10px;overflow:hidden;">
+        <tr>
+          <td style="padding:20px 28px 16px 28px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="left" valign="middle">{{logo_teschi}}</td>
+                <td align="right" valign="middle">{{logo_carrera}}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td bgcolor="#007040" style="background-color:#007040;padding:18px 28px;">
+            <div style="font-family:Arial,Helvetica,sans-serif;font-size:21px;line-height:27px;font-weight:bold;color:#FFFFFF;">Recupera tu contraseña</div>
+            <div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:19px;color:#CFE8C0;">DigBit - Laboratorios de cómputo</div>
+          </td>
+        </tr>
+        <tr>
+          <td bgcolor="#C80838" style="background-color:#C80838;height:4px;line-height:4px;font-size:0;">&nbsp;</td>
+        </tr>
+        <tr>
+          <td style="padding:28px 28px 6px 28px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:24px;color:#181818;">
+            <p style="margin:0 0 14px 0;">{{saludo}}</p>
+            <p style="margin:0 0 20px 0;">Este es tu código para poner una contraseña nueva en DigBit:</p>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:0 28px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" bgcolor="#F2F8EC" style="background-color:#F2F8EC;border:2px solid #78B838;border-radius:10px;">
+              <tr>
+                <td style="padding:16px 18px 16px 26px;font-family:'Courier New',Consolas,monospace;font-size:34px;line-height:40px;font-weight:bold;letter-spacing:8px;color:#007040;">{{codigo}}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:22px 28px 8px 28px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:23px;color:#181818;">
+            <p style="margin:0;">Vale <strong>{{minutos}} minutos</strong> y una sola vez. Escríbelo en DigBit, en <strong>«¿Olvidaste tu contraseña?»</strong>, junto con tu contraseña nueva.</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:14px 28px 28px 28px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#F4F2EF" style="background-color:#F4F2EF;border-left:4px solid #C8C0B8;">
+              <tr>
+                <td style="padding:12px 14px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:19px;color:#4A4A4A;">
+                  Si no lo pediste tú, ignora este correo: tu contraseña no cambia. Nadie del TESCHI te pedirá este código.
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td bgcolor="#F7F8F6" style="background-color:#F7F8F6;border-top:1px solid #E3E8E0;padding:16px 28px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td valign="middle" style="padding-right:12px;">{{logo_digbit}}</td>
+                <td valign="middle" style="font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:17px;color:#6B6B6B;">
+                  <strong style="color:#007040;">DigBit</strong> - Laboratorios de cómputo<br>
+                  Ingeniería en Sistemas Computacionales - TESCHI
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+      <p style="margin:14px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:17px;color:#6B6B6B;">Este correo se envió automáticamente; no lo respondas.</p>
+      <!--{{aviso}}--><p style="margin:6px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:17px;color:#6B6B6B;">Tus datos se tratan conforme al aviso de privacidad del TESCHI: <a href="{{aviso_privacidad_url}}" style="color:#007040;text-decoration:underline;">leer el aviso de privacidad completo</a>.</p><!--{{/aviso}}-->
+    </td>
+  </tr>
+</table>
+</body>
+</html>

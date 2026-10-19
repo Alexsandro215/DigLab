@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using DigBit.Infraestructura;
 using MySql.Data.MySqlClient;
 
@@ -42,10 +43,375 @@ namespace DigBit.conexion
             return LaboratoriosActivos.Existe(conexion, transaccion);
         }
 
+        private static readonly Columna AvisosSinInternet = new Columna("registros_bitacoras", "equipos_sin_internet",
+            "La base no tiene registros_bitacoras.equipos_sin_internet: falta db/10_red_y_autoregistro.sql. "
+            + "Hasta aplicarla no se pregunta al alumno por los equipos de su alrededor sin internet.");
+
+        private static readonly Columna Llegadas = new Columna("registros_bitacoras", "recibido_en",
+            "La base no tiene registros_bitacoras.recibido_en: falta db/10_red_y_autoregistro.sql. "
+            + "Hasta aplicarla no se sabe cuando llego al servidor una bitacora que se subio desde la cola.");
+
+        /// <summary>True si la bitacora guarda los equipos de alrededor sin internet (db/10_red_y_autoregistro.sql).</summary>
+        public static bool EquiposSinInternet(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return AvisosSinInternet.Existe(conexion, transaccion);
+        }
+
+        /// <summary>True si la bitacora guarda cuando llego al servidor (db/10_red_y_autoregistro.sql).</summary>
+        public static bool HoraDeLlegada(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return Llegadas.Existe(conexion, transaccion);
+        }
+
+        private static readonly Columna ColumnaModo = new Columna("laboratorios", "modo_codigo",
+            "La base no tiene laboratorios.modo_codigo: falta db/11_modo_de_acceso.sql. "
+            + "Hasta aplicarla todos los laboratorios usan el codigo fijo de cada profesor y el administrador no puede cambiarlo.");
+
+        /// <summary>True si cada laboratorio guarda como entran los alumnos a sus clases (db/11_modo_de_acceso.sql).</summary>
+        public static bool ModoDeAcceso(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return ColumnaModo.Existe(conexion, transaccion);
+        }
+
+        private static readonly Columna ColumnaColor = new Columna("usuarios", "color_horario",
+            "La base no tiene usuarios.color_horario: falta db/12_color_profesor.sql. "
+            + "Hasta aplicarla el color de cada profesor sale solo y no se puede elegir.");
+
+        /// <summary>True si se guarda el color elegido para cada profesor (db/12_color_profesor.sql).</summary>
+        public static bool ColorDeProfesor(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return ColumnaColor.Existe(conexion, transaccion);
+        }
+
+        // Una columna de la tabla basta para saber que la tabla esta (y que se puede leer).
+        private static readonly Columna TablaAjustes = new Columna("configuracion", "valor",
+            "La base no tiene la tabla configuracion (o este usuario no puede leerla): falta db/13_recuperacion_contrasena.sql. "
+            + "Hasta aplicarla, \"Olvidaste tu contrasena?\" solo funciona en los equipos con UrlRecuperacion en DigBit.exe.config.");
+
+        /// <summary>True si la base guarda los ajustes de toda la escuela (db/13_recuperacion_contrasena.sql).</summary>
+        public static bool Ajustes(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablaAjustes.Existe(conexion, transaccion);
+        }
+
+        private static readonly Columna TablaRecuperacion = new Columna("recuperacion_contrasena", "usado_en",
+            "La base no tiene la tabla recuperacion_contrasena: falta db/13_recuperacion_contrasena.sql. "
+            + "Sin ella no hay codigos de recuperacion por correo que anular al cambiar un correo o una contrasena.");
+
+        /// <summary>True si la base guarda los codigos de "Olvidaste tu contrasena?" (db/13_recuperacion_contrasena.sql).</summary>
+        public static bool Recuperacion(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablaRecuperacion.Existe(conexion, transaccion);
+        }
+
+        // Solo la ve quien tiene permiso sobre ella (db/15 se lo da a digbit_equipo):
+        // sin el, tampoco podria guardar, y el boton no aparece.
+        private static readonly Columna TablaReportesProfesor = new Columna("reportes_profesor", "registrado_en",
+            "La base no tiene la tabla reportes_profesor (o este usuario no puede leerla): falta db/15_reportes_profesor.sql. "
+            + "Hasta aplicarla el profesor no puede reportar fallas desde su panel.");
+
+        /// <summary>True si el profesor puede reportar fallas de su clase en curso (db/15_reportes_profesor.sql).</summary>
+        public static bool ReportesDeProfesor(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablaReportesProfesor.Existe(conexion, transaccion);
+        }
+
+        // Solo la ve quien tiene permiso sobre ella (db/17 se lo da a digbit_equipo):
+        // sin el, tampoco podria quitar ni devolver, y la lista solo se consulta.
+        private static readonly Columna TablaAsistenciasRetiradas = new Columna("asistencias_retiradas", "retirada_en",
+            "La base no tiene la tabla asistencias_retiradas (o este usuario no puede leerla): falta db/17_asistencia_retirada.sql. "
+            + "Hasta aplicarla el profesor no puede quitar la asistencia a quien registro sin estar en el salon.");
+
+        /// <summary>True si el profesor puede quitar asistencias durante su clase (db/17_asistencia_retirada.sql).</summary>
+        public static bool AsistenciaRetirable(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablaAsistenciasRetiradas.Existe(conexion, transaccion);
+        }
+
+        // La ultima tabla que crea la migracion. Solo el administrador la usa: los
+        // equipos (digbit_equipo, db/07) no tienen permiso sobre estas tablas.
+        private static readonly Columna TablasCicloPreliminar = new Columna("ciclo_recortes", "hasta_antes",
+            "La base no tiene las tablas del proximo ciclo: falta db/16_ciclo_preliminar.sql. "
+            + "Hasta aplicarla, la pestana Proximo ciclo solo lo explica.");
+
+        /// <summary>True si se puede preparar el horario del proximo ciclo (db/16_ciclo_preliminar.sql).</summary>
+        public static bool CicloPreliminar(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablasCicloPreliminar.Existe(conexion, transaccion);
+        }
+
+        // Solo la ve quien tiene permiso sobre ella (db/19 se lo da a digbit_equipo y no
+        // a digbit_consulta): sin el, el profesor no personaliza y todo se ve como antes.
+        private static readonly Columna TablaPersonalizacion = new Columna("personalizacion_clases", "actualizado_en",
+            "La base no tiene la tabla personalizacion_clases (o este usuario no puede leerla): falta db/19_personalizacion_clases.sql. "
+            + "Hasta aplicarla el profesor no puede personalizar sus clases (imagen, color y nombre corto).");
+
+        /// <summary>
+        /// True si el profesor puede personalizar sus clases (db/19_personalizacion_clases.sql).
+        /// Solo desde las pantallas del profesor: con la sesion de un encargado
+        /// escribiria en su log que falta la 19, y no seria cierto.
+        /// </summary>
+        public static bool PersonalizacionDeClases(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablaPersonalizacion.Existe(conexion, transaccion);
+        }
+
+        private static readonly Columna ColumnaVigenciaFranja = new Columna("horarios", "vigente_hasta",
+            "La base no tiene horarios.vigente_desde/vigente_hasta: falta db/20_vigencia_franjas.sql. "
+            + "Hasta aplicarla cada franja vale toda la vigencia de su clase y cambiarla reescribe las semanas pasadas.");
+
+        /// <summary>True si cada franja puede tener su propia vigencia (db/20_vigencia_franjas.sql).</summary>
+        public static bool VigenciaDeFranjas(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return ColumnaVigenciaFranja.Existe(conexion, transaccion);
+        }
+
+        // Solo la ven el administrador (digbit_admin) y el encargado (digbit_consulta,
+        // solo leerla): los equipos no la usan. Sin ella nada se anota y no hay
+        // alertas de cambios de horario, pero todo lo demas funciona igual.
+        private static readonly Columna TablaHistorial = new Columna("historial_cambios", "despues",
+            "La base no tiene la tabla historial_cambios (o este usuario no puede leerla): falta db/21_historial_cambios.sql. "
+            + "Hasta aplicarla, los cambios del horario y de los laboratorios y las correcciones de bitacoras no dejan constancia "
+            + "en la base de quien ni cuando, y no hay alertas de cambios de horario.");
+
+        /// <summary>True si la base guarda quien cambio que y cuando (db/21_historial_cambios.sql).</summary>
+        public static bool HistorialDeCambios(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablaHistorial.Existe(conexion, transaccion);
+        }
+
+        private static bool usoLibre;
+        private static bool avisadoUsoLibre;
+
+        /// <summary>
+        /// True si codigos_accesos admite sesiones sin clase, sin profesor, materia
+        /// ni grupo (db/14_registro_sin_clase.sql): las del uso libre de un
+        /// laboratorio sin codigos. Una vez visto, no se vuelve a preguntar.
+        /// </summary>
+        public static bool UsoLibre(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            lock (candadoTipo)
+            {
+                if (usoLibre)
+                {
+                    return true;
+                }
+            }
+
+            int nulas;
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS " +
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'codigos_accesos' AND IS_NULLABLE = 'YES' " +
+                "AND COLUMN_NAME IN ('usuarios_idusuarios', 'materias_id_materia', 'grupos_idgrupos')", conexion, transaccion))
+            {
+                nulas = Convert.ToInt32(comando.ExecuteScalar());
+            }
+
+            bool admite = nulas == 3;
+            lock (candadoTipo)
+            {
+                usoLibre = admite;
+                if (!admite && !avisadoUsoLibre)
+                {
+                    avisadoUsoLibre = true;
+                    Log.Aviso("La base no admite sesiones sin clase (codigos_accesos exige profesor, materia y grupo): falta "
+                        + "db/14_registro_sin_clase.sql. Hasta aplicarla, sin codigos y sin clase el alumno no puede registrar uso libre.");
+                }
+            }
+
+            return admite;
+        }
+
+        private static bool sesionesUnicas;
+
+        /// <summary>
+        /// True si codigos_accesos tiene UNA sesion por franja y dia y UNA por
+        /// sesion extra (los UNIQUE de db/04, buscados por columnas). Es lo que
+        /// garantiza un solo codigo por clase en el modo renovable aunque la
+        /// abran a la vez dos paneles y un equipo. Solo recuerda el si.
+        /// </summary>
+        public static bool SesionesUnicas(MySqlConnection conexion)
+        {
+            lock (candadoTipo)
+            {
+                if (sesionesUnicas)
+                {
+                    return true;
+                }
+            }
+
+            int unicos;
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT COUNT(DISTINCT COLUMN_NAME) FROM information_schema.STATISTICS " +
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'codigos_accesos' AND NON_UNIQUE = 0 " +
+                "AND SEQ_IN_INDEX = 1 AND COLUMN_NAME IN ('horarios_idhorarios', 'horario_excepciones_id')", conexion))
+            {
+                unicos = Convert.ToInt32(comando.ExecuteScalar());
+            }
+
+            lock (candadoTipo)
+            {
+                sesionesUnicas = unicos == 2;
+            }
+
+            return unicos == 2;
+        }
+
+        private static readonly object candadoTipo = new object();
+        private static bool alumnoPorDefecto;
+
+        /// <summary>
+        /// True si usuarios.fk_tipo_usuario vale 1 (alumno) por defecto
+        /// (db/10_red_y_autoregistro.sql). Entonces el alta desde el laboratorio
+        /// no nombra esa columna, que es lo unico que permite el usuario de MySQL
+        /// de los equipos (db/07). Una vez visto, no se vuelve a preguntar.
+        /// </summary>
+        public static bool AlumnoPorDefecto(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            lock (candadoTipo)
+            {
+                if (alumnoPorDefecto)
+                {
+                    return true;
+                }
+            }
+
+            object defecto;
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT COLUMN_DEFAULT FROM information_schema.COLUMNS " +
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'usuarios' AND COLUMN_NAME = 'fk_tipo_usuario'", conexion, transaccion))
+            {
+                defecto = comando.ExecuteScalar();
+            }
+
+            // MariaDB 10.2.7 y posteriores ponen comillas a los valores por defecto de texto; un numero sale tal cual.
+            bool es1 = defecto != null && defecto != DBNull.Value && defecto.ToString().Trim('\'') == "1";
+            lock (candadoTipo)
+            {
+                alumnoPorDefecto = es1;
+            }
+
+            return es1;
+        }
+
+        private static bool carreraSinGrupo;
+        private static bool avisadoCarrera;
+
+        /// <summary>
+        /// True si carrera_grupo_semestre admite un alumno sin grupo ni semestre
+        /// (db/10_red_y_autoregistro.sql; la 01 ya la crea asi). En la base de la
+        /// escuela los dos eran obligatorios, y como el alumno ya no declara
+        /// grupo, sin la migracion no se puede guardar la carrera de un alumno
+        /// nuevo. Una vez visto, no se vuelve a preguntar.
+        /// </summary>
+        public static bool CarreraSinGrupo(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            lock (candadoTipo)
+            {
+                if (carreraSinGrupo)
+                {
+                    return true;
+                }
+            }
+
+            int obligatorias;
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS " +
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'carrera_grupo_semestre' " +
+                "AND COLUMN_NAME IN ('grupos_idgrupos', 'semestres_idsemestres') AND IS_NULLABLE = 'NO'", conexion, transaccion))
+            {
+                obligatorias = Convert.ToInt32(comando.ExecuteScalar());
+            }
+
+            bool admite = obligatorias == 0;
+            lock (candadoTipo)
+            {
+                carreraSinGrupo = admite;
+                if (!admite && !avisadoCarrera)
+                {
+                    avisadoCarrera = true;
+                    Log.Aviso("En la base, carrera_grupo_semestre exige grupo y semestre: falta db/10_red_y_autoregistro.sql. "
+                        + "Hasta aplicarla no se puede dar de alta a un alumno (ni el administrador ni el propio alumno).");
+                }
+            }
+
+            return admite;
+        }
+
+        private static bool tipoEncargado;
+        private static bool avisadoEncargado;
+
+        /// <summary>
+        /// True si se pueden dar de alta encargados de laboratorio (tipo 4): la base
+        /// no tiene catalogo de tipos (las de 01_schema) o ya tiene el 4 (db/18).
+        /// En la del TESCHI, tipo_usuarios tiene clave foranea desde usuarios. Una
+        /// vez visto, no se vuelve a preguntar.
+        /// </summary>
+        public static bool TipoEncargado(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            lock (candadoTipo)
+            {
+                if (tipoEncargado)
+                {
+                    return true;
+                }
+            }
+
+            bool hayCatalogo;
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tipo_usuarios'", conexion, transaccion))
+            {
+                hayCatalogo = Convert.ToInt32(comando.ExecuteScalar()) > 0;
+            }
+
+            bool listo = !hayCatalogo;
+            if (hayCatalogo)
+            {
+                using (MySqlCommand comando = new MySqlCommand("SELECT COUNT(*) FROM tipo_usuarios WHERE idtipo_usuarios = 4", conexion, transaccion))
+                {
+                    listo = Convert.ToInt32(comando.ExecuteScalar()) > 0;
+                }
+            }
+
+            lock (candadoTipo)
+            {
+                tipoEncargado = listo;
+                if (!listo && !avisadoEncargado)
+                {
+                    avisadoEncargado = true;
+                    Log.Aviso("La base no tiene el tipo de usuario 4 (encargado de laboratorio): falta db/18_encargados.sql. "
+                        + "Hasta aplicarla no se pueden dar de alta encargados.");
+                }
+            }
+
+            return listo;
+        }
+
+        /// <summary>
+        /// La cuenta de MySQL de una conexion ("usuario@servidor:puerto/base").
+        /// Lo que se ve en information_schema depende de sus permisos, y un mismo
+        /// proceso pasa por varias: la del equipo y, mientras entra un encargado
+        /// de laboratorio, la de solo consulta (Conexion.UsarCuentaDeSesion).
+        /// </summary>
+        internal static string CuentaDe(MySqlConnection conexion)
+        {
+            try
+            {
+                MySqlConnectionStringBuilder datos = new MySqlConnectionStringBuilder(conexion.ConnectionString);
+                return (datos.UserID ?? "") + "@" + (datos.Server ?? "") + ":" + datos.Port + "/" + (conexion.Database ?? "");
+            }
+            catch (Exception)
+            {
+                return "";
+            }
+        }
+
         /// <summary>
         /// Una columna que llega con una migracion. Una vez vista, no se vuelve a
         /// preguntar; mientras falte, se pregunta en cada llamada, para notar la
-        /// migracion sin reiniciar.
+        /// migracion sin reiniciar. Lo visto vale para la cuenta con la que se vio:
+        /// la de solo consulta no lee todas las tablas que lee la del equipo, y al
+        /// reves.
         /// </summary>
         private class Columna
         {
@@ -53,7 +419,7 @@ namespace DigBit.conexion
             private readonly string nombre;
             private readonly string aviso;
             private readonly object candado = new object();
-            private bool existe;
+            private readonly HashSet<string> cuentasQueLaVen = new HashSet<string>();
             private bool avisado;
 
             public Columna(string tabla, string nombre, string aviso)
@@ -65,9 +431,10 @@ namespace DigBit.conexion
 
             public bool Existe(MySqlConnection conexion, MySqlTransaction transaccion)
             {
+                string cuenta = CuentaDe(conexion);
                 lock (candado)
                 {
-                    if (existe)
+                    if (cuentasQueLaVen.Contains(cuenta))
                     {
                         return true;
                     }
@@ -85,8 +452,11 @@ namespace DigBit.conexion
 
                 lock (candado)
                 {
-                    existe = hay;
-                    if (!hay && !avisado)
+                    if (hay)
+                    {
+                        cuentasQueLaVen.Add(cuenta);
+                    }
+                    else if (!avisado)
                     {
                         avisado = true;
                         Log.Aviso(aviso);

@@ -6,7 +6,8 @@
 .DESCRIPTION
     Carga DigBit.exe por reflexion y ejercita HorariosDatos.ResolverCodigo (todos
     los motivos de rechazo), las excepciones, la validacion de franjas, la agenda
-    y la marca "fuera de grupo" de los informes. Crea sus propias clases de
+    y la marca "fuera de grupo" de los informes; con db/20, ademas, que una
+    franja terminada no se da ni choca y la que la sustituye si. Crea sus propias clases de
     prueba (codigos TST01..TSTNO, ids 901-905) y las borra al terminar, asi que
     no depende del seed. Necesita una base creada con db\01_schema.sql y
     db\02_seed.sql (usa los laboratorios 1 a 3, los alumnos 20230001/20230002 y
@@ -24,11 +25,15 @@ param(
     [string]$MysqlExe = 'mysql.exe',
 
     [ValidateSet('Debug', 'Release')]
-    [string]$Configuration = 'Debug'
+    [string]$Configuration = 'Debug',
+
+    # Otro DigBit.exe; por defecto, el de DigBit\bin\<Configuration>.
+    [string]$Exe
 )
 
 $ErrorActionPreference = 'Stop'
-$exe   = Join-Path $PSScriptRoot "..\DigBit\bin\$Configuration\DigBit.exe"
+if ($CadenaConexion -match 'teschi\.edu\.mx') { throw 'Esta prueba escribe en la base: nunca contra la de la escuela.' }
+$exe   = if ($Exe) { $Exe } else { Join-Path $PSScriptRoot "..\DigBit\bin\$Configuration\DigBit.exe" }
 $mysql = $MysqlExe
 $env:DIGBIT_CONNECTION_STRING = $CadenaConexion
 
@@ -55,6 +60,14 @@ function Sql([string]$consulta) {
     finally { $ErrorActionPreference = $previo }
 }
 
+# Las franjas y extras de prueba se ponen alrededor de la hora del servidor (de 3
+# horas antes a 2 despues): cerca de la medianoche cruzarian de dia y la prueba
+# fallaria sin motivo.
+$horaServidor = [TimeSpan]"$(Sql 'SELECT CURTIME();')"
+if ($horaServidor -lt [TimeSpan]'03:00:00' -or $horaServidor -gt [TimeSpan]'21:00:00') {
+    throw "Esta prueba necesita la hora del servidor entre 03:00 y 21:00 (es $horaServidor)."
+}
+
 $asm = [Reflection.Assembly]::LoadFrom($exe)
 $tHorarios  = $asm.GetType('DigBit.conexion.HorariosDatos')
 $tConsultas = $asm.GetType('DigBit.conexion.Consultas')
@@ -70,7 +83,8 @@ $mClases = $tHorarios.GetMethod('ObtenerClases')
 $total = 0; $fallos = 0
 function Esperar([string]$nombre, [string]$codigo, [int]$lab, [int]$alumno, [string]$motivoEsperado) {
     $script:total++
-    $r = $mResolver.Invoke($h, [object[]]@($codigo, $lab, $alumno))
+    # El cuarto, la matricula (opcional en C#, pero por reflexion van todos).
+    $r = $mResolver.Invoke($h, [object[]]@($codigo, $lab, $alumno, $null))
     $motivo = $r.Motivo.ToString()
     $ok = ($motivo -eq $motivoEsperado)
     if (-not $ok) { $script:fallos++ }
@@ -82,10 +96,25 @@ function Esperar([string]$nombre, [string]$codigo, [int]$lab, [int]$alumno, [str
 }
 
 # --- Datos de prueba propios (se crean aqui y se borran al final) -------------
+# Las sesiones se buscan tambien por su franja o su excepcion: fuera del codigo
+# fijo (db/11) llevan un codigo al azar, y al borrar la franja solo quedarian
+# huerfanas (la clave foranea las pone en NULL).
 function LimpiarPruebas {
-    Sql "DELETE FROM registros_bitacoras WHERE fk_codigo_accesos IN (SELECT idcodigos_accesos FROM codigos_accesos WHERE codigo LIKE 'TST%'); DELETE FROM codigos_accesos WHERE codigo LIKE 'TST%'; DELETE FROM horario_excepciones WHERE motivo LIKE 'PRUEBA%' OR clases_idclases BETWEEN 901 AND 905 OR horarios_idhorarios IN (SELECT idhorarios FROM horarios WHERE clases_idclases BETWEEN 901 AND 905); DELETE FROM horarios WHERE clases_idclases BETWEEN 901 AND 905; DELETE FROM clases WHERE idclases BETWEEN 901 AND 905;" | Out-Null
+    $deLaPrueba = "LEFT JOIN horarios h ON h.idhorarios = ca.horarios_idhorarios" `
+        + " LEFT JOIN horario_excepciones x ON x.idhorario_excepciones = ca.horario_excepciones_id" `
+        + " WHERE ca.codigo LIKE 'TST%' OR h.clases_idclases BETWEEN 901 AND 905 OR x.clases_idclases BETWEEN 901 AND 905 OR x.motivo LIKE 'PRUEBA%'"
+    Sql "DELETE rb FROM registros_bitacoras rb INNER JOIN codigos_accesos ca ON ca.idcodigos_accesos = rb.fk_codigo_accesos $deLaPrueba; DELETE ca FROM codigos_accesos ca $deLaPrueba;" | Out-Null
+    Sql "DELETE FROM horario_excepciones WHERE motivo LIKE 'PRUEBA%' OR clases_idclases BETWEEN 901 AND 905 OR horarios_idhorarios IN (SELECT idhorarios FROM horarios WHERE clases_idclases BETWEEN 901 AND 905); DELETE FROM horarios WHERE clases_idclases BETWEEN 901 AND 905; DELETE FROM clases WHERE idclases BETWEEN 901 AND 905;" | Out-Null
 }
 LimpiarPruebas
+
+# Con db/11, los laboratorios 1 a 3 en codigo fijo, que es lo que se prueba
+# aqui; al terminar vuelven al modo que tuvieran.
+$modosAntes = @()
+if ("$(Sql "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'laboratorios' AND column_name = 'modo_codigo';")" -eq '1') {
+    $modosAntes = @(Sql "SELECT CONCAT(idlaboratorios, '=', modo_codigo) FROM laboratorios WHERE idlaboratorios IN (1, 2, 3);")
+    Sql "UPDATE laboratorios SET modo_codigo = 'fijo' WHERE idlaboratorios IN (1, 2, 3);" | Out-Null
+}
 Sql @"
 INSERT INTO clases (idclases, usuarios_idusuarios, grupos_idgrupos, materias_id_materia, codigo, vigente_desde, vigente_hasta, activa, creada_por, creada_en) VALUES
  (901, 3, 1, 2, 'TST01', CURDATE() - INTERVAL 60 DAY,  CURDATE() + INTERVAL 120 DAY, 1, NULL, NOW()),
@@ -100,7 +129,7 @@ INSERT INTO horarios (clases_idclases, laboratorios_idlaboratorios, dia_semana, 
 
 $dia = (((Get-Date).DayOfWeek.value__ + 6) % 7) + 1
 
-Write-Host "`n== Resolucion de codigos (lab 1 = Computo 1, alumno 1 = Ana ISC-5001, alumno 2 = Luis ISC-5002) ==" -ForegroundColor Cyan
+Write-Host "`n== Resolucion de codigos (lab 1 = Computo 1, estudiante 1 = Ana ISC-5001, estudiante 2 = Luis ISC-5002) ==" -ForegroundColor Cyan
 $r1 = Esperar 'TST01 en su lab'            'TST01' 1 1 'Aceptado'
 $r2 = Esperar 'TST01 otra vez, misma sesion' 'TST01' 1 1 'Aceptado'
 $script:total++; if ($r1.Ventana.IdCodigo -eq $r2.Ventana.IdCodigo) { Write-Host "[OK ] la sesion se reutiliza (id $($r1.Ventana.IdCodigo))" } else { $script:fallos++; Write-Host "[FALLO] se crearon dos sesiones" }
@@ -127,7 +156,36 @@ Sql "UPDATE horarios SET hora_inicio = SUBTIME(CURTIME(), '03:00:00'), hora_fin 
 Esperar 'TSTNO en lab 3, franja terminada hace 2 h' 'TSTNO' 3 1 'Expirado' | Out-Null
 Sql "UPDATE horarios SET hora_inicio = SUBTIME(CURTIME(), '00:10:00'), hora_fin = ADDTIME(CURTIME(), '00:50:00') WHERE clases_idclases = 905;" | Out-Null
 Esperar 'TSTNO en lab 3, dentro del margen de 15 min' 'TSTNO' 3 1 'Aceptado' | Out-Null
-Sql "DELETE FROM horarios WHERE clases_idclases = 905;" | Out-Null
+Sql "DELETE FROM codigos_accesos WHERE horarios_idhorarios IN (SELECT idhorarios FROM horarios WHERE clases_idclases = 905); DELETE FROM horarios WHERE clases_idclases = 905;" | Out-Null
+
+# Con db/20 una franja cambiada "desde una fecha" no se borra: se le pone fin y
+# la nueva empieza ese dia. Nada de lo que decide si una franja se da debe ver
+# la terminada, y la terminada no choca con lo que se ponga despues en su hueco.
+if ("$(Sql "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'horarios' AND column_name = 'vigente_hasta';")" -eq '1') {
+    Write-Host "`n== Vigencia propia de la franja (db/20) ==" -ForegroundColor Cyan
+    Sql "INSERT INTO horarios (clases_idclases, laboratorios_idlaboratorios, dia_semana, hora_inicio, hora_fin, vigente_hasta) VALUES (905, 3, $dia, SUBTIME(CURTIME(), '00:10:00'), ADDTIME(CURTIME(), '00:50:00'), CURDATE() - INTERVAL 1 DAY);" | Out-Null
+    $vieja = [int]"$(Sql 'SELECT MAX(idhorarios) FROM horarios WHERE clases_idclases = 905;')"
+    Esperar 'TSTNO en lab 3, su franja de hoy termino ayer' 'TSTNO' 3 1 'HoyNoHayClase' | Out-Null
+    Sql "INSERT INTO horarios (clases_idclases, laboratorios_idlaboratorios, dia_semana, hora_inicio, hora_fin, vigente_desde) VALUES (905, 3, $dia, SUBTIME(CURTIME(), '00:10:00'), ADDTIME(CURTIME(), '00:50:00'), CURDATE());" | Out-Null
+    $nueva = [int]"$(Sql 'SELECT MAX(idhorarios) FROM horarios WHERE clases_idclases = 905;')"
+    $rv = Esperar 'TSTNO en lab 3, con la franja que la sustituye desde hoy' 'TSTNO' 3 1 'Aceptado'
+    $enlace = if ($rv.Ventana) { "$(Sql "SELECT horarios_idhorarios FROM codigos_accesos WHERE idcodigos_accesos = $($rv.Ventana.IdCodigo);")" } else { '' }
+    $script:total++; if ($enlace -eq "$nueva") { Write-Host "[OK ] la sesion de hoy es de la nueva ($nueva), no de la terminada ($vieja)" } else { $script:fallos++; Write-Host "[FALLO] sesion enlazada a '$enlace' (nueva $nueva, vieja $vieja)" }
+    $agenda3 = @($mAgenda.Invoke($h, [object[]]@([int]3, [DateTime]::Today)) | Where-Object { $_.Codigo -eq 'TSTNO' })
+    $script:total++; if ($agenda3.Count -eq 1 -and $agenda3[0].FranjaId -eq $nueva) { Write-Host '[OK ] la agenda de hoy trae solo la nueva' } else { $script:fallos++; Write-Host "[FALLO] agenda con $($agenda3.Count) TSTNO: $(($agenda3 | ForEach-Object { $_.FranjaId }) -join ',')" }
+    Sql "DELETE FROM codigos_accesos WHERE horarios_idhorarios IN ($vieja, $nueva); DELETE FROM horarios WHERE clases_idclases = 905;" | Out-Null
+
+    # Validacion: TSTFU (904, empieza dentro de 30 dias) en el hueco de una franja de
+    # TSTNO que termino ayer, de 21:00 a 21:30 (fuera del horario del seed). Sin TST01,
+    # que ocupa todo el dia a su mismo profesor y grupo.
+    Sql "UPDATE clases SET activa = 0 WHERE idclases = 901; INSERT INTO horarios (clases_idclases, laboratorios_idlaboratorios, dia_semana, hora_inicio, hora_fin, vigente_hasta) VALUES (905, 3, $dia, '21:00:00', '21:30:00', CURDATE() - INTERVAL 1 DAY);" | Out-Null
+    $conf = $mValidarFranja.Invoke($h, [object[]]@($null, 904, 3, $dia, [TimeSpan]'21:00', [TimeSpan]'21:30'))
+    $script:total++; if ($conf -eq $null) { Write-Host '[OK ] la franja terminada no choca con una clase que empieza despues en su hueco' } else { $script:fallos++; Write-Host "[FALLO] conflicto con la terminada: $conf" }
+    Sql "INSERT INTO horarios (clases_idclases, laboratorios_idlaboratorios, dia_semana, hora_inicio, hora_fin, vigente_desde) VALUES (905, 3, $dia, '21:00:00', '21:30:00', CURDATE());" | Out-Null
+    $conf = $mValidarFranja.Invoke($h, [object[]]@($null, 904, 3, $dia, [TimeSpan]'21:00', [TimeSpan]'21:30'))
+    Sql "UPDATE clases SET activa = 1 WHERE idclases = 901; DELETE FROM horarios WHERE clases_idclases = 905;" | Out-Null
+    $script:total++; if ($conf -and $conf -match 'mismo laboratorio') { Write-Host "[OK ] la que la sustituye si choca: $conf" } else { $script:fallos++; Write-Host "[FALLO] sin conflicto con la que la sustituye: $conf" }
+}
 
 Write-Host "`n== Bitacora y marca 'con falla' ==" -ForegroundColor Cyan
 $ses = $r1.Ventana.IdCodigo
@@ -147,7 +205,7 @@ Write-Host "`n== Validacion de franjas ==" -ForegroundColor Cyan
 $conf = $mValidarFranja.Invoke($h, [object[]]@($null, 902, 1, $dia, [TimeSpan]'10:00', [TimeSpan]'12:00'))
 $script:total++; if ($conf -and $conf -match 'mismo laboratorio') { Write-Host "[OK ] TST02 en lab 1: $conf" } else { $script:fallos++; Write-Host "[FALLO] sin conflicto: $conf" }
 $conf = $mValidarFranja.Invoke($h, [object[]]@($null, 901, 3, $dia, [TimeSpan]'10:00', [TimeSpan]'12:00'))
-$script:total++; if ($conf -and $conf -match 'mismo profesor') { Write-Host "[OK ] TST01 en lab 3: $conf" } else { $script:fallos++; Write-Host "[FALLO] sin conflicto: $conf" }
+$script:total++; if ($conf -and $conf -match 'misma persona docente') { Write-Host "[OK ] TST01 en lab 3: $conf" } else { $script:fallos++; Write-Host "[FALLO] sin conflicto: $conf" }
 Sql "UPDATE clases SET activa = 0 WHERE idclases = 902;" | Out-Null
 $conf = $mValidarFranja.Invoke($h, [object[]]@($null, 905, 3, $dia, [TimeSpan]'20:00', [TimeSpan]'21:00'))
 Sql "UPDATE clases SET activa = 1 WHERE idclases = 902;" | Out-Null
@@ -165,4 +223,7 @@ $clases = $mClases.Invoke($h, [object[]]@($false))
 $script:total++; $tst = $clases | Where-Object { $_.Codigo -eq 'TST01' }; if ($clases.Count -ge 5 -and $tst -and $tst.Sesiones -eq 1) { Write-Host "[OK ] ObtenerClases: $($clases.Count) clases; TST01 tiene $($tst.Sesiones) sesion" } else { $script:fallos++; Write-Host "[FALLO] clases: $($clases.Count)" }
 
 LimpiarPruebas
+foreach ($m in $modosAntes) {
+    if ("$m" -match '^(\d+)=(fijo|renovable|sin_codigo)$') { Sql "UPDATE laboratorios SET modo_codigo = '$($matches[2])' WHERE idlaboratorios = $($matches[1]);" | Out-Null }
+}
 Write-Host "`nResultado: $($total - $fallos)/$total correctas" -ForegroundColor $(if ($fallos -eq 0) { 'Green' } else { 'Red' })

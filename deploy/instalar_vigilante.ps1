@@ -112,7 +112,7 @@ if (Get-Service -Name $nombre -ErrorAction SilentlyContinue) {
 # espacio despues de cada '='.
 sc.exe create $nombre binPath= "`"$Ruta`"" start= auto DisplayName= "DigBit Vigilante" obj= LocalSystem | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "sc.exe create fallo con codigo $LASTEXITCODE." }
-sc.exe description $nombre "Cierra la sesion de Windows del alumno cuando vence su codigo de acceso de DigBit." | Out-Null
+sc.exe description $nombre "Cierra la sesion de Windows de quien usa el equipo cuando vence su codigo de acceso de DigBit." | Out-Null
 sc.exe failure $nombre reset= 86400 actions= restart/5000/restart/5000/restart/5000 | Out-Null
 
 # Start-Service en vez de 'sc.exe start': espera a que arranque de verdad y, si

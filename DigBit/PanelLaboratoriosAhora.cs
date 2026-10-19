@@ -5,6 +5,7 @@ using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Windows.Forms;
 using DigBit.conexion;
+using DigBit.Infraestructura;
 using DrawingFont = System.Drawing.Font;
 
 namespace DigBit
@@ -57,19 +58,26 @@ namespace DigBit
     /// filas (la hora anterior, la actual y la siguiente; ver HorasDelPanel). Se
     /// dibuja a mano: son pocas celdas, cambian cada segundo (tiempo restante,
     /// barra de avance) y asi no parpadea. Cada clase lleva el color de su
-    /// profesor, el mismo que en la cuadricula de Horarios.
+    /// profesor, el mismo que en la cuadricula de Horarios. Clic en una clase:
+    /// quien registro (ClaseElegida); en el nombre del laboratorio, en "Libre" o
+    /// en una clase cancelada (ahi se quita la cancelacion), su horario
+    /// (LaboratorioElegido).
     /// </summary>
     internal class PanelLaboratoriosAhora : Control
     {
         private const int AnchoEtiquetas = 112;
+        // Con un nombre que no cabe en una linea ("Laboratorio de Computo 1", "2" y
+        // "3" salian iguales, "Laboratorio de Com..."), la cabecera pasa a dos
+        // (AltoDeCabecera) y la segunda se acorta por en medio: el numero se ve.
         private const int AltoCabecera = 30;
         private const int Hueco = 10;
         private const int AltoAviso = 30;
         private const int Relleno = 10;
 
         // Por debajo de este ancho una tarjeta ya no se lee (se probo con 8 y 10
-        // laboratorios): en vez de aplastar las columnas, se desplazan de lado.
-        private const int AnchoMinimoColumna = 165;
+        // laboratorios): en vez de aplastar las columnas, se desplazan de lado. Con
+        // 165, siete laboratorios a 1366 de ancho pedian la barra por 1 px.
+        private const int AnchoMinimoColumna = 160;
         private const int AnchoDifuminado = 28;
 
         // TextRenderer ignora el recorte del Graphics salvo que se le pida: sin
@@ -82,7 +90,10 @@ namespace DigBit
         private static readonly Color TextoPrincipal = Color.FromArgb(30, 30, 30);
         private static readonly Color TextoSecundario = Color.FromArgb(75, 75, 75);
         private static readonly Color TextoApagado = Color.FromArgb(150, 150, 150);
-        private static readonly Color Naranja = Color.FromArgb(190, 85, 0);
+        // Las alertas van sobre el color del profesor, a veces fuerte (rosa,
+        // lila): con el naranja de siempre (190,85,0) el contraste bajaba a 2:1.
+        // Este, casi marron, se queda en unos 4:1 sobre el peor de la paleta.
+        private static readonly Color Naranja = Color.FromArgb(125, 45, 0);
         private static readonly Color FondoCancelada = Color.FromArgb(238, 238, 238);
         // El mismo naranja que la franja "sin conexion" del login.
         private static readonly Color FondoAviso = Color.FromArgb(255, 204, 128);
@@ -102,6 +113,10 @@ namespace DigBit
         private readonly Timer animacion = new Timer { Interval = Resplandor.IntervaloMs };
         private readonly List<Rectangle> celdasEnCurso = new List<Rectangle>();
 
+        // Las celdas con clase del ultimo pintado: la ayuda del raton da el
+        // detalle de los equipos sin internet, que en la tarjeta se corta.
+        private readonly List<KeyValuePair<Rectangle, SesionAgenda>> celdasConClase = new List<KeyValuePair<Rectangle, SesionAgenda>>();
+
         private PanoramaLaboratorios panorama;
         private DateTime ahora;
         private string aviso;
@@ -111,10 +126,36 @@ namespace DigBit
         // laboratorio hay bajo el raton.
         private Rectangle zonaPintada;
         private int anchoPintado;
-        private int laboratorioBajoRaton;
+        private string textoAyuda;
+        // El alto de la cabecera del ultimo pintado: una o dos lineas (AltoDeCabecera).
+        // Se vuelve a medir solo si cambian los laboratorios o el ancho: el halo de
+        // las clases en curso repinta 20 veces por segundo.
+        private int altoCabecera = AltoCabecera;
+        private PanoramaLaboratorios panoramaMedido;
+        private int anchoMedido = -1;
+        private int altoLineaCabecera;
 
-        /// <summary>Clic en la columna de un laboratorio (su id): el panel principal abre su horario.</summary>
+        /// <summary>
+        /// Clic en la columna de un laboratorio fuera de sus clases (su nombre, una
+        /// hora "Libre", una clase cancelada), con su id: el panel principal abre su
+        /// horario. Sin nadie en ClaseElegida, tambien el clic en una clase.
+        /// </summary>
         public event Action<int> LaboratorioElegido;
+
+        /// <summary>
+        /// Clic en una clase: el panel principal abre quien registro y que
+        /// reportaron (BitacoraSesion), como desde Alertas. No escribe nada: vale
+        /// igual para el encargado de laboratorio.
+        /// </summary>
+        public event Action<SesionAgenda> ClaseElegida;
+
+        /// <summary>
+        /// Clic derecho en una clase de un laboratorio con generacion de codigos:
+        /// el administrador la abre (o ve su codigo) para darselo al grupo
+        /// si el profesor no puede. Sin nadie que lo escuche (el encargado de
+        /// laboratorio, en solo consulta) no hay menu ni se anuncia en la ayuda.
+        /// </summary>
+        public event Action<SesionAgenda> AbrirClasePedida;
 
         public PanelLaboratoriosAhora()
         {
@@ -179,32 +220,100 @@ namespace DigBit
         {
             base.OnMouseMove(e);
             OpcionCombo laboratorio = LaboratorioEn(e.Location);
-            int id = laboratorio == null ? 0 : laboratorio.Id;
-            if (id == laboratorioBajoRaton)
+            SesionAgenda sesion = laboratorio == null ? null : SesionEn(e.Location);
+            string texto = laboratorio == null ? null
+                : AbreSuBitacora(sesion) ? "Clic: quién registró en esta clase y qué reportaron."
+                : "Clic: ver el horario de " + laboratorio.Texto + ".";
+            if (sesion != null && sesion.SinInternet.Count > 0)
+            {
+                texto = Consultas.DescribirSinInternet(sesion.SinInternet, false) + "." + Environment.NewLine + texto;
+            }
+
+            if (sesion != null && !sesion.Utilizable)
+            {
+                texto = "No se puede usar: la clase está desactivada o fuera de su periodo, o la cuenta de su docente está de baja."
+                    + Environment.NewLine + texto;
+            }
+
+            if (sesion != null && AbrirClasePedida != null && SePuedeAbrir(sesion))
+            {
+                texto += Environment.NewLine + (sesion.SesionId.HasValue ? "Clic derecho: ver el código de esta clase." : "Clic derecho: abrir la clase y ver su código.");
+            }
+
+            if (texto == textoAyuda)
             {
                 return;
             }
 
-            laboratorioBajoRaton = id;
+            textoAyuda = texto;
             Cursor = laboratorio == null ? Cursors.Default : Cursors.Hand;
-            ayuda.SetToolTip(this, laboratorio == null ? null : "Ver el horario de " + laboratorio.Texto);
+            ayuda.SetToolTip(this, texto);
         }
 
         protected override void OnMouseLeave(EventArgs e)
         {
             base.OnMouseLeave(e);
-            laboratorioBajoRaton = 0;
+            textoAyuda = null;
             Cursor = Cursors.Default;
+        }
+
+        /// <summary>La clase de la celda que hay en ese punto (del ultimo pintado), o null.</summary>
+        private SesionAgenda SesionEn(Point punto)
+        {
+            foreach (KeyValuePair<Rectangle, SesionAgenda> celda in celdasConClase)
+            {
+                if (celda.Key.Contains(punto))
+                {
+                    return celda.Value;
+                }
+            }
+
+            return null;
         }
 
         protected override void OnMouseClick(MouseEventArgs e)
         {
             base.OnMouseClick(e);
             OpcionCombo laboratorio = LaboratorioEn(e.Location);
-            if (e.Button == MouseButtons.Left && laboratorio != null && LaboratorioElegido != null)
+            SesionAgenda sesion = laboratorio == null ? null : SesionEn(e.Location);
+            if (e.Button == MouseButtons.Left && AbreSuBitacora(sesion))
+            {
+                // La clase: quien registro (antes abria el horario, como el resto de la columna).
+                ClaseElegida(sesion);
+            }
+            else if (e.Button == MouseButtons.Left && laboratorio != null && LaboratorioElegido != null)
             {
                 LaboratorioElegido(laboratorio.Id);
             }
+
+            if (e.Button == MouseButtons.Right && sesion != null && SePuedeAbrir(sesion) && AbrirClasePedida != null)
+            {
+                ContextMenuStrip menu = new ContextMenuStrip { Font = new Font("Century Gothic", 9.5F) };
+                menu.Items.Add(sesion.SesionId.HasValue ? "Ver el código de esta clase" : "Abrir la clase y ver su código", null,
+                    (s, a) => AbrirClasePedida(sesion));
+                menu.Closed += (s, a) => BeginInvoke(new Action(menu.Dispose));
+                menu.Show(this, e.Location);
+            }
+        }
+
+        /// <summary>
+        /// Si el clic en esa celda abre quien registro: una clase sin cancelar y
+        /// alguien que lo escuche. Cancelada, nadie registra: su horario.
+        /// </summary>
+        private bool AbreSuBitacora(SesionAgenda sesion)
+        {
+            return sesion != null && !sesion.Cancelada && ClaseElegida != null;
+        }
+
+        /// <summary>
+        /// Una clase de un laboratorio con generacion de codigos, sin cancelar,
+        /// desde 15 minutos antes hasta su fin, que el servidor deja abrir (no una
+        /// extra de una clase desactivada o fuera de vigencia).
+        /// </summary>
+        private bool SePuedeAbrir(SesionAgenda sesion)
+        {
+            return panorama != null && sesion.Utilizable && panorama.ModoDe(sesion.LaboratorioId) == ModoCodigo.Renovable
+                && ReglasCodigo.Abierta(sesion.Inicio, sesion.Fin, sesion.Cancelada, ahora.TimeOfDay);
         }
 
         /// <summary>El laboratorio de la columna que hay en ese punto, o null (etiquetas, huecos, fuera).</summary>
@@ -293,6 +402,7 @@ namespace DigBit
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             celdasEnCurso.Clear();
+            celdasConClase.Clear();
             Rectangle area = ClientRectangle;
             if (barra.Visible)
             {
@@ -335,7 +445,8 @@ namespace DigBit
             int anchoColumna = barra.Visible
                 ? AnchoMinimoColumna
                 : (area.Width - AnchoEtiquetas - Hueco * (columnas - 1)) / columnas;
-            int altoFila = (area.Height - AltoCabecera - Hueco * 3) / 3;
+            altoCabecera = AltoDeCabecera(g, anchoColumna - 4);
+            int altoFila = (area.Height - altoCabecera - Hueco * 3) / 3;
             TimeSpan hora = ahora.TimeOfDay;
 
             // La fila "Ahora" se resalta de lado a lado.
@@ -377,9 +488,8 @@ namespace DigBit
                     continue;
                 }
 
-                Rectangle cabecera = new Rectangle(x, area.Top, anchoColumna, AltoCabecera);
-                TextRenderer.DrawText(g, laboratorio.Texto, fuenteCabecera, new Rectangle(x + 2, area.Top, anchoColumna - 4, AltoCabecera - 6), Verde,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | Recortado);
+                Rectangle cabecera = new Rectangle(x, area.Top, anchoColumna, altoCabecera);
+                DibujarCabecera(g, laboratorio.Texto, new Rectangle(x + 2, area.Top, anchoColumna - 4, altoCabecera - 6));
                 using (Pen linea = new Pen(Verde, 2f))
                 {
                     g.DrawLine(linea, cabecera.Left, cabecera.Bottom - 2, cabecera.Right, cabecera.Bottom - 2);
@@ -389,7 +499,13 @@ namespace DigBit
                 for (int fila = 0; fila < 3; fila++)
                 {
                     SesionAgenda enEsaHora = HorasDelPanel.EnLaHora(agenda, horas[fila], hora);
-                    DibujarCelda(g, new Rectangle(x, FilaY(area, fila, altoFila), anchoColumna, altoFila), enEsaHora, fila, hora);
+                    Rectangle celda = new Rectangle(x, FilaY(area, fila, altoFila), anchoColumna, altoFila);
+                    DibujarCelda(g, celda, enEsaHora, fila, hora);
+                    if (enEsaHora != null)
+                    {
+                        // Solo lo que se ve: una columna desplazada bajo las etiquetas no cuenta.
+                        celdasConClase.Add(new KeyValuePair<Rectangle, SesionAgenda>(Rectangle.Intersect(celda, zonaColumnas), enEsaHora));
+                    }
                 }
             }
 
@@ -439,9 +555,78 @@ namespace DigBit
             }
         }
 
-        private static int FilaY(Rectangle area, int fila, int altoFila)
+        private int FilaY(Rectangle area, int fila, int altoFila)
         {
-            return area.Top + AltoCabecera + Hueco + fila * (altoFila + Hueco);
+            return area.Top + altoCabecera + Hueco + fila * (altoFila + Hueco);
+        }
+
+        private const TextFormatFlags LineaDeCabecera = TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.SingleLine
+            | TextFormatFlags.NoPrefix | Recortado;
+
+        /// <summary>
+        /// AltoCabecera si todos los nombres caben en una linea de ese ancho; si
+        /// alguno no, el de dos lineas para todas las columnas (asi las clases de
+        /// todos los laboratorios empiezan a la misma altura).
+        /// </summary>
+        private int AltoDeCabecera(Graphics g, int ancho)
+        {
+            if (panorama == panoramaMedido && ancho == anchoMedido)
+            {
+                return altoCabecera;
+            }
+
+            panoramaMedido = panorama;
+            anchoMedido = ancho;
+            bool caben = panorama.Laboratorios.All(l => TextRenderer.MeasureText(g, l.Texto, fuenteCabecera, Size.Empty, LineaDeCabecera).Width <= ancho);
+            return caben ? AltoCabecera : 2 * AltoLineaCabecera(g) + 10;
+        }
+
+        private int AltoLineaCabecera(Graphics g)
+        {
+            if (altoLineaCabecera == 0)
+            {
+                altoLineaCabecera = TextRenderer.MeasureText(g, "Ág", fuenteCabecera).Height;
+            }
+
+            return altoLineaCabecera;
+        }
+
+        /// <summary>
+        /// El nombre de un laboratorio en su cabecera. Si cabe, en una linea, junto
+        /// a la raya. Si no, en dos: en la primera las palabras que quepan y en la
+        /// segunda el resto, acortado por en medio si tampoco cabe ("Laborat...puto
+        /// 101"): el final, que suele ser el numero, es lo que los distingue.
+        /// </summary>
+        private void DibujarCabecera(Graphics g, string texto, Rectangle caja)
+        {
+            int altoLinea = AltoLineaCabecera(g);
+            Rectangle abajo = new Rectangle(caja.X, caja.Bottom - altoLinea, caja.Width, altoLinea);
+            if (caja.Height < 2 * altoLinea)
+            {
+                // Cabecera de una linea: todos caben.
+                TextRenderer.DrawText(g, texto, fuenteCabecera, caja, Verde,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | Recortado);
+                return;
+            }
+
+            string[] palabras = (texto ?? "").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (palabras.Length < 2 || TextRenderer.MeasureText(g, texto, fuenteCabecera, Size.Empty, LineaDeCabecera).Width <= caja.Width)
+            {
+                TextRenderer.DrawText(g, texto, fuenteCabecera, abajo, Verde, LineaDeCabecera | TextFormatFlags.PathEllipsis);
+                return;
+            }
+
+            int enLaPrimera = 1;
+            while (enLaPrimera < palabras.Length - 1
+                && TextRenderer.MeasureText(g, string.Join(" ", palabras, 0, enLaPrimera + 1), fuenteCabecera, Size.Empty, LineaDeCabecera).Width <= caja.Width)
+            {
+                enLaPrimera++;
+            }
+
+            Rectangle arriba = new Rectangle(caja.X, abajo.Top - altoLinea, caja.Width, altoLinea);
+            TextRenderer.DrawText(g, string.Join(" ", palabras, 0, enLaPrimera), fuenteCabecera, arriba, Verde, LineaDeCabecera | TextFormatFlags.EndEllipsis);
+            TextRenderer.DrawText(g, string.Join(" ", palabras, enLaPrimera, palabras.Length - enLaPrimera), fuenteCabecera, abajo, Verde,
+                LineaDeCabecera | TextFormatFlags.PathEllipsis);
         }
 
         /// <summary>"13:00". La fila de la hora siguiente a las 23:00 es "00:00".</summary>
@@ -507,7 +692,7 @@ namespace DigBit
                 fuenteNormal, sesion.Cancelada ? TextoApagado : TextoSecundario, celda, ancho, ref y);
             y += 3;
 
-            foreach (Tuple<string, Color> estado in Estado(sesion, fila, hora))
+            foreach (Tuple<string, Color> estado in Estado(sesion, fila, hora, panorama.ModoDe(sesion.LaboratorioId)))
             {
                 Linea(g, estado.Item1, fuenteEstado, estado.Item2, celda, ancho, ref y);
             }
@@ -531,11 +716,20 @@ namespace DigBit
         /// o no ha empezado; una clase en curso de dos horas sale en dos filas y
         /// solo la de ahora lleva el detalle, para no repetirlo.
         /// </summary>
-        private static IEnumerable<Tuple<string, Color>> Estado(SesionAgenda sesion, int fila, TimeSpan hora)
+        private static IEnumerable<Tuple<string, Color>> Estado(SesionAgenda sesion, int fila, TimeSpan hora, ModoCodigo modo)
         {
             if (sesion.Cancelada)
             {
                 yield return Tuple.Create("Cancelada" + (string.IsNullOrEmpty(sesion.Motivo) ? "" : ": " + sesion.Motivo), TextoSecundario);
+                yield break;
+            }
+
+            if (!sesion.Utilizable && hora < sesion.Fin)
+            {
+                // Una extra de una clase desactivada o fuera de periodo, o la clase de
+                // un profesor dado de baja: en ningun modo puede registrar nadie. La
+                // causa, en la ayuda del raton (son tres y no caben aqui).
+                yield return Tuple.Create("No se puede usar hoy", Naranja);
                 yield break;
             }
 
@@ -545,7 +739,8 @@ namespace DigBit
                 yield return Tuple.Create("Empieza en " + Duracion(falta), Verde);
                 if (falta <= TimeSpan.FromMinutes(HorariosDatos.MargenAntesDelInicioMinutos))
                 {
-                    yield return Tuple.Create("Ya se acepta el código", TextoSecundario);
+                    yield return modo == ModoCodigo.Renovable ? CodigoDeLaClase(sesion)
+                        : Tuple.Create(modo == ModoCodigo.SinCodigo ? "Ya pueden registrar" : "Ya se acepta el código", TextoSecundario);
                 }
 
                 yield break;
@@ -567,6 +762,10 @@ namespace DigBit
             if (enCurso)
             {
                 yield return Tuple.Create("Quedan " + Duracion(sesion.Fin - hora), Verde);
+                if (modo == ModoCodigo.Renovable)
+                {
+                    yield return CodigoDeLaClase(sesion);
+                }
             }
 
             if (sesion.Alumnos == 0)
@@ -585,6 +784,27 @@ namespace DigBit
             {
                 yield return Tuple.Create(registro + ", " + sesion.ConFallas + (sesion.ConFallas == 1 ? " con falla" : " con fallas"), Naranja);
             }
+
+            // Lo que avisaron de las maquinas de alrededor (db/10); el detalle, en la ayuda del raton.
+            if (sesion.SinInternet.Count > 0)
+            {
+                yield return Tuple.Create(Consultas.DescribirSinInternet(sesion.SinInternet, true), Naranja);
+            }
+        }
+
+        /// <summary>
+        /// Generacion de codigos: el de la sesion, o que el profesor aun no la abre
+        /// (el administrador la abre con el clic derecho). El codigo generado solo
+        /// lo ve el administrador: al encargado de laboratorio, "Clase abierta".
+        /// </summary>
+        private static Tuple<string, Color> CodigoDeLaClase(SesionAgenda sesion)
+        {
+            return sesion.SesionId.HasValue && !string.IsNullOrEmpty(sesion.CodigoSesion)
+                ? Tuple.Create(Permisos.VeCodigosGenerados ? "Código " + sesion.CodigoSesion : "Clase abierta", TextoSecundario)
+                // Nadie la puede abrir (ver Estado).
+                : !sesion.Utilizable ? Tuple.Create("No se puede usar hoy", Naranja)
+                // Corto: en una tarjeta estrecha "Sin codigo: el profesor no la ha..." se cortaba.
+                : Tuple.Create("Su docente aún no la abre", Naranja);
         }
 
         /// <summary>"25 min", "2 h", "1 h 10 min"; los minutos se redondean hacia arriba.</summary>
@@ -698,6 +918,86 @@ namespace DigBit
         }
     }
 
+    /// <summary>Lo que comparten las listas de la administracion para que nada se corte a 10 pt.</summary>
+    internal static class ColumnasDeLista
+    {
+        /// <summary>
+        /// Esas columnas, nunca mas angostas que su encabezado: una palabra
+        /// ("Estudiantes") no pasa a la linea siguiente y se cortaria. ListaDigBit
+        /// solo mide las celdas. Un encabezado de varias palabras se parte en
+        /// lineas: basta con que quepa la mas larga ("internet").
+        /// </summary>
+        public static void EncabezadoEntero(DataGridView grid, params string[] columnas)
+        {
+            foreach (string nombre in columnas)
+            {
+                DataGridViewColumn columna = grid.Columns[nombre];
+                // En una linea, con su margen y el sitio de la flecha de ordenar.
+                int ancho = columna.GetPreferredWidth(DataGridViewAutoSizeColumnMode.ColumnHeader, true);
+                string texto = columna.HeaderText ?? "";
+                if (texto.IndexOf(' ') > 0)
+                {
+                    DrawingFont fuente = columna.HeaderCell.InheritedStyle.Font ?? grid.Font;
+                    int palabra = texto.Split(' ').Max(p => TextRenderer.MeasureText(p, fuente).Width);
+                    ancho = ancho - TextRenderer.MeasureText(texto, fuente).Width + palabra;
+                }
+
+                if (ancho > columna.MinimumWidth)
+                {
+                    columna.MinimumWidth = ancho;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Esas columnas largas, tan anchas como su texto mas largo (hasta maximo;
+        /// uno mas largo se corta y sale entero al pasar el raton), con ancho fijo:
+        /// las demas se reparten lo que queda por sus pesos. Con relleno no basta,
+        /// porque la lista cambia los pesos sola en cuanto alguna columna llega a
+        /// su minimo (ListaDigBit lo sube al leer) y el reparto deja de ser el
+        /// pensado. Solo crece, como ListaDigBit: al filtrar, las columnas no
+        /// bailan. Si no cabe todo, sale la barra de abajo.
+        /// </summary>
+        public static void TextoEntero(DataGridView grid, int maximo, params string[] columnas)
+        {
+            foreach (string nombre in columnas)
+            {
+                DataGridViewColumn columna = grid.Columns[nombre];
+                if (!columna.Visible)
+                {
+                    continue;
+                }
+
+                DrawingFont fuente = columna.InheritedStyle.Font ?? grid.Font;
+                HashSet<string> medidos = new HashSet<string>(StringComparer.Ordinal);
+                int pide = 0;
+                foreach (DataGridViewRow fila in grid.Rows)
+                {
+                    string texto = Convert.ToString(fila.Cells[columna.Index].Value);
+                    if (!string.IsNullOrEmpty(texto) && medidos.Add(texto))
+                    {
+                        // Lo que pide la celda: el texto y su margen (como PreferredSize).
+                        pide = Math.Max(pide, TextRenderer.MeasureText(texto, fuente).Width + 8);
+                    }
+                }
+
+                pide = Math.Max(Math.Min(pide, maximo), columna.MinimumWidth);
+                if (medidos.Count == 0)
+                {
+                    // Sin nada que medir (lista vacia): sigue con su peso.
+                    continue;
+                }
+
+                bool fija = columna.AutoSizeMode == DataGridViewAutoSizeColumnMode.None;
+                if (!fija || pide > columna.Width)
+                {
+                    columna.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+                    columna.Width = fija ? Math.Max(columna.Width, pide) : pide;
+                }
+            }
+        }
+    }
+
     /// <summary>Boton grande del panel del administrador: titulo y una linea de lo que hay dentro.</summary>
     internal class TarjetaOpcion : Control
     {
@@ -706,11 +1006,12 @@ namespace DigBit
         private readonly DrawingFont fuenteTitulo = new DrawingFont("Century Gothic", 14F, FontStyle.Bold);
         private readonly DrawingFont fuenteDescripcion = new DrawingFont("Century Gothic", 9F);
         private bool encima;
+        private string descripcion;
 
         public TarjetaOpcion(string titulo, string descripcion)
         {
             Titulo = titulo;
-            Descripcion = descripcion;
+            this.descripcion = descripcion;
             Text = titulo;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
                 | ControlStyles.ResizeRedraw | ControlStyles.UserPaint | ControlStyles.Selectable, true);
@@ -721,7 +1022,25 @@ namespace DigBit
 
         public string Titulo { get; private set; }
 
-        public string Descripcion { get; private set; }
+        /// <summary>La linea de debajo del titulo; se puede cambiar (por ejemplo, con cuantos van).</summary>
+        public string Descripcion
+        {
+            get
+            {
+                return descripcion;
+            }
+
+            set
+            {
+                if (value == descripcion)
+                {
+                    return;
+                }
+
+                descripcion = value;
+                Invalidate();
+            }
+        }
 
         protected override void OnMouseEnter(EventArgs e)
         {

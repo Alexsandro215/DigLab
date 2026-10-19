@@ -29,12 +29,14 @@ namespace DigBit.conexion
                 string almacenada = null;
                 int tipoUsuarioId = 0;
                 bool activo = true;
+                string cadenaDeConsulta = null;
 
                 using (MySqlConnection conexion = mconexion.GetConexion())
                 {
                     if (conexion == null)
                     {
-                        MessageBox.Show("Error al conectar a la base de datos", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBox.Show(MensajeDeFallo.SinConexion("No se pudo iniciar sesión", MensajeDeFallo.AvisaAlLaboratorio),
+                            "Iniciar sesión", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         return false;
                     }
 
@@ -64,7 +66,10 @@ namespace DigBit.conexion
                         // El mismo mensaje exista o no el usuario: decir "ese numero no
                         // existe" le regala a quien lo intente la lista de matriculas
                         // validas.
-                        MessageBox.Show("Número de identificador o contraseña incorrectos. Por favor, verifica tus credenciales.", "Error de inicio de sesión", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBox.Show("Tu usuario o tu contraseña no son correctos." + Environment.NewLine + Environment.NewLine
+                            + "Revisa que estén bien escritos: la contraseña distingue mayúsculas y minúsculas. "
+                            + "Si no la recuerdas, usa «¿Olvidaste tu contraseña?».",
+                            "Iniciar sesión", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         return false;
                     }
 
@@ -73,7 +78,7 @@ namespace DigBit.conexion
                     if (!activo)
                     {
                         Log.Info("Inicio de sesion rechazado: '" + numeroIdentificador + "' esta dado de baja.");
-                        MessageBox.Show("Tu cuenta está dada de baja. Si crees que es un error, acude con el encargado del laboratorio.", "Cuenta dada de baja", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        MessageBox.Show("Tu cuenta está dada de baja. Si crees que es un error, acude a la administración de DigBit.", "Cuenta dada de baja", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         return false;
                     }
 
@@ -81,17 +86,94 @@ namespace DigBit.conexion
                     {
                         MigrarContrasena(conexion, numeroIdentificador, contraseña, Contrasenas.EsFormatoAntiguo(almacenada));
                     }
+
+                    // El encargado de laboratorio trabaja, en cualquier equipo, con la
+                    // cuenta de solo lectura de la base (db/18). Sin ella no entra:
+                    // nunca con la del equipo, que puede escribir.
+                    if (tipoUsuarioId == TiposUsuario.Encargado)
+                    {
+                        string problema = CuentaDeConsulta.Preparar(conexion, out cadenaDeConsulta);
+                        if (problema != null)
+                        {
+                            Log.Aviso("Inicio de sesion del encargado '" + numeroIdentificador + "' rechazado: " + problema);
+                            MessageBox.Show(problema, "Sin cuenta de solo consulta", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            return false;
+                        }
+                    }
                 }
 
-                AbrirPestanaSegunTipoUsuario(tipoUsuarioId, numeroIdentificador);
-                return true;
+                // Null para todos menos el encargado: la cuenta del equipo. Si el
+                // panel no llega a abrirse, la sesion se limpia y vuelve la del equipo.
+                Conexion.UsarCuentaDeSesion(cadenaDeConsulta);
+                bool abierto = false;
+                try
+                {
+                    abierto = AbrirPestanaSegunTipoUsuario(tipoUsuarioId, numeroIdentificador);
+                }
+                finally
+                {
+                    if (!abierto)
+                    {
+                        Datos_User.Limpiar();
+                    }
+                }
+
+                return abierto;
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al intentar realizar la consulta: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                // La causa y que hacer; el detalle tecnico, al registro.
+                Log.Error("Iniciar sesion de '" + numeroIdentificador + "'", ex);
+                MessageBox.Show(MensajeDeFallo.Explicar("No se pudo iniciar sesión", ex, MensajeDeFallo.AvisaAlLaboratorio),
+                    "Iniciar sesión", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Las consultas viejas de esta clase avisaban con el texto del driver: ahora
+        /// la causa y que hacer (MensajeDeFallo), y el detalle tecnico al registro.
+        /// </summary>
+        private static void AvisarFallo(string contexto, string queNoSePudo, Exception ex)
+        {
+            Log.Error(contexto, ex);
+            MessageBox.Show(MensajeDeFallo.Explicar(queNoSePudo, ex, MensajeDeFallo.AvisaAlLaboratorio),
+                "DigBit", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+
+        /// <summary>
+        /// Si esa es la contrasena del administrador que inicio sesion (de tipo 3 y
+        /// activo). Para volver a pedirla antes de un cambio delicado: si dejo la
+        /// sesion abierta y no esta, otro no puede hacerlo (DialogoContrasenaAdmin).
+        /// Solo comprueba: no migra el hash ni muestra nada.
+        /// </summary>
+        public bool ConfirmarContrasenaAdministrador(string numeroIdentificador, string contrasena)
+        {
+            using (MySqlConnection conexion = mconexion.GetConexion())
+            {
+                string columnaActivo = Esquema.TieneBajas(conexion) ? "activo" : "1 AS activo";
+                using (MySqlCommand consulta = new MySqlCommand(
+                    "SELECT fk_tipo_usuario, password, " + columnaActivo + " FROM usuarios WHERE numero_identificador = @NumeroIdentificador", conexion))
+                {
+                    consulta.Parameters.AddWithValue("@NumeroIdentificador", numeroIdentificador ?? "");
+                    using (MySqlDataReader lector = consulta.ExecuteReader())
+                    {
+                        if (!lector.Read())
+                        {
+                            return false;
+                        }
+
+                        int tipo = Convert.ToInt32(lector["fk_tipo_usuario"]);
+                        string almacenada = lector["password"] == DBNull.Value ? null : lector["password"].ToString();
+                        bool activo = Convert.ToInt32(lector["activo"]) == 1;
+                        bool necesitaRehash;
+                        // Solo el administrador: el encargado de laboratorio (4) nunca confirma cambios.
+                        return tipo == TiposUsuario.Administrador && activo && almacenada != null
+                            && Contrasenas.Verificar(contrasena ?? "", almacenada, out necesitaRehash);
+                    }
+                }
+            }
         }
 
         /// <summary>
@@ -128,46 +210,58 @@ namespace DigBit.conexion
 
 
 
-        public void AbrirPestanaSegunTipoUsuario(int tipoUsuarioId, String numeroIdentificador)
+        /// <summary>
+        /// Abre la ventana principal de ese tipo de usuario. El administrador (3) y
+        /// el encargado de laboratorio (4) van al mismo panel; el encargado, en
+        /// solo consulta (Permisos lo saca de Datos_User.TipoUsuario, que se fija
+        /// ANTES de construir la ventana). False si esta version no conoce el
+        /// tipo: el login se queda a la vista.
+        /// </summary>
+        public bool AbrirPestanaSegunTipoUsuario(int tipoUsuarioId, String numeroIdentificador)
         {
-            // Queda en memoria para que cada pantalla sepa a quien atiende (por
-            // ejemplo, el alta de profesores solo se abre para el administrador).
-            Datos_User.TipoUsuario = tipoUsuarioId;
-
+            Form principal;
             switch (tipoUsuarioId)
             {
-                case 1:
+                case TiposUsuario.Alumno:
+                    Datos_User.TipoUsuario = tipoUsuarioId;
                     Datos_User.SetUser(numeroIdentificador);
-                    Alumno_Principal registroAlumnos = new Alumno_Principal();
-                    registroAlumnos.Show();
-                    ocultarVentana();
+                    principal = new Alumno_Principal();
                     break;
 
-                case 2:
+                case TiposUsuario.Profesor:
+                    Datos_User.TipoUsuario = tipoUsuarioId;
                     Datos_User.SetUser(numeroIdentificador);
-                    Profesor_Principal profPrincipal = new Profesor_Principal();
-                    profPrincipal.Show();
-                    ocultarVentana();
+                    principal = new Profesor_Principal();
                     break;
 
-                case 3:
+                case TiposUsuario.Administrador:
+                case TiposUsuario.Encargado:
+                    // El encargado solo con la cuenta de solo consulta (RealizarInicioSesion);
+                    // nunca con la del equipo, que puede escribir.
+                    if (tipoUsuarioId == TiposUsuario.Encargado && !Conexion.ConCuentaDeSesion)
+                    {
+                        Datos_User.Limpiar();
+                        Log.Aviso("Se pidio abrir el panel del encargado '" + numeroIdentificador + "' sin la cuenta de solo consulta: no se abre.");
+                        return false;
+                    }
+
                     // Administrador real (fase 6): antes era ADMINISTRADOR/123 en Login.cs.
+                    Datos_User.TipoUsuario = tipoUsuarioId;
                     Datos_User.SetUser(numeroIdentificador);
-                    PrincipalAdministrador principalAdministrador = new PrincipalAdministrador();
-                    principalAdministrador.Show();
-                    ocultarVentana();
+                    principal = new PrincipalAdministrador();
                     break;
 
                 default:
-                    MessageBox.Show($"Tipo de usuario no manejado: {tipoUsuarioId}");
-                    break;
+                    Datos_User.Limpiar();
+                    Log.Aviso("Inicio de sesion de '" + numeroIdentificador + "' con el tipo de usuario " + tipoUsuarioId
+                        + ", que esta version de DigBit no conoce: no se abre nada.");
+                    MessageBox.Show("Esta versión de DigBit no reconoce tu tipo de cuenta. Entra desde un equipo con DigBit actualizado o avisa a la administración de DigBit.",
+                        "Tipo de cuenta desconocido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return false;
             }
-        }
 
-        public void ocultarVentana()
-        {
-            Form ventanaActiva = Form.ActiveForm;
-
+            principal.Show();
+            return true;
         }
 
         public UsuarioConInformacionAdicional ConsultaEditar(string numeroIdentificador)
@@ -228,13 +322,14 @@ namespace DigBit.conexion
                     }
                     else
                     {
-                        MessageBox.Show("Error al conectar a la base de datos", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBox.Show(MensajeDeFallo.SinConexion("No se pudieron leer tus datos", MensajeDeFallo.AvisaAlLaboratorio),
+                            "DigBit", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     }
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al intentar realizar la consulta: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer el perfil de " + numeroIdentificador, "No se pudieron leer tus datos", ex);
             }
 
             return usuarioConInfoAdicional;
@@ -264,7 +359,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener el ID de la carrera: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Buscar la carrera " + nombreCarrera, "No se pudo leer la carrera", ex);
             }
 
             return idCarrera;
@@ -295,7 +390,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener las carreras: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer las carreras", "No se pudieron leer las carreras", ex);
             }
 
             return carreras;
@@ -314,7 +409,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener los nombres de los grupos: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer los grupos", "No se pudieron leer los grupos", ex);
             }
 
             return nombreGrupos;
@@ -345,7 +440,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener los grupos: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer los grupos", "No se pudieron leer los grupos", ex);
             }
 
             return grupos;
@@ -379,7 +474,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener los grupos de la carrera: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer los grupos de la carrera " + idCarrera, "No se pudieron leer los grupos de la carrera", ex);
             }
 
             return grupos;
@@ -409,7 +504,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener los nombres de los grupos: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer los semestres", "No se pudieron leer los semestres", ex);
             }
 
             return nombreSemestre;
@@ -438,7 +533,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener los nombres de los semestres: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer los semestres", "No se pudieron leer los semestres", ex);
             }
 
             return nombreSemestre;
@@ -467,7 +562,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener los nombres de las carreras: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer los laboratorios", "No se pudieron leer los laboratorios", ex);
             }
 
             return nombresLaboratorios;
@@ -607,7 +702,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener el ID del semestre: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Buscar el semestre " + nombreSemestre, "No se pudo leer el semestre", ex);
             }
             return idSemestre;
         }
@@ -632,7 +727,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener el ID del grupo: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Buscar el grupo " + nombreGrupo, "No se pudo leer el grupo", ex);
             }
             return idGrupo;
         }
@@ -657,7 +752,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener el ID de la carrera: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Buscar la carrera " + nombreCarrera, "No se pudo leer la carrera", ex);
             }
             return idCarrera;
      
@@ -675,7 +770,7 @@ namespace DigBit.conexion
             }
             catch(Exception ex)
             {
-                MessageBox.Show($"Error al obtener los nombres de las materia: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer las materias", "No se pudieron leer las materias", ex);
             }
             return nombresMaterias;
         }
@@ -705,7 +800,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener las materias: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer las materias", "No se pudieron leer las materias", ex);
             }
 
             return materias;
@@ -739,7 +834,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener las materias de la carrera: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer las materias de la carrera " + idCarrera, "No se pudieron leer las materias de la carrera", ex);
             }
 
             return materias;
@@ -758,7 +853,7 @@ namespace DigBit.conexion
             }
             catch(Exception ex)
             {
-                MessageBox.Show($"Error al obtener el nombre de los laboratorios: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer los laboratorios", "No se pudieron leer los laboratorios", ex);
             }
             return nombresLaboratorio;
         }
@@ -788,7 +883,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener los laboratorios: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer los laboratorios", "No se pudieron leer los laboratorios", ex);
             }
 
             return laboratorios;
@@ -815,7 +910,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener el ID de la materia: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Buscar la materia " + nombreMateria, "No se pudo leer la materia", ex);
             }
 
             return idMateria;
@@ -842,7 +937,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener el ID del laboratorio: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Buscar el laboratorio " + nombreLaboratorio, "No se pudo leer el laboratorio", ex);
             }
 
             return idLaboratorio;
@@ -874,15 +969,19 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener la carrera del usuario: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer la carrera de " + numeroIdentificador, "No se pudo leer tu carrera", ex);
             }
 
             return idCarrera;
         }
 
+        /// <summary>
+        /// "Nombre Apellidos" de esa cuenta; vacio si no esta (Mi horario dice
+        /// entonces solo "Tu horario de la semana.").
+        /// </summary>
          public string MostrarNombreProfesor(string numeroIdentificador)
         {
-            string nombreProfesor = "No se encontró el profesor.";
+            string nombreProfesor = "";
             try
             {
                 using (MySqlConnection conexion = mconexion.GetConexion())
@@ -907,7 +1006,7 @@ namespace DigBit.conexion
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener el nombre del profesor: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer el nombre de " + numeroIdentificador, "No se pudo leer tu nombre", ex);
             }
             return nombreProfesor;
         }
@@ -915,39 +1014,86 @@ namespace DigBit.conexion
 
 
 
-        /// <summary>Sin grupo (null), el que tuviera el alumno se conserva: ya no se le pide.</summary>
+        /// <summary>
+        /// "Mi perfil" del alumno, todo o nada (antes, si fallaba la carrera, el
+        /// nombre y el correo ya se habian guardado). Sin grupo (null), el que
+        /// tuviera se conserva: ya no se le pide. Sin semestre (idSemestre menor
+        /// que 1, que es lo que da ObtenerIdSemestre con el combo vacio), ninguno;
+        /// o el que tenia, si la base aun no tiene la 10. Un alumno sin fila de
+        /// carrera (cuentas viejas) la recibe aqui, si la base ya lo admite.
+        /// </summary>
         public bool ActualizarUsuario(string idUsuarios, string nombre, string apellidoPaterno, string apellidoMaterno, string correo, int idCarrera, int? idGrupo, int idSemestre)
         {
             try
             {
                 using (MySqlConnection conexion = mconexion.GetConexion())
+                using (MySqlTransaction transaccion = conexion.BeginTransaction())
                 {
-                    string consulta = @"UPDATE usuarios
-                                    SET nombre = @Nombre, apellido_paterno = @ApellidoPaterno, apellido_materno = @ApellidoMaterno, correo = @Correo
-                                    WHERE idusuarios = @idUsuarios;
-                                    UPDATE carrera_grupo_semestre
-                                    SET carreras_idcarreras = @IdCarrera, grupos_idgrupos = COALESCE(@IdGrupo, grupos_idgrupos), semestres_idsemestres = @IdSemestre
-                                    WHERE usuarios_numero_identificador = @idUsuarios";
-
-                    using (MySqlCommand comando = new MySqlCommand(consulta, conexion))
+                    try
                     {
-                        comando.Parameters.AddWithValue("@idUsuarios", idUsuarios);
-                        comando.Parameters.AddWithValue("@Nombre", nombre);
-                        comando.Parameters.AddWithValue("@ApellidoPaterno", apellidoPaterno);
-                        comando.Parameters.AddWithValue("@ApellidoMaterno", apellidoMaterno);
-                        comando.Parameters.AddWithValue("@Correo", correo);
-                        comando.Parameters.AddWithValue("@IdCarrera", idCarrera);
-                        comando.Parameters.AddWithValue("@IdGrupo", idGrupo.HasValue ? (object)idGrupo.Value : DBNull.Value);
-                        comando.Parameters.AddWithValue("@IdSemestre", idSemestre);
+                        ActualizarDatosBasicos(conexion, transaccion, idUsuarios, nombre, apellidoPaterno, apellidoMaterno, correo);
 
-                        int filasAfectadas = comando.ExecuteNonQuery();
-                        return filasAfectadas > 0;
+                        bool sinGrupo = Esquema.CarreraSinGrupo(conexion, transaccion);
+                        int filas;
+                        using (MySqlCommand contar = new MySqlCommand(
+                            "SELECT COUNT(*) FROM carrera_grupo_semestre WHERE usuarios_numero_identificador = @idUsuarios", conexion, transaccion))
+                        {
+                            contar.Parameters.AddWithValue("@idUsuarios", idUsuarios);
+                            filas = Convert.ToInt32(contar.ExecuteScalar());
+                        }
+
+                        string consulta = filas > 0
+                            ? "UPDATE carrera_grupo_semestre SET carreras_idcarreras = @IdCarrera, grupos_idgrupos = COALESCE(@IdGrupo, grupos_idgrupos), "
+                              + "semestres_idsemestres = " + (sinGrupo ? "@IdSemestre" : "COALESCE(@IdSemestre, semestres_idsemestres)")
+                              + " WHERE usuarios_numero_identificador = @idUsuarios"
+                            : sinGrupo
+                                ? "INSERT INTO carrera_grupo_semestre (usuarios_numero_identificador, carreras_idcarreras, grupos_idgrupos, semestres_idsemestres) "
+                                  + "VALUES (@idUsuarios, @IdCarrera, @IdGrupo, @IdSemestre)"
+                                : null;
+                        bool carreraPendiente = consulta == null;
+                        if (carreraPendiente)
+                        {
+                            // Sin fila y sin la 10: la carrera no se puede guardar (pediria grupo).
+                            Log.Aviso("Mi perfil de " + idUsuarios + ": no tiene fila de carrera y la base aun no admite alumnos sin grupo (falta db/10); se guarda lo demas.");
+                        }
+                        else
+                        {
+                            using (MySqlCommand comando = new MySqlCommand(consulta, conexion, transaccion))
+                            {
+                                comando.Parameters.AddWithValue("@idUsuarios", idUsuarios);
+                                comando.Parameters.AddWithValue("@IdCarrera", idCarrera);
+                                comando.Parameters.AddWithValue("@IdGrupo", idGrupo.HasValue ? (object)idGrupo.Value : DBNull.Value);
+                                comando.Parameters.AddWithValue("@IdSemestre", idSemestre > 0 ? (object)idSemestre : DBNull.Value);
+                                comando.ExecuteNonQuery();
+                            }
+                        }
+
+                        transaccion.Commit();
+                        if (carreraPendiente)
+                        {
+                            MessageBox.Show("Se guardaron tu nombre y tu correo, pero tu carrera todavía no se puede guardar. "
+                                + "Avisa a la persona responsable del laboratorio.", "Mi perfil", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        }
+
+                        return true;
+                    }
+                    catch
+                    {
+                        transaccion.Rollback();
+                        throw;
                     }
                 }
             }
+            catch (MySqlException ex) when (ex.Number == 1062)
+            {
+                MessageBox.Show("Ese correo ya lo usa otra cuenta. Escribe otro o déjalo vacío.", "Correo repetido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al actualizar los datos del usuario: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Log.Error("Mi perfil de " + idUsuarios, ex);
+                MessageBox.Show(MensajeDeFallo.Explicar("No se pudieron guardar tus datos", ex, MensajeDeFallo.AvisaAlLaboratorio),
+                    "Mi perfil", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return false;
             }
         }
@@ -958,27 +1104,42 @@ namespace DigBit.conexion
             {
                 using (MySqlConnection conexion = mconexion.GetConexion())
                 {
-                    string consulta = @"UPDATE usuarios
-                                    SET nombre = @Nombre, apellido_paterno = @ApellidoPaterno, apellido_materno = @ApellidoMaterno, correo = @Correo
-                                    WHERE idusuarios = @idUsuarios";
-
-                    using (MySqlCommand comando = new MySqlCommand(consulta, conexion))
-                    {
-                        comando.Parameters.AddWithValue("@idUsuarios", idUsuarios);
-                        comando.Parameters.AddWithValue("@Nombre", nombre);
-                        comando.Parameters.AddWithValue("@ApellidoPaterno", apellidoPaterno);
-                        comando.Parameters.AddWithValue("@ApellidoMaterno", apellidoMaterno);
-                        comando.Parameters.AddWithValue("@Correo", correo);
-
-                        int filasAfectadas = comando.ExecuteNonQuery();
-                        return filasAfectadas > 0;
-                    }
+                    ActualizarDatosBasicos(conexion, null, idUsuarios, nombre, apellidoPaterno, apellidoMaterno, correo);
+                    return true;
                 }
+            }
+            catch (MySqlException ex) when (ex.Number == 1062)
+            {
+                MessageBox.Show("Ese correo ya lo usa otra cuenta. Escribe otro o déjalo vacío.", "Correo repetido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al actualizar los datos del usuario: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Log.Error("Mi perfil de " + idUsuarios, ex);
+                MessageBox.Show(MensajeDeFallo.Explicar("No se pudieron guardar tus datos", ex, MensajeDeFallo.AvisaAlLaboratorio),
+                    "Mi perfil", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Nombre, apellidos y correo. El correo vacio va como NULL: en la base de
+        /// la escuela es UNICO, y con "" el segundo usuario sin correo chocaba con
+        /// el primero (lo mismo que UsuariosDatos).
+        /// </summary>
+        private static void ActualizarDatosBasicos(MySqlConnection conexion, MySqlTransaction transaccion, string idUsuarios,
+            string nombre, string apellidoPaterno, string apellidoMaterno, string correo)
+        {
+            using (MySqlCommand comando = new MySqlCommand(@"UPDATE usuarios
+                SET nombre = @Nombre, apellido_paterno = @ApellidoPaterno, apellido_materno = @ApellidoMaterno, correo = @Correo
+                WHERE idusuarios = @idUsuarios", conexion, transaccion))
+            {
+                comando.Parameters.AddWithValue("@idUsuarios", idUsuarios);
+                comando.Parameters.AddWithValue("@Nombre", (nombre ?? "").Trim());
+                comando.Parameters.AddWithValue("@ApellidoPaterno", (apellidoPaterno ?? "").Trim());
+                comando.Parameters.AddWithValue("@ApellidoMaterno", (apellidoMaterno ?? "").Trim());
+                comando.Parameters.AddWithValue("@Correo", string.IsNullOrWhiteSpace(correo) ? (object)DBNull.Value : correo.Trim());
+                comando.ExecuteNonQuery();
             }
         }
  
@@ -1000,15 +1161,15 @@ public int ObtenerIdPorMatricula(string matricula)
                         }
                         else
                         {
-                            throw new Exception("No se encontró el usuario con la matrícula especificada.");
+                            throw new Exception("No se encontró ninguna cuenta con esa matrícula.");
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                // Manejo de excepciones, puedes registrar el error o mostrar un mensaje al usuario
-                Console.WriteLine("Error al obtener el ID por matrícula: " + ex.Message);
+                // Al log (en un WinExe, Console.WriteLine no llega a ninguna parte); quien llama dice que paso.
+                Log.Error("Consultas.ObtenerIdPorMatricula de " + matricula, ex);
                 throw;
             }
         }
@@ -1057,8 +1218,8 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
             }
             catch (Exception ex)
             {
-                // Manejo de excepciones, puedes registrar el error o mostrar un mensaje al usuario
-                Console.WriteLine("Error al obtener el nombre del laboratorio por código: " + ex.Message);
+                // Al log (en un WinExe, Console.WriteLine no llega a ninguna parte); quien llama dice que paso.
+                Log.Error("Consultas.ObtenerNombreLaboratorioPorCodigo", ex);
                 throw;
             }
         }
@@ -1090,8 +1251,8 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
                             {
                                 var datosPdf = new Usuario
                                 {
-                                    HoraEntrada = reader["hora_entrada"].ToString(),
-                                    HoraSalida = reader["hora_salida"].ToString(),
+                                    HoraEntrada = HorariosDatos.HoraLegible(reader["hora_entrada"]),
+                                    HoraSalida = HorariosDatos.HoraLegible(reader["hora_salida"]),
                                     GruposId = reader["GrupoNombre"].ToString(), // Nombre del grupo
                                     MateriasId = reader["MateriaNombre"].ToString(), // Nombre de la materia
                                     HoraRegistro = DateTime.Parse(reader["hora_registro"].ToString()).ToString("yyyy-MM-dd")
@@ -1109,7 +1270,7 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
             }
             catch (Exception e)
             {
-                MessageBox.Show($"Error al encontrar los datos: {e.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer los datos del PDF del codigo " + codigoAcceso, "No se pudieron leer los datos de la sesión", e);
                 return null;
             }
         }
@@ -1154,7 +1315,7 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al obtener los codigos del profesor: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Leer los codigos de " + numeroIdentificador, "No se pudieron leer tus sesiones", ex);
             }
 
             return tablaResultado;
@@ -1219,8 +1380,8 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
             }
             catch (Exception ex)
             {
-                // Manejo de excepciones, puedes registrar el error o mostrar un mensaje al usuario
-                Console.WriteLine("Error al ejecutar la consulta: " + ex.Message);
+                // Al log (en un WinExe, Console.WriteLine no llega a ninguna parte); quien llama dice que paso.
+                Log.Error("Consultas.consultaRegistro", ex);
                 throw;
             }
 
@@ -1247,7 +1408,10 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
         {
             try
             {
+                // Dentro del try: este metodo no lanza (quien lo llama no atrapa nada).
+                Permisos.Exigir("Corregir un registro de bitacora");
                 using (MySqlConnection conexion = mconexion.GetConexion())
+                using (MySqlTransaction transaccion = conexion.BeginTransaction())
                 {
                     string consulta = @"
                 UPDATE registros_bitacoras
@@ -1270,7 +1434,7 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
                     AND IFNULL(comentarios_software, '') = @ComentarioSoftwareOriginal
                 LIMIT 1";
 
-                    using (MySqlCommand comando = new MySqlCommand(consulta, conexion))
+                    using (MySqlCommand comando = new MySqlCommand(consulta, conexion, transaccion))
                     {
                         comando.Parameters.AddWithValue("@NuevoNumeroComputadora", nuevoNumeroComputadora ?? string.Empty);
                         comando.Parameters.AddWithValue("@NuevaFallaRed", nuevaFallaRed ?? string.Empty);
@@ -1292,20 +1456,146 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
                         int filasAfectadas = comando.ExecuteNonQuery();
                         if (filasAfectadas > 0)
                         {
+                            // Quien, cuando y que decia antes (punto 9, db/21), en la misma
+                            // transaccion: sin su renglon no queda la correccion.
+                            AnotarCorreccion(conexion, transaccion, fkCodigoAcceso, fkUsuario,
+                                new[] { numeroOriginal, fallaRedOriginal, comentarioRedOriginal, fallaHardwareOriginal, comentarioHardwareOriginal,
+                                        fallaSoftwareOriginal, comentarioSoftwareOriginal },
+                                new[] { nuevoNumeroComputadora, nuevaFallaRed, nuevoComentarioRed, nuevaFallaHardware, nuevoComentarioHardware,
+                                        nuevaFallaSoftware, nuevoComentarioSoftware });
+                            transaccion.Commit();
                             // Sin mensaje: la pantalla de Bitacoras lo confirma en su linea de estado.
                             return true;
                         }
 
-                        MessageBox.Show("No se pudo actualizar la bitacora. Intenta recargar la lista y vuelve a intentarlo.", "Informacion", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        // El UPDATE pide que el registro siga como se leyo: otro lo cambio antes.
+                        Log.Aviso("Correccion de bitacora no guardada: el registro del usuario " + fkUsuario + " en la sesion "
+                            + fkCodigoAcceso + " cambio desde que se leyo (o ya no existe).");
+                        MessageBox.Show("No se guardó la corrección: el registro cambió desde que lo abriste. Actualiza la lista (F5) y vuelve a corregirlo.",
+                            "Corregir registro", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return false;
                     }
                 }
             }
-            catch (Exception ex)
+            catch (AccionNoPermitida ex)
             {
-                MessageBox.Show($"Error al actualizar la bitacora: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                // Solo consulta: lo mismo que ensena Permisos.Bloquear en las pantallas.
+                MessageBox.Show(ex.Message, "Solo consulta", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return false;
             }
+            catch (Exception ex)
+            {
+                // La causa y que hacer; ex.Message solo va al registro. Con AvisoDeFalloAdmin,
+                // como el resto de Bitacoras: la red solo se culpa cuando no se llego al
+                // servidor (una cuenta de la base rechazada o un permiso no son el cable).
+                Log.Error("Corregir el registro del usuario " + fkUsuario + " en la sesion " + fkCodigoAcceso, ex);
+                MessageBox.Show(AvisoDeFalloAdmin.Texto("No se pudo guardar la corrección", ex),
+                    "Corregir registro", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return false;
+            }
+        }
+
+        // Los campos que se corrigen, en el orden de ActualizarRegistroBitacora.
+        private static readonly string[] CamposDeCorreccion =
+        {
+            "Equipo", "Falla de red", "Comentario de red", "Falla de hardware", "Comentario de hardware", "Falla de software", "Comentario de software"
+        };
+
+        /// <summary>
+        /// El renglon del historial (db/21) de una bitacora corregida: de quien es,
+        /// de que sesion y solo los campos que cambiaron, antes y despues. Sin
+        /// db/21, nada.
+        /// </summary>
+        private static void AnotarCorreccion(MySqlConnection conexion, MySqlTransaction transaccion, string fkCodigoAcceso, string fkUsuario,
+            string[] antes, string[] despues)
+        {
+            if (!HistorialCambios.Activo(conexion, transaccion))
+            {
+                return;
+            }
+
+            List<string> previos = new List<string>();
+            List<string> nuevos = new List<string>();
+            List<string> cambia = new List<string>();
+            for (int i = 0; i < CamposDeCorreccion.Length; i++)
+            {
+                string a = (antes[i] ?? "").Trim();
+                string d = (despues[i] ?? "").Trim();
+                if (a == d)
+                {
+                    continue;
+                }
+
+                cambia.Add(HistorialCambios.ConArticulo(CamposDeCorreccion[i]));
+                previos.AddRange(new[] { CamposDeCorreccion[i], a.Length == 0 ? "(vacío)" : a });
+                nuevos.AddRange(new[] { CamposDeCorreccion[i], d.Length == 0 ? "(vacío)" : d });
+            }
+
+            if (cambia.Count == 0)
+            {
+                return;
+            }
+
+            int? idRegistro = null;
+            int? idLaboratorio = null;
+            DateTime? dia = null;
+            string alumno = "";
+            string sesion = "";
+            using (MySqlCommand comando = new MySqlCommand(@"
+                SELECT rb.idregistros_bitacoras, u.numero_identificador,
+                       CONCAT_WS(' ', u.nombre, u.apellido_paterno, u.apellido_materno) AS alumno,
+                       ca.laboratorios_idlaboratorios AS lab_id, DATE_FORMAT(COALESCE(ca.fecha, DATE(ca.hora_registro)), '%Y-%m-%d') AS dia,
+                       ca.hora_entrada, ca.hora_salida, COALESCE(m.nombre_materia, '') AS materia, COALESCE(g.nombre_grupo, '') AS grupo,
+                       COALESCE(l.nombre_laboratorio, '') AS laboratorio
+                FROM registros_bitacoras rb
+                INNER JOIN usuarios u         ON u.idusuarios = rb.fk_usuario
+                INNER JOIN codigos_accesos ca ON ca.idcodigos_accesos = rb.fk_codigo_accesos
+                LEFT JOIN materias m          ON m.id_materia = ca.materias_id_materia
+                LEFT JOIN grupos g            ON g.idgrupos = ca.grupos_idgrupos
+                LEFT JOIN laboratorios l      ON l.idlaboratorios = ca.laboratorios_idlaboratorios
+                WHERE rb.fk_codigo_accesos = @Sesion AND rb.fk_usuario = @Usuario
+                LIMIT 1", conexion, transaccion))
+            {
+                comando.Parameters.AddWithValue("@Sesion", fkCodigoAcceso);
+                comando.Parameters.AddWithValue("@Usuario", fkUsuario);
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        idRegistro = Convert.ToInt32(reader["idregistros_bitacoras"]);
+                        idLaboratorio = reader["lab_id"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["lab_id"]);
+                        DateTime fecha;
+                        if (DateTime.TryParseExact(Convert.ToString(reader["dia"]), "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.None, out fecha))
+                        {
+                            dia = fecha;
+                        }
+
+                        alumno = (Convert.ToString(reader["alumno"]) ?? "").Trim() + " (" + Convert.ToString(reader["numero_identificador"]) + ")";
+                        string entrada = HorariosDatos.HoraLegible(reader["hora_entrada"]);
+                        string salida = HorariosDatos.HoraLegible(reader["hora_salida"]);
+                        string materia = Convert.ToString(reader["materia"]);
+                        string laboratorio = Convert.ToString(reader["laboratorio"]);
+                        sesion = " en la sesión" + (dia.HasValue ? " del " + HistorialCambios.DiaYFecha(dia.Value) : "")
+                            + (entrada.Length > 0 && salida.Length > 0 ? " de " + entrada + " a " + salida : "")
+                            + (materia.Length > 0 ? ", " + materia + " - " + Convert.ToString(reader["grupo"]) : ", uso libre")
+                            + (laboratorio.Length > 0 ? ", " + laboratorio : "");
+                    }
+                }
+            }
+
+            HistorialCambios.Anotar(conexion, transaccion, new CambioPorAnotar
+            {
+                Tipo = TipoDeCambio.Bitacora,
+                Accion = AccionDeCambio.Cambio,
+                Tabla = "registros_bitacoras",
+                RegistroId = idRegistro,
+                LaboratorioId = idLaboratorio,
+                Fecha = dia,
+                Descripcion = (alumno.Length > 0 ? alumno : "Estudiante " + fkUsuario) + sesion + ": cambia " + HistorialCambios.Enumerar(cambia) + ".",
+                Antes = HistorialCambios.Datos(previos.ToArray()),
+                Despues = HistorialCambios.Datos(nuevos.ToArray())
+            });
         }
 
 
@@ -1324,7 +1614,7 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
 
                 if (ventana.Estado != EstadoCodigo.Vigente)
                 {
-                    MessageBox.Show("El código ya no está vigente (válido hasta las " + ventana.Fin.ToString("HH:mm") + "). Pídele uno nuevo a tu profesor.", "Código expirado", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show("El código ya no está vigente (válido hasta las " + ventana.Fin.ToString("HH:mm") + "). Pídele uno nuevo a tu docente.", "Código expirado", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return false;
                 }
 
@@ -1367,10 +1657,10 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
 
 
                     // Insertar en la tabla registros_bitacoras, pero solo si ese
-                    // alumno no tiene ya una con este codigo. La base del TESCHI no
-                    // puede llevar el UNIQUE (fk_codigo_accesos, fk_usuario): trae
-                    // duplicados historicos que no se borran. Asi que la regla la
-                    // hace cumplir la propia insercion, y 0 filas significa
+                    // alumno no tiene ya una con este codigo. Una base con
+                    // duplicados viejos (la base vieja de la escuela) no lleva el
+                    // UNIQUE (fk_codigo_accesos, fk_usuario) de la 03. Asi que la
+                    // regla la hace cumplir la propia insercion, y 0 filas significa
                     // "ya estaba". El catch del 1062 se queda para las bases que si
                     // tienen el UNIQUE.
                     string consultaInsertar = @"
@@ -1401,7 +1691,7 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
                             return false;
                         }
                         else {
-                            MessageBox.Show($" Se inserto de manera exitosa el registro", "Exito", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            MessageBox.Show("Tu bitácora quedó registrada.", "Bitácora registrada", MessageBoxButtons.OK, MessageBoxIcon.Information);
                             return true;
 
                         }
@@ -1417,8 +1707,7 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
             }
             catch (Exception ex)
             {
-                // Manejo de excepciones, puedes registrar el error o mostrar un mensaje al usuario
-                MessageBox.Show($"Error al insertar el registro en la bitacora: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Guardar la bitacora (consultaFinal) de " + matricula, "No se pudo guardar tu bitácora", ex);
                 return false;
             }
         }
@@ -1440,7 +1729,8 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
                         }
                         else
                         {
-                            MessageBox.Show("Matrícula no encontrada", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            MessageBox.Show("Tu matrícula no está registrada en el servidor. Avisa a la persona responsable del laboratorio.",
+                                "Matrícula no encontrada", MessageBoxButtons.OK, MessageBoxIcon.Error);
                             return null;
                         }
                     }
@@ -1448,7 +1738,7 @@ public string ObtenerNombreLaboratorioPorCodigo(string codigoLaboratorio)
             }
             catch (Exception e)
             {
-                MessageBox.Show($"Error al buscar la matrícula: {e.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AvisarFallo("Buscar la matricula " + matricula, "No se pudo buscar la matrícula", e);
                 return null;
             }
         }

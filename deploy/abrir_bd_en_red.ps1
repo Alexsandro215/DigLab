@@ -193,7 +193,7 @@ if ($ips.Count -gt 1) {
 }
 if ($usarMinimos) {
     Write-Host ''
-    Write-Host 'Para el equipo del administrador, el mismo Server pero:' -ForegroundColor Green
+    Write-Host 'Para el equipo de la administracion, el mismo Server pero:' -ForegroundColor Green
     Write-Host "   User Id=digbit_admin  y su contrasena" -ForegroundColor Yellow
 }
 Write-Host ''

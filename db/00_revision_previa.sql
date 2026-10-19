@@ -1,8 +1,8 @@
 -- =============================================================================
 -- DigBit 2.0 - Revision previa a las migraciones
 -- =============================================================================
--- NO CAMBIA NADA. Solo mira y dictamina. Ejecutalo ANTES de 03, 04, 05 y 06
--- sobre la base real del TESCHI, y no sigas si alguna fila dice BLOQUEA.
+-- NO CAMBIA NADA. Solo mira y dictamina. Ejecutalo ANTES de las migraciones
+-- (03 a 21) sobre la base real del TESCHI, y no sigas si alguna fila dice BLOQUEA.
 --
 -- Existe porque las migraciones tocan datos reales de alumnos y MySQL no hace
 -- DDL transaccional: si una falla a la mitad, la tabla se queda en un estado
@@ -18,6 +18,41 @@
 -- =============================================================================
 
 USE teschi_otru;
+
+-- Lo que vive en tablas que a lo mejor no existen se averigua antes, aparte:
+-- una consulta que nombra una tabla que no existe falla entera, aunque esa rama
+-- no se llegue a evaluar. tipo_usuarios no esta en las bases de 01_schema y
+-- configuracion no llega hasta la 13. Las cuentas de MySQL de los demas solo
+-- las ve root (igual que en db/15).
+SET @hay_catalogo := (SELECT COUNT(*) FROM information_schema.TABLES
+                      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tipo_usuarios') > 0;
+SET @tipo3 := 0;
+SET @tipo4 := 0;
+SET @sql := IF(@hay_catalogo,
+    'SELECT IFNULL(SUM(idtipo_usuarios = 3), 0), IFNULL(SUM(idtipo_usuarios = 4), 0) INTO @tipo3, @tipo4 FROM tipo_usuarios',
+    'SELECT 0, 0 INTO @tipo3, @tipo4');
+PREPARE ejecutar FROM @sql; EXECUTE ejecutar; DEALLOCATE PREPARE ejecutar;
+
+-- La 18 (encargados de laboratorio): su cuenta de MySQL y su contrasena.
+SET @yo := CONCAT('''', SUBSTRING_INDEX(CURRENT_USER(), '@', 1), '''@''', SUBSTRING_INDEX(CURRENT_USER(), '@', -1), '''');
+SET @ve_cuentas := (SELECT COUNT(*) FROM information_schema.USER_PRIVILEGES WHERE GRANTEE <> @yo) > 0;
+SET @hay_consulta := (SELECT COUNT(*) FROM information_schema.USER_PRIVILEGES
+                      WHERE GRANTEE LIKE '''digbit\_consulta''@%') > 0;
+SET @hay_ajustes := (SELECT COUNT(*) FROM information_schema.TABLES
+                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'configuracion') > 0;
+SET @clave_consulta := 0;
+SET @sql := IF(@hay_ajustes,
+    'SELECT COUNT(*) INTO @clave_consulta FROM configuracion WHERE clave = ''consulta_clave'' AND valor <> ''''',
+    'SELECT 0 INTO @clave_consulta');
+PREPARE ejecutar FROM @sql; EXECUTE ejecutar; DEALLOCATE PREPARE ejecutar;
+
+-- La 20 (vigencia de cada franja): si ya se encendio en Ajustes que los cambios
+-- de horario apliquen desde una fecha (configuracion.franjas_con_fecha = '1').
+SET @con_fecha := 0;
+SET @sql := IF(@hay_ajustes,
+    'SELECT COUNT(*) INTO @con_fecha FROM configuracion WHERE clave = ''franjas_con_fecha'' AND valor = ''1''',
+    'SELECT 0 INTO @con_fecha');
+PREPARE ejecutar FROM @sql; EXECUTE ejecutar; DEALLOCATE PREPARE ejecutar;
 
 SELECT '=== QUE HAY AHORA ===' AS comprobacion, '' AS resultado, '' AS veredicto
 UNION ALL SELECT
@@ -116,12 +151,12 @@ UNION ALL SELECT
     'info'
 UNION ALL SELECT
     'Tabla tipo_usuarios',
-    IF((SELECT COUNT(*) FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tipo_usuarios') = 0,
+    IF(NOT @hay_catalogo,
        'no existe',
        CONCAT('existe; tipo 3 ',
-              IF((SELECT COUNT(*) FROM tipo_usuarios WHERE idtipo_usuarios = 3) > 0,
-                 'ya esta', 'falta (la 04 lo crea antes que al administrador)'))),
+              IF(@tipo3 > 0, 'ya esta', 'falta (la 04 lo crea antes que al administrador)'),
+              '; tipo 4 ',
+              IF(@tipo4 > 0, 'ya esta', 'falta (la 18 lo crea; sin el no se dan de alta encargados de laboratorio)'))),
     'info'
 UNION ALL SELECT
     'Claves foraneas que apuntan a codigos_accesos.codigo',
@@ -156,6 +191,99 @@ UNION ALL SELECT
        -- Sin contar clases: antes de la 04 la tabla no existe y esta revision
        -- se pasa tambien entonces.
        'ya esta', 'falta (la 09 deja a cada profesor el codigo de su clase con mas sesiones)'),
+    'info'
+UNION ALL SELECT
+    'Equipos sin internet y hora de llegada (registros_bitacoras)',
+    IF((SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'registros_bitacoras'
+          AND COLUMN_NAME IN ('equipos_sin_internet', 'recibido_en')) = 2,
+       'ya estan', 'faltan (la 10 las anade; copia la tabla de bitacoras: fuera de clase)'),
+    'info'
+UNION ALL SELECT
+    'Alta de alumnos desde el laboratorio (fk_tipo_usuario por defecto)',
+    IFNULL((SELECT CONCAT('por defecto ', COLUMN_DEFAULT,
+                          IF(COLUMN_DEFAULT = '1', ' (ya esta)', ' (la 10 lo pone en 1)'))
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'usuarios' AND COLUMN_NAME = 'fk_tipo_usuario'
+              AND COLUMN_DEFAULT IS NOT NULL),
+           'sin valor por defecto (la 10 lo pone en 1)'),
+    'info'
+UNION ALL SELECT
+    'Alumno sin grupo (carrera_grupo_semestre)',
+    IF((SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'carrera_grupo_semestre'
+          AND COLUMN_NAME IN ('grupos_idgrupos', 'semestres_idsemestres') AND IS_NULLABLE = 'NO') = 0,
+       'ya se admite', 'grupo y semestre obligatorios: no se puede dar de alta a ningun alumno (la 10 los hace opcionales)'),
+    'info'
+UNION ALL SELECT
+    'Modo de acceso a las clases (laboratorios.modo_codigo)',
+    IF((SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laboratorios' AND COLUMN_NAME = 'modo_codigo') > 0,
+       'ya esta', 'falta (la 11 la anade con todos los laboratorios en codigo fijo)'),
+    'info'
+UNION ALL SELECT
+    'Una sesion por clase y dia (UNIQUE de codigos_accesos)',
+    IF((SELECT COUNT(*) FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'codigos_accesos' AND NON_UNIQUE = 0
+          AND SEQ_IN_INDEX = 1 AND COLUMN_NAME IN ('horarios_idhorarios', 'horario_excepciones_id')) >= 2,
+       'ok', 'AVISO: falta uno; sin el no actives la generacion de codigos'),
+    'info'
+UNION ALL SELECT
+    'Color de cada profesor (usuarios.color_horario)',
+    IF((SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'usuarios' AND COLUMN_NAME = 'color_horario') > 0,
+       'ya esta', 'falta (la 12 la anade con todos en automatico; copia la tabla usuarios: fuera de clase)'),
+    'info'
+UNION ALL SELECT
+    'Recuperar la contrasena por correo (recuperacion_contrasena y configuracion)',
+    IF((SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('recuperacion_contrasena', 'configuracion')) = 2,
+       'ya esta', 'falta (la 13 crea las dos tablas; no toca nada mas)'),
+    'info'
+UNION ALL SELECT
+    'Uso libre: sesiones sin clase (codigos_accesos sin profesor, materia ni grupo)',
+    IF((SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'codigos_accesos' AND IS_NULLABLE = 'YES'
+          AND COLUMN_NAME IN ('usuarios_idusuarios', 'materias_id_materia', 'grupos_idgrupos')) = 3,
+       'ya esta',
+       CONCAT('falta (la 14 los deja opcionales',
+              IF((SELECT COUNT(*) FROM information_schema.STATISTICS
+                  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'codigos_accesos' AND INDEX_NAME = 'PRIMARY') > 1,
+                 ' y deja la clave primaria solo en idcodigos_accesos', ''),
+              '; copia la tabla de sesiones: fuera de clase)')),
+    'info'
+UNION ALL SELECT
+    'Encargados de laboratorio: cuenta de solo lectura (digbit_consulta)',
+    IF(@hay_consulta, 'ya existe',
+       IF(@ve_cuentas, 'falta (la 18 la crea, con root; sin ella los encargados no pueden entrar)',
+          'no se sabe: este usuario no ve las cuentas de MySQL (ejecuta esta revision con root)')),
+    'info'
+UNION ALL SELECT
+    'Encargados de laboratorio: su contrasena en configuracion (consulta_clave)',
+    IF(NOT @hay_ajustes, 'falta (primero la 13, que crea configuracion; luego la 18, con root)',
+       IF(@clave_consulta > 0, 'ya esta', 'falta (la 18 la guarda al crear la cuenta, con root)')),
+    'info'
+UNION ALL SELECT
+    'Personalizacion de las clases (personalizacion_clases)',
+    IF((SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'personalizacion_clases') > 0,
+       'ya esta', 'falta (la 19 crea la tabla; no toca nada mas: se puede aplicar en horario de clase)'),
+    'info'
+UNION ALL SELECT
+    'Vigencia propia de cada franja (horarios.vigente_desde / vigente_hasta)',
+    IF((SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'horarios'
+          AND COLUMN_NAME IN ('vigente_desde', 'vigente_hasta')) = 2,
+       IF(@con_fecha > 0, 'ya esta; los cambios de horario ya aplican desde una fecha (Ajustes)',
+          'ya esta; en Ajustes sigue apagado que los cambios de horario apliquen desde una fecha'),
+       'falta (la 20 anade dos columnas vacias a horarios, tabla pequena: no cambia nada hasta encenderlo en Ajustes, despues de actualizar TODOS los equipos)'),
+    'info'
+UNION ALL SELECT
+    'Historial de cambios (historial_cambios)',
+    IF((SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'historial_cambios') > 0,
+       'ya esta',
+       'falta (la 21 crea la tabla; no toca nada mas: se puede aplicar en horario de clase; con root, ademas deja leerla a digbit_consulta)'),
     'info'
 UNION ALL SELECT
     'Contrasenas: PBKDF2 / MD5 / total',

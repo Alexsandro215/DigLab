@@ -1,5 +1,6 @@
 ﻿using MySql.Data.MySqlClient;
 using DigBit.conexion;
+using DigBit.Infraestructura;
 using System;
 using System.Runtime.Remoting.Messaging;
 using System.Security.Cryptography;
@@ -49,14 +50,18 @@ namespace DigBit
                     }
                     else
                     {
-                        MessageBox.Show("Error al conectar a la base de datos", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBox.Show(MensajeDeFallo.SinConexion("No se pudo registrar la cuenta", MensajeDeFallo.AvisaALaAdministracion),
+                            "DigBit", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         return false; // Error al conectar a la base de datos
                     }
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al intentar registrar el usuario: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                // La causa y que hacer; el detalle tecnico, al registro.
+                Log.Error("Registrar la cuenta " + matricula, ex);
+                MessageBox.Show(MensajeDeFallo.Explicar("No se pudo registrar la cuenta", ex, MensajeDeFallo.AvisaALaAdministracion),
+                    "DigBit", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return false; // Error durante la inserción
             }
         }

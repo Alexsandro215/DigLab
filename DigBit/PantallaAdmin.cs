@@ -8,16 +8,19 @@ using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using DigBit.conexion;
 using DigBit.Infraestructura;
+using MySql.Data.MySqlClient;
 using DrawingFont = System.Drawing.Font;
 using Timer = System.Windows.Forms.Timer;
 
 namespace DigBit
 {
     /// <summary>
-    /// Lo comun a las pantallas de lista del administrador (Alumnos, Profesores y
-    /// Laboratorios): titulo, boton principal arriba a la derecha, la lista, dos
-    /// lineas de estado abajo a la izquierda y los botones de accion abajo a la
-    /// derecha. Cada pantalla pone sus filtros, sus columnas y sus acciones.
+    /// Lo comun a las pantallas de lista del administrador (Alumnos, Profesores,
+    /// Laboratorios y Encargados de laboratorio): titulo, boton principal arriba
+    /// a la derecha, la lista, dos lineas de estado abajo a la izquierda y los
+    /// botones de accion abajo a la derecha. Cada pantalla pone sus filtros, sus
+    /// columnas y sus acciones. En solo consulta (Permisos) la barra de titulo lo
+    /// dice, y cada pantalla no crea los botones que escriben.
     /// </summary>
     public abstract class PantallaAdmin : Form
     {
@@ -37,13 +40,19 @@ namespace DigBit
         protected PantallaAdmin(string titulo, string subtitulo, Size tamano)
         {
             BackColor = Color.White;
-            ClientSize = tamano;
-            MinimumSize = new Size(Math.Min(1000, tamano.Width), 560);
             FormBorderStyle = FormBorderStyle.Sizable;
+            // Sin pasarse del area de trabajo de la pantalla (sin la barra de tareas):
+            // a 1366x768 Bitacoras (780 px de alto) dejaba sus botones de abajo
+            // tapados hasta maximizarla. La lista y los botones se acomodan solos.
+            Rectangle area = Screen.FromPoint(Cursor.Position).WorkingArea;
+            Size marco = SizeFromClientSize(Size.Empty);
+            ClientSize = new Size(Math.Min(tamano.Width, area.Width - marco.Width), Math.Min(tamano.Height, area.Height - marco.Height));
+            MinimumSize = new Size(Math.Min(1000, tamano.Width), 560);
             MaximizeBox = true;
             MinimizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
-            Text = titulo;
+            // Solo la barra de titulo ("Alumnos (solo consulta)"); el titulo grande no cambia.
+            Text = titulo + (Permisos.SoloConsulta ? " (solo consulta)" : "");
 
             Controls.Add(new Label
             {
@@ -211,10 +220,17 @@ namespace DigBit
             }
         }
 
+        /// <summary>
+        /// mensaje es "No se pudo ..." sin punto: se le anade la causa y que hacer
+        /// (MensajeDeFallo); el texto tecnico solo va al log. Quien solo consulta
+        /// avisa a la administracion; la administracion tiene el detalle en su log.
+        /// </summary>
         protected void MostrarError(string contexto, Exception ex, string mensaje)
         {
             Log.Error(contexto, ex);
-            MessageBox.Show(this, mensaje + ": " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, MensajeDeFallo.Explicar(mensaje, ex,
+                    Permisos.SoloConsulta ? MensajeDeFallo.AvisaALaAdministracion : MensajeDeFallo.RevisaElRegistro),
+                Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
 
         // ---------------------------------------------------------------------
@@ -393,9 +409,10 @@ namespace DigBit
             return string.Join(", ", partes.Take(partes.Count - 1)) + " y " + partes[partes.Count - 1];
         }
 
+        /// <summary>"13/07/2026" siempre con "/": sin cultura fija el separador saldria de la configuracion de Windows.</summary>
         public static string Fecha(DateTime? fecha)
         {
-            return fecha.HasValue ? fecha.Value.ToString("dd/MM/yyyy") : "—";
+            return fecha.HasValue ? fecha.Value.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) : "—";
         }
 
         public static string Guion(string texto)
@@ -405,19 +422,26 @@ namespace DigBit
     }
 
     /// <summary>
-    /// Alta y edicion de un alumno o un profesor. Cada campo con su etiqueta
-    /// encima y los errores dentro del propio dialogo. Al alumno se le pide su
-    /// carrera (y el semestre, si se quiere); al profesor, su codigo de clase:
-    /// uno para todas sus clases (db/09_codigo_por_profesor.sql).
+    /// Alta y edicion de un alumno, un profesor o un encargado de laboratorio.
+    /// Cada campo con su etiqueta encima y los errores dentro del propio dialogo.
+    /// Al alumno se le pide su carrera (y el semestre, si se quiere); al
+    /// profesor, su codigo de clase: uno para todas sus clases
+    /// (db/09_codigo_por_profesor.sql); al encargado, solo lo comun. Tambien es
+    /// el "Crear cuenta" del inicio de sesion (CrearCuenta), con los mismos datos.
     /// </summary>
     internal class DialogoUsuario : Form
     {
         // La misma regla que el inicio de sesion (Login.cs): si no, se daria de
         // alta a alguien que despues no puede entrar.
         private static readonly Regex IdentificadorValido = new Regex("^[A-Za-z0-9]+$");
-        private static readonly Regex CorreoValido = new Regex(@"^[^@\s]+@[^@\s]+\.[^@\s]+$");
+        // "Crear cuenta": solo matriculas de alumno, que en el TESCHI son 10
+        // cifras (las de 26 de los 30 alumnos de la base, 2026-10-04). Asi nadie
+        // aparta desde el laboratorio un numero de empleado (TREJON) o un texto.
+        private static readonly Regex MatriculaDeAlumno = new Regex("^[0-9]{10}$");
         // El codigo lo teclea el alumno en el laboratorio: letras y numeros.
         private static readonly Regex CodigoValido = new Regex("^[A-Za-z0-9]{3,16}$");
+        // La nota de servicio social del encargado, debajo de la primera fila (dos lineas).
+        private const int AltoNotaServicioSocial = 40;
 
         private readonly UsuariosDatos datos;
         private readonly ProfesoresDatos datosProfesores;
@@ -427,6 +451,21 @@ namespace DigBit
         private readonly string nombreIdentificador;
         private readonly bool conCodigo;
         private readonly string codigoOriginal;
+        // El propio alumno, desde el inicio de sesion: otros textos y, al crearla,
+        // la contrasena para entrar sin volver a escribirla.
+        private readonly bool autoregistro;
+        private string contrasenaNueva;
+        // Crear cuenta con la recuperacion por correo activada: sin correo, se le
+        // dice que no podra recuperar su contrasena el solo (la linea naranja).
+        private readonly bool avisoSinCorreo;
+        private const int AltoAvisoCorreo = 18;
+        private Label lblSinCorreo;
+        // Crear cuenta con el aviso de privacidad del TESCHI en Ajustes (RNF72): el
+        // aviso con desplazamiento y la casilla obligatoria que habilita el boton.
+        private readonly AvisoDePrivacidad avisoPrivacidad = AvisoDePrivacidad.Ninguno;
+        private const int AltoAvisoPrivacidad = 158;
+        private CheckBox chkAvisoLeido;
+        private Button btnGuardar;
 
         private TextBox txtIdentificador;
         private TextBox txtCorreo;
@@ -437,6 +476,9 @@ namespace DigBit
         private ComboBox cboSemestre;
         private TextBox txtCodigo;
         private Label lblAvisoCodigo;
+        // Solo profesores: el color de sus clases (db/12).
+        private SelectorColorProfesor selectorColor;
+        private readonly ToolTip ayuda = new ToolTip();
         private TextBox txtContrasena;
         private TextBox txtConfirmar;
         private Label lblError;
@@ -446,11 +488,23 @@ namespace DigBit
         /// filtrando en la lista (0 = ninguna).
         /// </summary>
         public DialogoUsuario(UsuariosDatos datos, UsuarioInfo existente, int carreraInicial)
+            : this(datos, existente, carreraInicial, false)
+        {
+        }
+
+        private DialogoUsuario(UsuariosDatos datos, UsuarioInfo existente, int carreraInicial, bool autoregistro)
         {
             this.datos = datos;
             this.datosProfesores = datos as ProfesoresDatos;
             this.existente = existente;
             this.carreraInicial = carreraInicial;
+            this.autoregistro = autoregistro;
+            avisoSinCorreo = autoregistro && RecuperacionActiva();
+            if (autoregistro)
+            {
+                avisoPrivacidad = AvisoDePrivacidad.Leer();
+            }
+
             nombreIdentificador = EsAlumno ? "matrícula" : "número de empleado";
             conCodigo = datosProfesores != null && datosProfesores.CodigoPorProfesor;
             ProfesorInfo profesor = existente as ProfesorInfo;
@@ -472,12 +526,47 @@ namespace DigBit
             ActiveControl = EsNuevo ? (Control)txtIdentificador : txtNombre;
         }
 
+        /// <summary>
+        /// "Crear cuenta" del inicio de sesion: el alumno se da de alta con los
+        /// mismos datos que le pide el administrador (sin grupo: el codigo es del
+        /// profesor). Si la crea, devuelve su matricula y su contrasena para
+        /// entrar directamente.
+        /// </summary>
+        public static bool CrearCuenta(IWin32Window dueno, out string matricula, out string contrasena)
+        {
+            using (DialogoUsuario dialogo = new DialogoUsuario(new AlumnosDatos(), null, 0, true))
+            {
+                bool creada = dialogo.ShowDialog(dueno) == DialogResult.OK;
+                matricula = creada ? dialogo.IdentificadorGuardado : null;
+                contrasena = creada ? dialogo.contrasenaNueva : null;
+                return creada;
+            }
+        }
+
         public string IdentificadorGuardado { get; private set; }
 
         public string NombreGuardado { get; private set; }
 
-        /// <summary>El codigo guardado del profesor (vacio para alumnos o sin la migracion 09).</summary>
+        /// <summary>El codigo guardado del profesor (vacio para alumnos y encargados, o sin la migracion 09).</summary>
         public string CodigoGuardado { get; private set; }
+
+        /// <summary>True si al guardar cambio el color del profesor.</summary>
+        public bool ColorCambiado { get; private set; }
+
+        private bool EsProfesor
+        {
+            get { return datosProfesores != null; }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                ayuda.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
 
         private bool EsNuevo
         {
@@ -489,20 +578,91 @@ namespace DigBit
             get { return datos is AlumnosDatos; }
         }
 
+        /// <summary>Encargado de laboratorio (db/18): sin carrera, codigo ni color.</summary>
+        private bool EsEncargado
+        {
+            get { return datos is EncargadosDatos; }
+        }
+
+        /// <summary>"Crear cuenta" con aviso de privacidad: se ensena y hay que marcar que se leyo.</summary>
+        private bool ConAvisoPrivacidad
+        {
+            get { return autoregistro && avisoPrivacidad.HayTexto; }
+        }
+
         private void InicializarComponentes()
         {
-            string quien = EsAlumno ? "alumno" : "profesor";
-            int alto = 330 + (EsAlumno ? 62 : conCodigo ? 84 : 0) + (EsNuevo ? 70 : 0);
-            EstiloHorarios.PrepararDialogo(this, (EsNuevo ? "Nuevo " : "Editar ") + quien, new Size(640, alto));
-            Controls.Add(EstiloAdmin.TituloDialogo(EsNuevo ? "Nuevo " + quien : "Editar a " + existente.NombreCompleto, 592));
+            string quien = EsAlumno ? "estudiante" : EsEncargado ? "responsable de laboratorio" : "docente";
+            // Los campos de contrasena estan tambien al editar (opcionales): 70.
+            int alto = 330 + (EsAlumno ? 62 : conCodigo ? 84 : 0) + 70 + (autoregistro ? 26 : 0)
+                + (avisoSinCorreo ? AltoAvisoCorreo : 0)
+                + (ConAvisoPrivacidad ? AltoAvisoPrivacidad : 0)
+                + (EsProfesor ? SelectorColorProfesor.Alto + 6 : 0)
+                + (EsEncargado ? AltoNotaServicioSocial : 0);
+            EstiloHorarios.PrepararDialogo(this, autoregistro ? "Crear cuenta" : (EsNuevo ? "Registrar " : "Editar ") + quien, new Size(640, alto));
+            Controls.Add(EstiloAdmin.TituloDialogo(autoregistro ? "Crea tu cuenta"
+                : EsNuevo ? "Registrar " + quien : "Editar a " + existente.NombreCompleto, 592));
 
             int y = 60;
+            if (autoregistro)
+            {
+                // Encima de la pantalla del kiosco, que esta siempre al frente.
+                TopMost = Kiosco.Activo;
+                Controls.Add(new Label
+                {
+                    AutoSize = false,
+                    Font = new DrawingFont("Century Gothic", 9.5F),
+                    ForeColor = Color.FromArgb(70, 70, 70),
+                    Location = new Point(24, 50),
+                    Size = new Size(592, 22),
+                    Text = "Con tu matrícula y tu contraseña entrarás en cualquier equipo del laboratorio."
+                });
+                y += 26;
+            }
+
             txtIdentificador = Campo(char.ToUpper(nombreIdentificador[0]) + nombreIdentificador.Substring(1) + " *", 24, y, 180);
-            txtIdentificador.MaxLength = 30;
-            txtCorreo = Campo("Correo", 224, y, 392);
-            txtCorreo.MaxLength = 120;
+            txtIdentificador.MaxLength = autoregistro ? 10 : 30;
+            // Con el se recupera la contrasena desde el inicio de sesion (un codigo por correo).
+            txtCorreo = Campo(autoregistro ? "Correo (para recuperar tu contraseña)" : "Correo (para recuperar su contraseña)", 224, y, 392);
+            // En la base de la escuela correo es VARCHAR(45): uno mas largo se
+            // guardaria cortado sin avisar.
+            txtCorreo.MaxLength = 45;
 
             y += 62;
+            if (avisoSinCorreo)
+            {
+                // Debajo del correo, mientras este vacio: es opcional, pero sin el la
+                // contrasena olvidada solo la puede cambiar el administrador.
+                lblSinCorreo = new Label
+                {
+                    AutoSize = false,
+                    Font = new DrawingFont("Century Gothic", 9F, FontStyle.Bold),
+                    ForeColor = Color.FromArgb(190, 85, 0),
+                    Location = new Point(224, y - 11),
+                    Size = new Size(392, AltoAvisoCorreo),
+                    Text = "Sin correo no podrás recuperar tu contraseña por tu cuenta."
+                };
+                Controls.Add(lblSinCorreo);
+                txtCorreo.TextChanged += (s, e) => lblSinCorreo.Visible = txtCorreo.Text.Trim().Length == 0;
+                y += AltoAvisoCorreo;
+            }
+            if (EsEncargado)
+            {
+                // Quien ayuda del servicio social ya tiene su cuenta de alumno, y el
+                // numero y el correo son unicos en la base: su cuenta de encargado
+                // lleva otros.
+                Controls.Add(new Label
+                {
+                    AutoSize = false,
+                    Font = new DrawingFont("Century Gothic", 9F),
+                    ForeColor = Color.FromArgb(90, 90, 90),
+                    Location = new Point(24, y - 6),
+                    Size = new Size(592, 36),
+                    Text = "Servicio social: SS más su matrícula (por ejemplo SS2023123456) y otro correo que el de su cuenta de estudiante, o ninguno."
+                });
+                y += AltoNotaServicioSocial;
+            }
+
             txtNombre = Campo("Nombre(s) *", 24, y, 190);
             txtNombre.MaxLength = 80;
             txtPaterno = Campo("Apellido paterno *", 225, y, 190);
@@ -547,7 +707,7 @@ namespace DigBit
                     ForeColor = Color.FromArgb(90, 90, 90),
                     Location = new Point(330, y + 4),
                     Size = new Size(286, 50),
-                    Text = "Lo teclean sus alumnos en el laboratorio. Vale para todas sus clases."
+                    Text = "Lo teclean sus estudiantes en el laboratorio. Vale para todas sus clases."
                 });
 
                 lblAvisoCodigo = new Label
@@ -556,48 +716,68 @@ namespace DigBit
                     Font = new DrawingFont("Century Gothic", 9F, FontStyle.Bold),
                     ForeColor = Color.FromArgb(190, 85, 0),
                     Location = new Point(24, y + 56),
-                    Text = "Sus alumnos tendrán que usar el código nuevo desde que lo guardes.",
+                    Text = "Sus estudiantes tendrán que usar el código nuevo desde que lo guardes.",
                     Visible = false
                 };
                 Controls.Add(lblAvisoCodigo);
                 y += 84;
             }
 
-            if (EsNuevo)
+            if (EsProfesor)
             {
-                txtContrasena = Campo("Contraseña *", 24, y, 190);
-                txtContrasena.UseSystemPasswordChar = true;
-                txtConfirmar = Campo("Repite la contraseña *", 225, y, 190);
-                txtConfirmar.UseSystemPasswordChar = true;
-                CheckBox mostrar = new CheckBox
+                ProfesorInfo profesor = existente as ProfesorInfo;
+                selectorColor = new SelectorColorProfesor(existente == null ? 0 : existente.Id, profesor == null ? "" : profesor.Color,
+                    datosProfesores.ColorElegible, NombreDeOtroProfesor, ayuda, 592)
                 {
-                    AutoSize = true,
-                    Font = new DrawingFont("Century Gothic", 9.5F),
-                    Location = new Point(428, y + 26),
-                    Text = "Mostrar"
+                    Location = new Point(24, y)
                 };
-                mostrar.CheckedChanged += (s, e) =>
-                {
-                    txtContrasena.UseSystemPasswordChar = !mostrar.Checked;
-                    txtConfirmar.UseSystemPasswordChar = !mostrar.Checked;
-                };
-                Controls.Add(mostrar);
-                y += 70;
-            }
-            else
-            {
-                Controls.Add(new Label
-                {
-                    AutoSize = true,
-                    Font = new DrawingFont("Century Gothic", 9F),
-                    ForeColor = Color.FromArgb(90, 90, 90),
-                    Location = new Point(24, y - 8),
-                    Text = "La contraseña se cambia con «Restablecer contraseña», en la lista."
-                });
-                y += 16;
+                Controls.Add(selectorColor);
+                y += SelectorColorProfesor.Alto + 6;
             }
 
-            lblError = EstiloAdmin.LineaError(new Point(24, y), 592, 40);
+            // Al dar de alta, obligatoria; al editar, opcional: en blanco no se cambia.
+            txtContrasena = Campo(EsNuevo ? "Contraseña *" : "Contraseña nueva", 24, y, 190);
+            txtContrasena.UseSystemPasswordChar = true;
+            txtConfirmar = Campo(EsNuevo ? "Repite la contraseña *" : "Repítela", 225, y, 190);
+            txtConfirmar.UseSystemPasswordChar = true;
+            CheckBox mostrar = new CheckBox
+            {
+                AutoSize = true,
+                Font = new DrawingFont("Century Gothic", 9.5F),
+                Location = new Point(428, y + 26),
+                Text = "Mostrar"
+            };
+            mostrar.CheckedChanged += (s, e) =>
+            {
+                txtContrasena.UseSystemPasswordChar = !mostrar.Checked;
+                txtConfirmar.UseSystemPasswordChar = !mostrar.Checked;
+            };
+            Controls.Add(mostrar);
+            if (!EsNuevo)
+            {
+                ayuda.SetToolTip(txtContrasena, "Déjala en blanco para no cambiarla. Si la escribes, podrá entrar con ella en cuanto guardes.");
+            }
+
+            // La regla antes del error, debajo de la contrasena.
+            Controls.Add(new Label
+            {
+                AutoSize = true,
+                Font = new DrawingFont("Century Gothic", 8.5F),
+                ForeColor = Color.FromArgb(90, 90, 90),
+                Location = new Point(24, y + 52),
+                Text = ReglasCuenta.TextoLargoMinimo + (EsNuevo ? "" : " En blanco, no se cambia.")
+            });
+
+            y += 70;
+
+            if (ConAvisoPrivacidad)
+            {
+                CrearAvisoPrivacidad(y);
+                y += AltoAvisoPrivacidad;
+            }
+
+            // Tres lineas: un error con su causa y que hacer (MensajeDeFallo) no cabia en dos.
+            lblError = EstiloAdmin.LineaError(new Point(24, y), 592, 54);
             Controls.Add(lblError);
 
             Controls.Add(new Label
@@ -608,7 +788,34 @@ namespace DigBit
                 Location = new Point(24, ClientSize.Height - 40),
                 Text = "* obligatorio"
             });
-            EstiloAdmin.BotonesDialogo(this, "Guardar", Guardar);
+            btnGuardar = EstiloAdmin.BotonesDialogo(this, autoregistro ? "Crear cuenta" : "Guardar", Guardar);
+            if (ConAvisoPrivacidad)
+            {
+                // Apagado se ve gris, como "Registrar mi bitacora": el verde con la letra
+                // gris parecia pulsable. Lo enciende la casilla del aviso.
+                btnGuardar.EnabledChanged += (s, e) =>
+                {
+                    Color fondo = btnGuardar.Enabled ? Color.DarkGreen : Color.FromArgb(205, 210, 205);
+                    btnGuardar.BackColor = fondo;
+                    btnGuardar.FlatAppearance.BorderColor = fondo;
+                };
+                btnGuardar.Enabled = false;
+            }
+
+            if (EsProfesor && !EsNuevo)
+            {
+                // Su horario semanal, solo para verlo (se cambia en Horarios).
+                Button verHorario = EstiloHorarios.CrearBoton("Ver su horario", new Point(132, ClientSize.Height - 56), new Size(150, 40));
+                verHorario.Font = new DrawingFont("Century Gothic", 9.5F, FontStyle.Bold);
+                verHorario.Click += (s, e) =>
+                {
+                    using (BitacoraMisClases horario = new BitacoraMisClases(existente.Id, existente.NombreCompleto))
+                    {
+                        horario.ShowDialog(this);
+                    }
+                };
+                Controls.Add(verHorario);
+            }
 
             if (!EsNuevo)
             {
@@ -618,6 +825,85 @@ namespace DigBit
                 txtPaterno.Text = existente.ApellidoPaterno;
                 txtMaterno.Text = existente.ApellidoMaterno;
             }
+
+            if (selectorColor != null)
+            {
+                // La muestra lleva su nombre y su codigo como en la cuadricula.
+                txtNombre.TextChanged += (s, e) => MostrarMuestraDeColor();
+                txtPaterno.TextChanged += (s, e) => MostrarMuestraDeColor();
+                if (txtCodigo != null)
+                {
+                    txtCodigo.TextChanged += (s, e) => MostrarMuestraDeColor();
+                }
+
+                MostrarMuestraDeColor();
+            }
+        }
+
+        private void MostrarMuestraDeColor()
+        {
+            selectorColor.Mostrar(HorariosDatos.NombreCorto(txtNombre.Text, txtPaterno.Text), txtCodigo == null ? "" : txtCodigo.Text.Trim());
+        }
+
+        /// <summary>
+        /// "Crear cuenta": el aviso de privacidad simplificado (con desplazamiento),
+        /// la casilla obligatoria "Lei el aviso de privacidad" y, si hay direccion,
+        /// "Leer el aviso de privacidad completo" (en el kiosco, dentro de DigBit).
+        /// </summary>
+        private void CrearAvisoPrivacidad(int y)
+        {
+            // Un poco separado de "Al menos 6 caracteres", que va justo encima.
+            y += 8;
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Aviso de privacidad", new Point(24, y)));
+            TextBox texto = new TextBox
+            {
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Vertical,
+                WordWrap = true,
+                BackColor = Color.White,
+                ForeColor = Color.FromArgb(50, 50, 50),
+                Font = new DrawingFont("Century Gothic", 9F),
+                Location = new Point(24, y + 23),
+                // Cinco renglones a la vista; el resto, con la barra.
+                Size = new Size(592, 88),
+                Text = avisoPrivacidad.Texto,
+                AccessibleName = "Aviso de privacidad"
+            };
+            Controls.Add(texto);
+
+            chkAvisoLeido = new CheckBox
+            {
+                AutoSize = true,
+                Font = new DrawingFont("Century Gothic", 9.5F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(30, 30, 30),
+                Location = new Point(24, y + 119),
+                Text = "Leí el aviso de privacidad"
+            };
+            chkAvisoLeido.CheckedChanged += (s, e) =>
+            {
+                btnGuardar.Enabled = chkAvisoLeido.Checked;
+                if (chkAvisoLeido.Checked && lblError.Text.Contains("aviso de privacidad"))
+                {
+                    lblError.Text = "";
+                }
+            };
+            ayuda.SetToolTip(chkAvisoLeido, "Para crear tu cuenta, lee el aviso y marca esta casilla.");
+            Controls.Add(chkAvisoLeido);
+
+            if (avisoPrivacidad.HayUrl)
+            {
+                LinkLabel completo = avisoPrivacidad.CrearEnlace(this);
+                Controls.Add(completo);
+                completo.Location = new Point(616 - completo.PreferredWidth, y + 121);
+            }
+        }
+
+        /// <summary>"Nicolas Trejo": para decir que profesor usa ya un color.</summary>
+        private string NombreDeOtroProfesor(int id)
+        {
+            ProfesorInfo otro = datosProfesores.Ultimos.FirstOrDefault(p => p.Id == id);
+            return otro == null ? null : HorariosDatos.NombreCorto(otro.Nombre, otro.ApellidoPaterno);
         }
 
         private TextBox Campo(string etiqueta, int x, int y, int ancho)
@@ -646,8 +932,14 @@ namespace DigBit
             catch (Exception ex)
             {
                 Log.Error("Cargar carreras y semestres", ex);
-                lblError.Text = "No se pudieron cargar las carreras: " + ex.Message;
+                lblError.Text = MensajeDeFallo.Explicar("No se pudieron cargar las carreras", ex, SiSigue);
             }
+        }
+
+        /// <summary>A quien acude quien ve un error aqui: la persona del laboratorio, o la administracion su log.</summary>
+        private string SiSigue
+        {
+            get { return autoregistro ? MensajeDeFallo.AvisaAlLaboratorio : MensajeDeFallo.RevisaElRegistro; }
         }
 
         private void ProponerCodigo()
@@ -656,15 +948,31 @@ namespace DigBit
             {
                 txtCodigo.Text = datosProfesores.ProponerCodigo(existente == null ? 0 : existente.Id);
             }
+            catch (InvalidOperationException ex) when (EstiloHorarios.EsAvisoDeDigBit(ex))
+            {
+                // Los que probo ya estaban en uso: el aviso de ProfesoresDatos ya dice que hacer.
+                Log.Aviso("Proponer un codigo de profesor: ningun codigo libre entre los que se probaron.");
+                lblError.Text = ex.Message;
+            }
             catch (Exception ex)
             {
                 Log.Error("Proponer un codigo de profesor", ex);
-                lblError.Text = "No se pudo proponer un código: " + ex.Message;
+                lblError.Text = MensajeDeFallo.Explicar("No se pudo proponer un código", ex, SiSigue);
             }
         }
 
         private void Guardar()
         {
+            // Sin sesion (el "Crear cuenta" del inicio de sesion) no bloquea.
+            if (Permisos.Bloquear(this, "Guardar un usuario")) return;
+            // El boton ya esta apagado sin la casilla; por si se llega de otro modo.
+            if (ConAvisoPrivacidad && !chkAvisoLeido.Checked)
+            {
+                lblError.Text = "Para crear tu cuenta, lee el aviso de privacidad y marca «Leí el aviso de privacidad».";
+                chkAvisoLeido.Focus();
+                return;
+            }
+
             lblError.Text = "";
             // Lo que falta se junta en una frase ("Falta: matricula y carrera."); lo
             // que esta mal escrito se explica aparte.
@@ -676,6 +984,11 @@ namespace DigBit
             if (identificador.Length == 0)
             {
                 Marcar(txtIdentificador, nombreIdentificador, faltan, ref primero);
+            }
+            else if (autoregistro && !MatriculaDeAlumno.IsMatch(identificador))
+            {
+                Marcar(txtIdentificador, "La matrícula son las 10 cifras de tu credencial. Si la tuya es distinta, pide a la administración "
+                    + "de DigBit que te dé de alta.", errores, ref primero);
             }
             else if (!IdentificadorValido.IsMatch(identificador))
             {
@@ -694,9 +1007,10 @@ namespace DigBit
             }
 
             string correo = txtCorreo.Text.Trim();
-            if (correo.Length > 0 && !CorreoValido.IsMatch(correo))
+            string problemaCorreo = ReglasCuenta.ProblemaDeCorreo(correo);
+            if (problemaCorreo != null)
             {
-                Marcar(txtCorreo, "El correo no parece válido.", errores, ref primero);
+                Marcar(txtCorreo, problemaCorreo, errores, ref primero);
             }
 
             OpcionCombo carrera = null;
@@ -722,15 +1036,19 @@ namespace DigBit
                 }
             }
 
-            if (EsNuevo)
+            // Al editar, solo si se escribio una: en blanco no se cambia.
+            if (EsNuevo || txtContrasena.Text.Length > 0 || txtConfirmar.Text.Length > 0)
             {
+                // Las mismas reglas que el inicio de sesion (ReglasCuenta): una
+                // contrasena de solo espacios no dejaria entrar nunca.
+                string problema = ReglasCuenta.ProblemaDeContrasena(txtContrasena.Text);
                 if (txtContrasena.Text.Length == 0)
                 {
                     Marcar(txtContrasena, "contraseña", faltan, ref primero);
                 }
-                else if (txtContrasena.Text.Length < 6)
+                else if (problema != null)
                 {
-                    Marcar(txtContrasena, "La contraseña debe tener al menos 6 caracteres.", errores, ref primero);
+                    Marcar(txtContrasena, problema, errores, ref primero);
                 }
                 else if (txtContrasena.Text != txtConfirmar.Text)
                 {
@@ -762,9 +1080,19 @@ namespace DigBit
                     SemestreId = semestre == null || semestre.Id == 0 ? (int?)null : semestre.Id
                 };
             }
+            else if (EsEncargado)
+            {
+                // Solo su fila de usuarios: no tiene carrera, codigo ni color.
+                nuevos = new DatosUsuario();
+            }
             else
             {
-                nuevos = new DatosProfesor { Codigo = codigo };
+                nuevos = new DatosProfesor
+                {
+                    Codigo = codigo,
+                    ConColor = selectorColor != null && selectorColor.Habilitado,
+                    Color = selectorColor == null ? null : selectorColor.ColorElegido
+                };
             }
 
             nuevos.Matricula = identificador;
@@ -772,6 +1100,7 @@ namespace DigBit
             nuevos.ApellidoPaterno = txtPaterno.Text.Trim();
             nuevos.ApellidoMaterno = txtMaterno.Text.Trim();
             nuevos.Correo = correo;
+            nuevos.ContrasenaNueva = !EsNuevo && txtContrasena.Text.Length > 0 ? txtContrasena.Text : null;
 
             Cursor = Cursors.WaitCursor;
             try
@@ -785,27 +1114,87 @@ namespace DigBit
                     datos.Actualizar(existente.Id, nuevos);
                 }
 
+                if (ConAvisoPrivacidad)
+                {
+                    // Constancia de que lo acepto antes de dar sus datos (RNF72).
+                    Log.Info("Crear cuenta: " + nuevos.Matricula + " marco 'Lei el aviso de privacidad' antes de crearla.");
+                }
+
                 IdentificadorGuardado = nuevos.Matricula;
                 NombreGuardado = string.Join(" ", new[] { nuevos.Nombre, nuevos.ApellidoPaterno, nuevos.ApellidoMaterno }.Where(p => p.Length > 0));
                 CodigoGuardado = codigo;
+                ProfesorInfo antes = existente as ProfesorInfo;
+                ColorCambiado = selectorColor != null && selectorColor.Habilitado
+                    && !string.Equals(selectorColor.ColorElegido ?? "", antes == null ? "" : antes.Color ?? "", StringComparison.OrdinalIgnoreCase);
+                contrasenaNueva = autoregistro ? txtContrasena.Text : null;
                 DialogResult = DialogResult.OK;
             }
             catch (ErrorDeDatos ex)
             {
-                // El error es del codigo (lo tiene otro profesor) o del identificador (repetido).
-                TextBox campo = conCodigo && ex.Message.StartsWith("El código") ? txtCodigo : txtIdentificador;
-                lblError.Text = ex.Message;
-                campo.BackColor = EstiloAdmin.FondoError;
-                campo.Focus();
+                // El dato que ya tiene otro usuario se senala; sin dato, es otra cosa
+                // (como que a la base le falte una migracion).
+                TextBox campo = ex.Campo == CampoRepetido.Codigo && conCodigo ? txtCodigo
+                    : ex.Campo == CampoRepetido.Correo ? txtCorreo
+                    : ex.Campo == CampoRepetido.Identificador ? txtIdentificador
+                    : null;
+                lblError.Text = autoregistro ? ParaElAlumno(ex, identificador) : ex.Message;
+                if (campo != null)
+                {
+                    campo.BackColor = EstiloAdmin.FondoError;
+                    campo.Focus();
+                }
+            }
+            catch (MySqlException ex) when (autoregistro && (ex.Number == SinPermisoTabla || ex.Number == SinPermisoColumna))
+            {
+                Log.Error("Crear cuenta desde el inicio de sesion: el usuario de MySQL de este equipo no puede dar de alta alumnos (db/07 y db/10)", ex);
+                lblError.Text = "Este equipo no tiene permiso para crear cuentas. Avisa a la persona responsable del laboratorio.";
             }
             catch (Exception ex)
             {
-                Log.Error(EsNuevo ? "Alta de usuario" : "Editar usuario", ex);
-                lblError.Text = "No se pudo guardar: " + ex.Message;
+                // La causa y que hacer; el texto tecnico solo va al log.
+                Log.Error(autoregistro ? "Crear cuenta desde el inicio de sesion" : EsNuevo ? "Alta de usuario" : "Editar usuario", ex);
+                lblError.Text = MensajeDeFallo.Explicar(autoregistro ? "No se pudo crear tu cuenta" : "No se pudo guardar", ex, SiSigue);
             }
             finally
             {
                 Cursor = Cursors.Default;
+            }
+        }
+
+        // ER_TABLEACCESS_DENIED_ERROR y ER_COLUMNACCESS_DENIED_ERROR: sin INSERT en
+        // usuarios, o con el permiso por columna de db/07 y sin el valor por
+        // defecto de db/10 (se nombra fk_tipo_usuario y no se puede).
+        private const int SinPermisoTabla = 1142;
+        private const int SinPermisoColumna = 1143;
+
+        /// <summary>Si la recuperacion de contrasena por correo esta activada (Ajustes); ante la duda, no.</summary>
+        private static bool RecuperacionActiva()
+        {
+            try
+            {
+                return RecuperacionContrasena.Buscar().Configurada;
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Crear cuenta: no se pudo saber si la recuperacion por correo esta activada", ex);
+                return false;
+            }
+        }
+
+        /// <summary>Un ErrorDeDatos de "Crear cuenta", dicho para el alumno.</summary>
+        private static string ParaElAlumno(ErrorDeDatos ex, string matricula)
+        {
+            switch (ex.Campo)
+            {
+                case CampoRepetido.Identificador:
+                    // Puede no ser suya: nada impide que otro la haya registrado antes.
+                    return "Ya hay una cuenta con la matrícula " + matricula + ". Si es tuya y no recuerdas la contraseña, "
+                        + "o si tú no la creaste, avisa a la administración de DigBit.";
+                case CampoRepetido.Correo:
+                    return "Ese correo ya lo usa otra cuenta. Escribe otro o déjalo vacío.";
+                default:
+                    Log.Aviso("Crear cuenta desde el inicio de sesion: " + ex.Message);
+                    return "No se pudo crear tu cuenta desde este equipo. Avisa a la persona responsable del laboratorio.";
             }
         }
 
@@ -838,7 +1227,8 @@ namespace DigBit
 
         public DialogoGrupo(int carreraInicial)
         {
-            EstiloHorarios.PrepararDialogo(this, "Nuevo grupo", new Size(460, 280));
+            // 300 de alto: el error, con su causa y que hacer, ocupa hasta tres lineas.
+            EstiloHorarios.PrepararDialogo(this, "Nuevo grupo", new Size(460, 300));
             Controls.Add(EstiloAdmin.TituloDialogo("Nuevo grupo", 412));
 
             Controls.Add(EstiloHorarios.CrearEtiqueta("Carrera *", new Point(24, 60)));
@@ -858,7 +1248,7 @@ namespace DigBit
                 Text = "Por ejemplo, ISC-5001"
             });
 
-            lblError = EstiloAdmin.LineaError(new Point(24, 178), 412, 36);
+            lblError = EstiloAdmin.LineaError(new Point(24, 178), 412, 56);
             Controls.Add(lblError);
             EstiloAdmin.BotonesDialogo(this, "Crear grupo", Guardar);
 
@@ -869,7 +1259,7 @@ namespace DigBit
             catch (Exception ex)
             {
                 Log.Error("Cargar carreras para un grupo nuevo", ex);
-                lblError.Text = "No se pudieron cargar las carreras: " + ex.Message;
+                lblError.Text = MensajeDeFallo.Explicar("No se pudieron cargar las carreras", ex, MensajeDeFallo.RevisaElRegistro);
             }
 
             ActiveControl = cboCarrera.SelectedIndex < 0 ? (Control)cboCarrera : txtNombre;
@@ -881,6 +1271,7 @@ namespace DigBit
 
         private void Guardar()
         {
+            if (Permisos.Bloquear(this, "Crear un grupo")) return;
             OpcionCombo carrera = cboCarrera.SelectedItem as OpcionCombo;
             string nombre = txtNombre.Text.Trim();
             if (carrera == null)
@@ -911,7 +1302,7 @@ namespace DigBit
             catch (Exception ex)
             {
                 Log.Error("Crear el grupo " + nombre, ex);
-                lblError.Text = "No se pudo crear el grupo: " + ex.Message;
+                lblError.Text = MensajeDeFallo.Explicar("No se pudo crear el grupo", ex, MensajeDeFallo.RevisaElRegistro);
             }
         }
     }
@@ -947,11 +1338,21 @@ namespace DigBit
             txtConfirmar.UseSystemPasswordChar = true;
             Controls.Add(txtConfirmar);
 
+            // La regla antes del error, debajo de la contrasena; "Mostrar", debajo de la otra.
+            Controls.Add(new Label
+            {
+                AutoSize = true,
+                Font = new DrawingFont("Century Gothic", 8.5F),
+                ForeColor = Color.FromArgb(90, 90, 90),
+                Location = new Point(24, 124),
+                Text = ReglasCuenta.TextoLargoMinimo
+            });
+
             CheckBox mostrar = new CheckBox
             {
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 9.5F),
-                Location = new Point(24, 126),
+                Location = new Point(236, 122),
                 Text = "Mostrar"
             };
             mostrar.CheckedChanged += (s, e) =>
@@ -983,9 +1384,12 @@ namespace DigBit
 
         private void Guardar()
         {
-            if (txtContrasena.Text.Length < 6)
+            // Las mismas reglas que al dar de alta: con solo espacios el aviso
+            // diria "ya puede entrar con ella" y no podria nunca.
+            string problema = ReglasCuenta.ProblemaDeContrasena(txtContrasena.Text);
+            if (problema != null)
             {
-                lblError.Text = "Debe tener al menos 6 caracteres.";
+                lblError.Text = problema;
                 txtContrasena.Focus();
                 return;
             }

@@ -101,6 +101,8 @@ if (-not $esAdmin -and -not $SoloMostrar) {
     throw 'Ejecuta este guion como administrador (o con -SoloMostrar para ver que haria).'
 }
 $esKiosco = ($Modo -eq 'maquina')
+# Solo para los mensajes: como se llama cada clase de equipo (el valor de -Modo no cambia).
+$equipoDe = if ($Modo -eq 'adm') { 'equipo de la administracion' } elseif ($Modo -eq 'maestro') { 'equipo docente' } else { 'equipo de laboratorio' }
 
 if (-not $Revertir) {
     if ($esKiosco) {
@@ -157,7 +159,7 @@ if (-not $Revertir -and -not $SoloMostrar) {
         Write-Warning 'Con Deep Freeze, los registros locales de DigBit se pierden al reiniciar. Las bitacoras no: van al servidor.'
     }
     if ($esKiosco -and $deepFreeze.Presente -and -not $CarpetaDatos -and -not $AceptarSinPersistencia) {
-        throw 'Este equipo tiene Deep Freeze y no indicaste -CarpetaDatos. Las bitacoras registradas sin servidor, el horario local y los registros viven en el perfil del usuario, que se borra en cada reinicio: se perderian datos de alumnos. Indica -CarpetaDatos con un ThawSpace (por ejemplo T:\DigBitDatos) o una particion sin congelar. Si este equipo nunca se queda sin servidor y aceptas perder los registros, repite con -AceptarSinPersistencia.'
+        throw 'Este equipo tiene Deep Freeze y no indicaste -CarpetaDatos. Las bitacoras registradas sin servidor, el horario local y los registros viven en el perfil del usuario, que se borra en cada reinicio: se perderian datos de estudiantes. Indica -CarpetaDatos con un ThawSpace (por ejemplo T:\DigBitDatos) o una particion sin congelar. Si este equipo nunca se queda sin servidor y aceptas perder los registros, repite con -AceptarSinPersistencia.'
     }
 }
 
@@ -188,7 +190,7 @@ if (-not $Revertir -and $esKiosco) {
     }
     if (-not (Get-Command Get-LocalUser -ErrorAction SilentlyContinue)) {
         throw @"
-No encuentro Get-LocalUser, que hace falta para crear la cuenta del alumno.
+No encuentro Get-LocalUser, que hace falta para crear la cuenta de Windows del laboratorio.
 Viene con Windows, en el modulo Microsoft.PowerShell.LocalAccounts, y no se ha
 podido cargar ni solo ni a mano.
 
@@ -205,7 +207,7 @@ $env:PSModulePath
         try {
             $administradores = @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop)
             if ($administradores | Where-Object { $_.SID.Value -eq $cuentaExistente.SID.Value }) {
-                throw "La cuenta '$Cuenta' es administrador. El kiosco le entrega el escritorio al alumno con su token, asi que cada alumno tendria permisos de administrador. Usa una cuenta estandar."
+                throw "La cuenta '$Cuenta' es administrador. El kiosco entrega el escritorio a cada estudiante con su token, asi que cada estudiante tendria permisos de administrador. Usa una cuenta estandar."
             }
         }
         catch [Microsoft.PowerShell.Commands.MemberNotFoundException] {
@@ -405,7 +407,7 @@ if ($Revertir) {
 
 # =============================================================================
 Paso $(if ($esKiosco) { "Preparar $env:COMPUTERNAME como equipo de laboratorio con la cuenta '$Cuenta'" }
-       else           { "Preparar $env:COMPUTERNAME como equipo de $Modo (sin kiosco)" })
+       else           { "Preparar $env:COMPUTERNAME como $equipoDe (sin kiosco)" })
 if ($SoloMostrar) {
     Write-Host '   (modo SoloMostrar: no se cambia nada)' -ForegroundColor Yellow
 }
@@ -603,7 +605,7 @@ if (-not $esKiosco) {
         $acceso = $shell.CreateShortcut($enlace)
         $acceso.TargetPath = $exeDigBit
         $acceso.WorkingDirectory = $Destino
-        $acceso.Description = "DigBit - bitacora de laboratorios ($Modo)"
+        $acceso.Description = "DigBit - bitacora de laboratorios ($equipoDe)"
         $acceso.Save()
         [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
     }
@@ -617,15 +619,15 @@ if (-not $esKiosco) {
     }
 
     Write-Host ''
-    Write-Host "Equipo de $Modo preparado." -ForegroundColor Green
+    Write-Host "Listo: $equipoDe preparado." -ForegroundColor Green
     Write-Host "  - Abrelo con el acceso directo 'DigBit' del escritorio."
     Write-Host "  - DigBit esta en $Destino y se abre como cualquier programa."
     Write-Host '  - Sin kiosco: la pantalla no se bloquea y Windows funciona normal.'
     Write-Host '  - Sin cuenta de laboratorio, sin inicio de sesion automatico y sin vigilante.'
     if ($Modo -eq 'adm') {
-        Write-Host '  - Entra con la cuenta de administrador de DigBit (tipo 3) para gestionar horarios.'
+        Write-Host '  - Entra con la cuenta de la administracion de DigBit (tipo 3) para gestionar horarios.'
     } else {
-        Write-Host '  - Entra con tu cuenta de profesor para ver tus clases y sus bitacoras.'
+        Write-Host '  - Entra con tu cuenta docente para ver tus clases y sus bitacoras.'
     }
     Write-Host '  - Comprueba con: .\deploy\diagnostico_equipo.ps1'
     return

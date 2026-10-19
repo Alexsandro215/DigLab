@@ -191,7 +191,7 @@ foreach ($archivo in @('01_schema.sql', '02_seed.sql')) {
 }
 
 $cuenta = (& $mysql '-h' '127.0.0.1' '-P' $Puerto '-u' 'root' '-N' '-B' '-e' 'SELECT COUNT(*) FROM usuarios' 'teschi_otru')
-Write-Host "   $cuenta usuarios en la base"
+Write-Host "   $cuenta cuentas en la base"
 
 # --- Resumen -------------------------------------------------------------------
 $cadena = "Database=teschi_otru;Server=127.0.0.1;Port=$Puerto;User Id=root;Password="

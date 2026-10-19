@@ -86,7 +86,7 @@ namespace DigBit
                 ForeColor = Color.DimGray,
                 Location = new Point(30, 258),
                 Size = new Size(580, 36),
-                Text = "Detalle tecnico registrado en: " + Log.ArchivoDeHoy
+                Text = "Detalle técnico registrado en: " + Log.ArchivoDeHoy
             };
 
             btnPrincipal = CrearBoton(textoBotonPrincipal, permitirCerrar ? 320 : 480, 300);

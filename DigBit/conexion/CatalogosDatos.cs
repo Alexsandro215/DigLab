@@ -27,6 +27,7 @@ namespace DigBit.conexion
         /// <summary>Crea un grupo dentro de su carrera (el alta vieja no guardaba la carrera y el grupo no aparecia en ninguna).</summary>
         public int CrearGrupo(string nombre, int idCarrera)
         {
+            Permisos.Exigir("Crear un grupo");
             using (MySqlConnection conexion = mconexion.GetConexion())
             {
                 using (MySqlCommand existe = new MySqlCommand(
@@ -36,7 +37,7 @@ namespace DigBit.conexion
                     existe.Parameters.AddWithValue("@Carrera", idCarrera);
                     if (Convert.ToInt32(existe.ExecuteScalar()) > 0)
                     {
-                        throw new ErrorDeDatos("Esa carrera ya tiene un grupo " + nombre + ".");
+                        throw new ErrorDeDatos("Esa carrera ya tiene un grupo " + nombre + ": cancela y elígelo en la lista de grupos, o escribe otro nombre.");
                     }
                 }
 

@@ -1,9 +1,11 @@
 using System;
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
+using DigBit.conexion;
 using DigBit.Infraestructura;
 
 namespace DigBit
@@ -22,6 +24,9 @@ namespace DigBit
         [STAThread]
         static void Main()
         {
+            // Antes que nada: el log ya escribe fechas.
+            FijarCultura();
+
             bool primeraInstancia;
             using (Mutex mutex = new Mutex(true, NombreMutex, out primeraInstancia))
             {
@@ -58,6 +63,11 @@ namespace DigBit
                     ? "autorizada"
                     : "SIN autorizar; el boton avisara y no abrira nada"));
 
+                // El envio de las bitacoras que quedaron en el equipo va en su propio
+                // hilo desde ya: tambien si DigBit se relanza con el equipo liberado
+                // (SesionEquipo.Reanudar) o mientras se ve la pantalla de error.
+                EnviadorBitacoras.Iniciar();
+
                 try
                 {
                     AppContexto contexto = new AppContexto();
@@ -71,9 +81,29 @@ namespace DigBit
                     ManejarExcepcion("Fallo durante el arranque", ex, true);
                 }
 
+                EnviadorBitacoras.Detener();
                 Log.Info("Fin de la aplicacion.");
                 GC.KeepAlive(mutex);
             }
+        }
+
+        /// <summary>
+        /// Espanol de Mexico en todo DigBit, tenga Windows la configuracion
+        /// regional que tenga: de la cultura salen los separadores de
+        /// "dd/MM/yyyy" y "HH:mm" y los nombres de dias y meses. Vale tambien para
+        /// los hilos que se crean despues (Task.Run, el enviador de bitacoras), y
+        /// GetCultureInfo la da sin los cambios del usuario de Windows. Lo que se
+        /// guarda (base, copia local, log) usa InvariantCulture o formatos como
+        /// yyyy-MM-dd, que con es-MX salen igual. Los DateTimePicker no la miran:
+        /// con Format = Short muestran la fecha corta de Windows.
+        /// </summary>
+        private static void FijarCultura()
+        {
+            CultureInfo mexico = CultureInfo.GetCultureInfo("es-MX");
+            CultureInfo.DefaultThreadCurrentCulture = mexico;
+            CultureInfo.DefaultThreadCurrentUICulture = mexico;
+            Thread.CurrentThread.CurrentCulture = mexico;
+            Thread.CurrentThread.CurrentUICulture = mexico;
         }
 
         private static void ManejarExcepcion(string contexto, Exception ex, bool terminando)
@@ -89,13 +119,15 @@ namespace DigBit
             mostrandoError = true;
             try
             {
-                string mensaje = terminando
-                    ? "Ocurrio un error grave y la aplicacion tiene que cerrarse."
-                    : "Ocurrio un error inesperado. La aplicacion continuara funcionando.";
+                // La causa (si fue la red, se dice) y que hacer; el texto tecnico solo
+                // va al registro, cuya ruta ensena la pantalla de error.
+                bool red = FueLaRed(ex);
+                string mensaje = (terminando
+                        ? "Ocurrió un error grave y la aplicación tiene que cerrarse."
+                        : "Ocurrió un error inesperado. La aplicación continuará funcionando.")
+                    + (red ? " La causa fue que se perdió la conexión con el servidor." : "");
                 mensaje += Environment.NewLine + Environment.NewLine
-                    + "Si el problema se repite, avisa al encargado del laboratorio."
-                    + Environment.NewLine + Environment.NewLine
-                    + "Detalle: " + (ex != null ? ex.Message : "(desconocido)");
+                    + (red ? "Revisa la red; si" : "Si") + " el problema se repite, avisa a la persona responsable del laboratorio.";
 
                 PantallaError.Mostrar("Error inesperado", mensaje, terminando ? "Cerrar" : "Continuar", false, 0);
             }
@@ -106,6 +138,24 @@ namespace DigBit
             finally
             {
                 mostrandoError = false;
+            }
+        }
+
+        /// <summary>
+        /// Si se puede culpar a la red (MensajeDeFallo.EsDeRed), sin lanzar nunca:
+        /// sin MySql.Data (copia incompleta, un antivirus) no se puede clasificar,
+        /// y la pantalla de error tiene que salir igual. En la duda, la red no.
+        /// </summary>
+        private static bool FueLaRed(Exception ex)
+        {
+            try
+            {
+                return MensajeDeFallo.EsDeRed(ex);
+            }
+            catch (Exception exRed)
+            {
+                Log.Error("No se pudo saber si el error fue de red", exRed);
+                return false;
             }
         }
 

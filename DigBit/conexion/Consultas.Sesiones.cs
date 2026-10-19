@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Globalization;
+using System.Linq;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using DigBit.Infraestructura;
 using MySql.Data.MySqlClient;
@@ -27,7 +30,10 @@ namespace DigBit.conexion
                        COALESCE(ca.grupos_idgrupos, 0) AS grupo_id,
                        COALESCE(g.nombre_grupo, '') AS grupo,
                        COALESCE(m.nombre_materia, '') AS materia,
-                       CONCAT_WS(' ', p.nombre, p.apellido_paterno, p.apellido_materno) AS profesor
+                       CONCAT_WS(' ', p.nombre, p.apellido_paterno, p.apellido_materno) AS profesor,
+                       ca.horarios_idhorarios, ca.horario_excepciones_id,
+                       COALESCE(ca.materias_id_materia, 0) AS materia_id,
+                       COALESCE(ca.usuarios_idusuarios, 0) AS profesor_id
                 FROM codigos_accesos ca
                 LEFT JOIN laboratorios l ON l.idlaboratorios = ca.laboratorios_idlaboratorios
                 LEFT JOIN grupos g       ON g.idgrupos = ca.grupos_idgrupos
@@ -64,7 +70,11 @@ namespace DigBit.conexion
                         IdGrupo = reader.GetInt32("grupo_id"),
                         Grupo = reader.GetString("grupo"),
                         Materia = reader.GetString("materia"),
-                        Profesor = reader.IsDBNull(reader.GetOrdinal("profesor")) ? "" : reader.GetString("profesor")
+                        Profesor = reader.IsDBNull(reader.GetOrdinal("profesor")) ? "" : reader.GetString("profesor"),
+                        FranjaId = reader.IsDBNull(reader.GetOrdinal("horarios_idhorarios")) ? (int?)null : Convert.ToInt32(reader["horarios_idhorarios"]),
+                        ExcepcionId = reader.IsDBNull(reader.GetOrdinal("horario_excepciones_id")) ? (int?)null : Convert.ToInt32(reader["horario_excepciones_id"]),
+                        IdMateria = Convert.ToInt32(reader["materia_id"]),
+                        IdProfesor = Convert.ToInt32(reader["profesor_id"])
                     };
                     ventana.Estado = CalcularEstado(ventana);
                     return ventana;
@@ -133,17 +143,28 @@ namespace DigBit.conexion
             }
         }
 
-        /// <summary>Encabezado del PDF de una sesion (horas, grupo, materia, fecha).</summary>
-        public Usuario ConsultarDatosPdfSesion(int idSesion)
+        /// <summary>
+        /// Encabezado del PDF de una sesion (horas, fecha, profesor, grupo, materia
+        /// y laboratorio), o null si la sesion ya no existe. El profesor sale de la
+        /// sesion, no de quien abre la pantalla: los PDF de Bitacoras y de la
+        /// bitacora de una clase dicen lo mismo.
+        /// </summary>
+        public EncabezadoPdfSesion ConsultarDatosPdfSesion(int idSesion)
         {
+            // Uso libre (db/14): sin materia, grupo ni profesor; la materia lo dice
+            // y el laboratorio va en su propia linea.
             using (MySqlConnection conexion = mconexion.GetConexion())
             using (MySqlCommand comando = new MySqlCommand(@"
                 SELECT ca.hora_entrada, ca.hora_salida, ca.fecha, ca.hora_registro,
-                       COALESCE(g.nombre_grupo, '') AS GrupoNombre,
-                       COALESCE(m.nombre_materia, '') AS MateriaNombre
+                       IF(" + HorariosDatos.CondicionUsoLibre + @", '-', COALESCE(g.nombre_grupo, '')) AS GrupoNombre,
+                       IF(" + HorariosDatos.CondicionUsoLibre + @", 'Uso libre del laboratorio', COALESCE(m.nombre_materia, '')) AS MateriaNombre,
+                       COALESCE(l.nombre_laboratorio, '') AS LaboratorioNombre,
+                       CONCAT_WS(' ', p.nombre, p.apellido_paterno, p.apellido_materno) AS ProfesorNombre
                 FROM codigos_accesos ca
-                LEFT JOIN grupos g   ON ca.grupos_idgrupos = g.idgrupos
-                LEFT JOIN materias m ON ca.materias_id_materia = m.id_materia
+                LEFT JOIN grupos g       ON ca.grupos_idgrupos = g.idgrupos
+                LEFT JOIN materias m     ON ca.materias_id_materia = m.id_materia
+                LEFT JOIN laboratorios l ON ca.laboratorios_idlaboratorios = l.idlaboratorios
+                LEFT JOIN usuarios p     ON ca.usuarios_idusuarios = p.idusuarios
                 WHERE ca.idcodigos_accesos = @Id", conexion))
             {
                 comando.Parameters.AddWithValue("@Id", idSesion);
@@ -158,13 +179,18 @@ namespace DigBit.conexion
                         ? reader.GetDateTime("hora_registro")
                         : reader.GetDateTime("fecha");
 
-                    return new Usuario
+                    // "Martes 29/09/2026": dd/MM/yyyy con InvariantCulture, para que el
+                    // separador no salga de la configuracion regional de Windows.
+                    return new EncabezadoPdfSesion
                     {
-                        HoraEntrada = reader["hora_entrada"].ToString(),
-                        HoraSalida = reader["hora_salida"].ToString(),
-                        GruposId = reader.GetString("GrupoNombre"),
-                        MateriasId = reader.GetString("MateriaNombre"),
-                        HoraRegistro = fecha.ToString("yyyy-MM-dd")
+                        HoraEntrada = HorariosDatos.HoraLegible(reader["hora_entrada"]),
+                        HoraSalida = HorariosDatos.HoraLegible(reader["hora_salida"]),
+                        Fecha = HorariosDatos.NombresDia[((int)fecha.DayOfWeek + 6) % 7 + 1] + " "
+                            + fecha.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),
+                        Profesor = reader.IsDBNull(reader.GetOrdinal("ProfesorNombre")) ? "" : reader.GetString("ProfesorNombre").Trim(),
+                        Grupo = reader.GetString("GrupoNombre"),
+                        Materia = reader.GetString("MateriaNombre"),
+                        Laboratorio = reader.GetString("LaboratorioNombre")
                     };
                 }
             }
@@ -186,34 +212,55 @@ namespace DigBit.conexion
             " OR TRIM(COALESCE(rb.falla_software, '')) NOT IN " + SinNovedad +
             " OR TRIM(COALESCE(rb.comentarios_software, '')) NOT IN " + SinNovedad;
 
+        /// <summary>Condicion SQL (entre parentesis): la bitacora rb reporta algo en esa area ("red", "hardware" o "software").</summary>
+        internal static string CondicionFallaEn(string area)
+        {
+            if (Array.IndexOf(AreasDeFalla, area) < 0)
+            {
+                throw new ArgumentException("Área de falla desconocida: " + area);
+            }
+
+            return "(TRIM(COALESCE(rb.falla_" + area + ", '')) NOT IN " + SinNovedad
+                + " OR TRIM(COALESCE(rb.comentarios_" + area + ", '')) NOT IN " + SinNovedad + ")";
+        }
+
         /// <summary>
         /// Alumnos registrados en una sesion, para la tabla y el PDF. Incluye
         /// con_falla: 1 si esa bitacora reporta alguna falla o comentario, para
-        /// resaltarla frente a las que no reportaron nada; y hora_registro ("HH:mm"
-        /// de su primer registro, o "—" si es de antes de guardarse la hora).
+        /// resaltarla frente a las que no reportaron nada; hora_registro ("HH:mm"
+        /// de su primer registro, o "—" si es de antes de guardarse la hora); y
+        /// avisa_sin_internet, los otros equipos que vio sin internet ("11,13",
+        /// vacio si no aviso o sin la migracion 10).
         /// </summary>
         public DataTable consultaRegistroSesion(int idSesion)
         {
             DataTable tabla = new DataTable();
             using (MySqlConnection conexion = mconexion.GetConexion())
-            using (MySqlCommand comando = new MySqlCommand(@"
-                SELECT rb.fk_codigo_accesos, rb.fk_usuario, u.nombre, u.apellido_paterno, u.apellido_materno, u.numero_identificador,
-                       rb.numero_computadora,
-                       COALESCE(rb.falla_red, '') AS falla_red, COALESCE(rb.comentarios_red, '') AS comentarios_red,
-                       COALESCE(rb.falla_hardware, '') AS falla_hardware, COALESCE(rb.comentarios_hardware, '') AS comentarios_hardware,
-                       COALESCE(rb.falla_software, '') AS falla_software, COALESCE(rb.comentarios_software, '') AS comentarios_software,
-                       rb.registrado_sin_conexion AS sin_conexion,
-                       COALESCE(DATE_FORMAT(rb.registrado_en, '%H:%i'), '') AS hora_registro,
-                       CASE WHEN " + CondicionConFalla + @" THEN 1 ELSE 0 END AS con_falla
-                FROM registros_bitacoras rb
-                INNER JOIN usuarios u ON rb.fk_usuario = u.idusuarios
-                WHERE rb.fk_codigo_accesos = @Id
-                ORDER BY u.apellido_paterno, u.apellido_materno, u.nombre", conexion))
             {
-                comando.Parameters.AddWithValue("@Id", idSesion);
-                using (MySqlDataAdapter adapter = new MySqlDataAdapter(comando))
+                string avisos = Esquema.EquiposSinInternet(conexion) ? "COALESCE(rb.equipos_sin_internet, '')" : "''";
+
+                // sin_conexion con IF: la columna es TINYINT(1) y con
+                // TreatTinyAsBoolean llegaria como True/False, no como 1/0.
+                using (MySqlCommand comando = new MySqlCommand(@"
+                    SELECT rb.fk_codigo_accesos, rb.fk_usuario, u.nombre, u.apellido_paterno, u.apellido_materno, u.numero_identificador,
+                           rb.numero_computadora,
+                           COALESCE(rb.falla_red, '') AS falla_red, COALESCE(rb.comentarios_red, '') AS comentarios_red,
+                           COALESCE(rb.falla_hardware, '') AS falla_hardware, COALESCE(rb.comentarios_hardware, '') AS comentarios_hardware,
+                           COALESCE(rb.falla_software, '') AS falla_software, COALESCE(rb.comentarios_software, '') AS comentarios_software,
+                           IF(rb.registrado_sin_conexion = 1, 1, 0) AS sin_conexion,
+                           COALESCE(DATE_FORMAT(rb.registrado_en, '%H:%i'), '') AS hora_registro,
+                           CASE WHEN " + CondicionConFalla + @" THEN 1 ELSE 0 END AS con_falla,
+                           " + avisos + @" AS avisa_sin_internet
+                    FROM registros_bitacoras rb
+                    INNER JOIN usuarios u ON rb.fk_usuario = u.idusuarios
+                    WHERE rb.fk_codigo_accesos = @Id
+                    ORDER BY u.apellido_paterno, u.apellido_materno, u.nombre", conexion))
                 {
-                    adapter.Fill(tabla);
+                    comando.Parameters.AddWithValue("@Id", idSesion);
+                    using (MySqlDataAdapter adapter = new MySqlDataAdapter(comando))
+                    {
+                        adapter.Fill(tabla);
+                    }
                 }
             }
 
@@ -222,7 +269,7 @@ namespace DigBit.conexion
             {
                 // Fase 4: la bitacora registrada sin servidor entro sin contrasena;
                 // se deja ver en tablas y PDF junto al nombre.
-                string marca = Convert.ToInt32(fila["sin_conexion"]) == 1 ? " [sin conexion]" : "";
+                string marca = Convert.ToInt32(fila["sin_conexion"]) == 1 ? " [sin conexión]" : "";
                 fila["nombre_completo"] = fila["nombre"] + " " + fila["apellido_paterno"] + " " + fila["apellido_materno"] + marca;
 
                 // Las bitacoras en linea de antes de guardar la hora no la tienen.
@@ -236,38 +283,44 @@ namespace DigBit.conexion
         }
 
         /// <summary>
-        /// Fase 4: guarda la bitacora en la cola local (ColaBitacoras) con los datos
-        /// de la sesion resuelta sin servidor. Mismas comprobaciones que en linea:
-        /// ventana vigente y una sola bitacora por alumno y sesion (contra la cola).
+        /// Guarda la bitacora en la cola local (ColaBitacoras), de donde la sube
+        /// sola EnviadorBitacoras. Mismas comprobaciones que en linea: ventana
+        /// vigente y una sola bitacora por alumno y sesion (contra la cola). Sin
+        /// mensaje de exito: lo dice la pantalla del alumno.
         /// </summary>
-        private static bool GuardarSinConexion(string matricula, string computadora, string fallared, string comentariored,
-            string fallahardware, string comentariohardware, string fallasoftware, string comentariosoftware)
+        /// <param name="identidadVerificada">True si el alumno entro con contrasena y se valido todo en linea (la red se cayo al guardar).</param>
+        private static ResultadoGuardado GuardarSinConexion(SesionLocal sesion, bool identidadVerificada, string matricula, string computadora,
+            string fallared, string comentariored, string fallahardware, string comentariohardware, string fallasoftware, string comentariosoftware,
+            string equiposSinInternet)
         {
-            SesionLocal sesion = Datos_User.SesionSinConexion;
             VentanaCodigo ventana = Datos_User.VentanaActual;
             if (sesion == null || ventana == null)
             {
-                MessageBox.Show("No hay una sesion valida para guardar la bitacora. Vuelve a ingresar el codigo.", "Sin sesion", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return false;
+                MessageBox.Show("No hay una sesión válida para guardar la bitácora. Vuelve a escribir el código o a elegir tu clase.", "Sin sesión", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return ResultadoGuardado.NoGuardada;
             }
 
             if (ventana.Restante <= TimeSpan.Zero)
             {
-                MessageBox.Show("El codigo ya no esta vigente (valido hasta las " + ventana.Fin.ToString("HH:mm") + ").", "Codigo expirado", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return false;
+                // Sin servidor, como ReglasCodigo: solo la hora.
+                MessageBox.Show(FueraDeHora(ventana, null, true), ventana.EsUsoLibre ? "Uso libre terminado" : "Clase terminada",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return ResultadoGuardado.NoGuardada;
             }
 
             if (ColaBitacoras.YaRegistrada(sesion.Clave, matricula))
             {
-                MessageBox.Show("Ya registraste tu bitacora con este codigo.", "Registro duplicado", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return false;
+                MessageBox.Show("Ya registraste tu bitácora con este código.", "Registro duplicado", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return ResultadoGuardado.NoGuardada;
             }
 
             try
             {
                 ColaBitacoras.Encolar(new BitacoraPendiente
                 {
-                    Registrada = DateTime.Now,
+                    // La hora del SERVIDOR estimada, no la del equipo: es la que
+                    // se guarda como registrado_en y la del reloj puede estar mal.
+                    Registrada = DateTime.Now + ventana.Desfase,
                     Matricula = matricula,
                     Sesion = sesion,
                     Computadora = computadora,
@@ -276,18 +329,54 @@ namespace DigBit.conexion
                     FallaHardware = fallahardware,
                     ComentarioHardware = comentariohardware,
                     FallaSoftware = fallasoftware,
-                    ComentarioSoftware = comentariosoftware
+                    ComentarioSoftware = comentariosoftware,
+                    EquiposSinInternet = equiposSinInternet ?? "",
+                    IdentidadVerificada = identidadVerificada
                 });
             }
             catch (Exception ex)
             {
+                // La cola es un archivo de este equipo: el fallo es de su disco, no de la red.
                 Log.Error("Guardar la bitacora en la cola local", ex);
-                MessageBox.Show("No se pudo guardar la bitacora en este equipo: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return false;
+                MessageBox.Show("No se pudo guardar tu bitácora en este equipo: no se pudo escribir en su carpeta de datos." + Environment.NewLine + Environment.NewLine
+                    + "Inténtalo de nuevo; si sigue, " + MensajeDeFallo.AvisaAlLaboratorio + ".",
+                    "Bitácora no registrada", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return ResultadoGuardado.NoGuardada;
             }
 
-            MessageBox.Show("Sin conexion con el servidor: tu bitacora quedo guardada en este equipo y se enviara sola cuando vuelva la conexion.", "Guardada sin conexion", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return true;
+            return ResultadoGuardado.EnEsteEquipo;
+        }
+
+        /// <summary>
+        /// Por que no se guarda la bitacora si al pulsar Registrar la clase ya no
+        /// esta abierta: lo mismo que dice ReglasCodigo al escribir el codigo. Un
+        /// codigo nuevo solo con la generacion de codigos (cada clase tiene el
+        /// suyo); con el codigo unico o sin codigos no hay "otro", y si hace falta
+        /// una sesion extra la crea el administrador.
+        /// </summary>
+        /// <param name="modo">El del laboratorio, o null si no se pudo leer.</param>
+        internal static string FueraDeHora(VentanaCodigo ventana, ModoCodigo? modo, bool sinServidor = false)
+        {
+            if (!sinServidor && ventana.Estado == EstadoCodigo.AunNoEmpieza)
+            {
+                return "Tu clase empieza a las " + ventana.Inicio.ToString("HH:mm") + ": podrás registrar tu bitácora desde las "
+                    + ventana.Inicio.AddMinutes(-MargenAntesDelInicioMinutos).ToString("HH:mm") + ".";
+            }
+
+            string fin = ventana.Fin.ToString("HH:mm");
+            if (ventana.EsUsoLibre)
+            {
+                return "El uso libre terminó a las " + fin + ". Pulsa «Volver a elegir» para registrar tu bitácora en lo que toca ahora.";
+            }
+
+            if (sinServidor)
+            {
+                return "Tu clase terminó a las " + fin + ".";
+            }
+
+            return modo == ModoCodigo.Renovable
+                ? "Tu clase terminó a las " + fin + ". Si ya empezó tu siguiente clase, pide a tu docente el código nuevo."
+                : "Tu clase terminó a las " + fin + ". Pide a tu docente que avise a la administración de DigBit si necesitas una sesión extra.";
         }
 
         /// <summary>
@@ -295,12 +384,59 @@ namespace DigBit.conexion
         /// una fila por sesion con cuantos alumnos registraron, cuantos
         /// reportaron alguna falla y cuantos entraron sin conexion. El detalle de
         /// cada sesion es consultaRegistroSesion. Con un profesor (su id), solo
-        /// las suyas: es su "Mis bitacoras".
+        /// las suyas: es su "Mis bitacoras". La tabla lleva el desfase del reloj del
+        /// servidor con el de este equipo (DesfaseServidor), para decidir que sesion
+        /// sigue en curso con la hora del servidor.
         /// </summary>
         public DataTable ObtenerSesionesAdministrador(int idProfesor = 0)
         {
             DataTable tabla = new DataTable();
             using (MySqlConnection conexion = mconexion.GetConexion())
+            {
+                // Las dos horas en el mismo instante: el desfase no lleva lo que tarda la consulta.
+                using (MySqlCommand ahora = new MySqlCommand("SELECT NOW()", conexion))
+                {
+                    DateTime servidor = Convert.ToDateTime(ahora.ExecuteScalar());
+                    tabla.ExtendedProperties[ClaveDesfaseServidor] = servidor - DateTime.Now;
+                }
+
+                // sin_internet: las listas de equipos que avisaron sus alumnos,
+                // unidas con '|' para ContarSinInternet, en la misma pasada por las
+                // bitacoras. GROUP_CONCAT se corta en silencio a los 1024
+                // caracteres si no se le sube el limite (solo para esta conexion).
+                string avisos = "''";
+                if (Esquema.EquiposSinInternet(conexion))
+                {
+                    using (MySqlCommand limite = new MySqlCommand("SET SESSION group_concat_max_len = 1048576", conexion))
+                    {
+                        limite.ExecuteNonQuery();
+                    }
+
+                    avisos = "COALESCE(CAST(GROUP_CONCAT(NULLIF(rb.equipos_sin_internet, '') SEPARATOR '|') AS CHAR), '')";
+                }
+
+                LlenarSesiones(conexion, tabla, idProfesor, avisos);
+            }
+
+            return tabla;
+        }
+
+        private const string ClaveDesfaseServidor = "desfase_servidor";
+
+        /// <summary>
+        /// El reloj del servidor menos el de este equipo al leer las sesiones
+        /// (ObtenerSesionesAdministrador); cero si la tabla no lo trae.
+        /// </summary>
+        public static TimeSpan DesfaseServidor(DataTable sesiones)
+        {
+            object desfase = sesiones == null ? null : sesiones.ExtendedProperties[ClaveDesfaseServidor];
+            return desfase is TimeSpan ? (TimeSpan)desfase : TimeSpan.Zero;
+        }
+
+        private static void LlenarSesiones(MySqlConnection conexion, DataTable tabla, int idProfesor, string avisos)
+        {
+            // LEFT JOIN con el profesor: las de uso libre (db/14) no tienen. El
+            // profesor (su "Mis bitacoras") no las ve: el WHERE pide las suyas.
             using (MySqlCommand comando = new MySqlCommand(@"
                 SELECT ca.idcodigos_accesos,
                        DATE_FORMAT(COALESCE(ca.fecha, DATE(ca.hora_registro)), '%Y-%m-%d') AS fecha,
@@ -314,9 +450,11 @@ namespace DigBit.conexion
                        COALESCE(l.nombre_laboratorio, '') AS laboratorio,
                        COUNT(DISTINCT rb.fk_usuario)      AS alumnos,
                        COUNT(DISTINCT CASE WHEN " + CondicionConFalla + @" THEN rb.fk_usuario END) AS con_fallas,
-                       COUNT(DISTINCT CASE WHEN rb.registrado_sin_conexion = 1 THEN rb.fk_usuario END) AS sin_conexion
+                       COUNT(DISTINCT CASE WHEN rb.registrado_sin_conexion = 1 THEN rb.fk_usuario END) AS sin_conexion,
+                       " + avisos + @" AS sin_internet,
+                       IF(" + HorariosDatos.CondicionUsoLibre + @", 1, 0) AS uso_libre
                 FROM codigos_accesos ca
-                INNER JOIN usuarios prof   ON prof.idusuarios = ca.usuarios_idusuarios
+                LEFT JOIN usuarios prof    ON prof.idusuarios = ca.usuarios_idusuarios
                 LEFT JOIN materias m       ON m.id_materia = ca.materias_id_materia
                 LEFT JOIN grupos g         ON g.idgrupos = ca.grupos_idgrupos
                 LEFT JOIN laboratorios l   ON l.idlaboratorios = ca.laboratorios_idlaboratorios
@@ -324,15 +462,54 @@ namespace DigBit.conexion
                 WHERE @Profesor = 0 OR ca.usuarios_idusuarios = @Profesor
                 GROUP BY ca.idcodigos_accesos, ca.fecha, ca.hora_registro, ca.hora_entrada, ca.hora_salida, ca.codigo,
                          m.nombre_materia, g.nombre_grupo, prof.numero_identificador,
-                         prof.nombre, prof.apellido_paterno, prof.apellido_materno, l.nombre_laboratorio
+                         prof.nombre, prof.apellido_paterno, prof.apellido_materno, l.nombre_laboratorio,
+                         ca.usuarios_idusuarios, ca.horarios_idhorarios, ca.horario_excepciones_id
                 ORDER BY fecha DESC, ca.hora_entrada DESC, ca.idcodigos_accesos DESC", conexion))
             using (MySqlDataAdapter adapter = new MySqlDataAdapter(comando))
             {
                 comando.Parameters.AddWithValue("@Profesor", idProfesor);
                 adapter.Fill(tabla);
             }
+        }
 
-            return tabla;
+        /// <summary>
+        /// Los avisos de equipos sin internet de las bitacoras que cumplen la
+        /// condicion (sobre rb y ca, con su parametro @Valor si lo usa): por
+        /// sesion, la lista de cada bitacora que aviso. Vacio sin la migracion 10.
+        /// </summary>
+        internal static Dictionary<int, List<string>> LeerAvisosSinInternet(MySqlConnection conexion, string condicion, object valor)
+        {
+            Dictionary<int, List<string>> avisos = new Dictionary<int, List<string>>();
+            if (!Esquema.EquiposSinInternet(conexion))
+            {
+                return avisos;
+            }
+
+            using (MySqlCommand comando = new MySqlCommand(@"
+                SELECT rb.fk_codigo_accesos, rb.equipos_sin_internet
+                FROM registros_bitacoras rb
+                INNER JOIN codigos_accesos ca ON ca.idcodigos_accesos = rb.fk_codigo_accesos
+                WHERE rb.equipos_sin_internet <> '' AND " + condicion, conexion))
+            {
+                comando.Parameters.AddWithValue("@Valor", valor);
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        int sesion = Convert.ToInt32(reader["fk_codigo_accesos"]);
+                        List<string> deLaSesion;
+                        if (!avisos.TryGetValue(sesion, out deLaSesion))
+                        {
+                            deLaSesion = new List<string>();
+                            avisos[sesion] = deLaSesion;
+                        }
+
+                        deLaSesion.Add(reader["equipos_sin_internet"].ToString());
+                    }
+                }
+            }
+
+            return avisos;
         }
 
         /// <summary>True si la bitacora reporta alguna falla o comentario (se resalta).</summary>
@@ -345,6 +522,437 @@ namespace DigBit.conexion
 
         /// <summary>Las tres areas que puede reportar el alumno, en el orden en que se muestran.</summary>
         public static readonly string[] AreasDeFalla = { "red", "hardware", "software" };
+
+        // ---------------------------------------------------------------------
+        // Equipos de alrededor sin internet (db/10)
+        // ---------------------------------------------------------------------
+
+        public const int MaximoEquiposSinInternet = 5;
+        // Lo que cabe en registros_bitacoras.equipos_sin_internet: en la base de
+        // la escuela (sql_mode vacio) lo que sobrara se cortaria sin avisar.
+        private const int LargoMaximoAviso = 120;
+        private static readonly Regex NumeroDeEquipo = new Regex(@"^[A-Za-z0-9][A-Za-z0-9 \-]{0,19}$");
+        private static readonly Regex SeparadorDeEquipos = new Regex(@"\s*(?:,|;|\by\b)\s*", RegexOptions.IgnoreCase);
+        private static readonly Regex NumeroConPrefijo = new Regex(@"^(.*?)(\d+)$");
+
+        /// <summary>
+        /// "11, 13 y 14" -> "PC-11,PC-13,PC-14", listo para guardar: sin
+        /// repetidos, como mucho MaximoEquiposSinInternet, cada uno con al menos
+        /// una cifra, y con el nombre que tiene la misma maquina se avise desde
+        /// donde se avise (ver ComoEsteEquipo). "8 9" son dos; "pc 8" es uno.
+        /// Null y el error redactado para el alumno si no se puede guardar.
+        /// </summary>
+        /// <param name="esteEquipo">El numero configurado de esta maquina, o null (entonces se guarda lo escrito).</param>
+        public static string NormalizarEquiposSinInternet(string texto, string esteEquipo, out string error)
+        {
+            const string SoloNumeros = "Escribe los números de las computadoras, separados por comas (por ejemplo: 11, 13).";
+            error = null;
+            List<string> equipos = new List<string>();
+            HashSet<string> claves = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string trozo in SeparadorDeEquipos.Split(texto ?? ""))
+            {
+                // Una palabra sin cifras es el prefijo de la que la sigue ("pc 8").
+                string prefijo = "";
+                foreach (string palabra in trozo.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    if (!palabra.Any(char.IsDigit))
+                    {
+                        prefijo += palabra + " ";
+                        continue;
+                    }
+
+                    string equipo = (prefijo + palabra).Trim();
+                    prefijo = "";
+                    if (!NumeroDeEquipo.IsMatch(equipo))
+                    {
+                        error = SoloNumeros;
+                        return null;
+                    }
+
+                    equipo = ComoEsteEquipo(equipo, esteEquipo);
+                    if (claves.Add(ClaveDeEquipo(equipo)))
+                    {
+                        equipos.Add(equipo);
+                    }
+                }
+
+                if (prefijo.Length > 0)
+                {
+                    // Palabras sin ningun numero: "todas", "la de enfrente".
+                    error = SoloNumeros;
+                    return null;
+                }
+            }
+
+            if (equipos.Count == 0)
+            {
+                error = "Escribe el número de la computadora sin internet, o elige «No».";
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(esteEquipo) && claves.Contains(ClaveDeEquipo(esteEquipo)))
+            {
+                error = "La " + esteEquipo.Trim() + " es esta computadora: si no tiene internet, elige «Reportar una falla» en el paso 2.";
+                return null;
+            }
+
+            if (equipos.Count > MaximoEquiposSinInternet)
+            {
+                error = "Avisa solo de las de tu alrededor (hasta " + MaximoEquiposSinInternet + ").";
+                return null;
+            }
+
+            string lista = string.Join(",", equipos);
+            if (lista.Length > LargoMaximoAviso)
+            {
+                error = "Son demasiadas para un aviso: escribe solo las que tengas más cerca.";
+                return null;
+            }
+
+            return lista;
+        }
+
+        /// <summary>
+        /// El nombre que se guarda: un numero solo ("8") o uno con el mismo
+        /// prefijo que este equipo escrito de otra forma ("pc 8", "PC08",
+        /// "PC-008") lleva el prefijo de este equipo y la cifra SIN ceros a la
+        /// izquierda: "PC-8". Sin ceros porque desde la PC-10 no se sabe si el
+        /// laboratorio los usa, y asi la misma maquina se llama igual la avise
+        /// quien la avise. Uno de otro formato se queda como se escribio; si este
+        /// equipo es solo un numero, "PC-8" se guarda como "8".
+        /// </summary>
+        private static string ComoEsteEquipo(string equipo, string esteEquipo)
+        {
+            if (string.IsNullOrWhiteSpace(esteEquipo))
+            {
+                return equipo;
+            }
+
+            Match este = NumeroConPrefijo.Match(esteEquipo.Trim());
+            Match escrito = NumeroConPrefijo.Match(equipo);
+            if (!este.Success || !escrito.Success)
+            {
+                return equipo;
+            }
+
+            // Si este equipo es solo un numero ("7"), una etiqueta sin cifras delante
+            // ("PC-8", "pc 8") es la misma forma de llamarlas: se guarda "8".
+            string prefijo = escrito.Groups[1].Value;
+            string prefijoEste = SoloLetrasYCifras(este.Groups[1].Value);
+            bool mismoPrefijo = SoloLetrasYCifras(prefijo) == prefijoEste
+                || (prefijoEste.Length == 0 && !prefijo.Any(char.IsDigit));
+            if (prefijo.Length > 0 && !mismoPrefijo)
+            {
+                return equipo;
+            }
+
+            return este.Groups[1].Value + SinCeros(escrito.Groups[2].Value);
+        }
+
+        /// <summary>Para comparar maquinas: "PC-07", "pc 7" y "PC7" son la misma ("PC|7").</summary>
+        internal static string ClaveDeEquipo(string equipo)
+        {
+            string limpio = (equipo ?? "").Trim();
+            Match partes = NumeroConPrefijo.Match(limpio);
+            return partes.Success
+                ? SoloLetrasYCifras(partes.Groups[1].Value) + "|" + SinCeros(partes.Groups[2].Value)
+                : SoloLetrasYCifras(limpio);
+        }
+
+        private static string SoloLetrasYCifras(string texto)
+        {
+            return new string(texto.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
+        }
+
+        private static string SinCeros(string cifras)
+        {
+            string numero = cifras.TrimStart('0');
+            return numero.Length == 0 ? "0" : numero;
+        }
+
+        /// <summary>
+        /// Cuenta los avisos: cada texto es la lista de una bitacora ("12,7") o
+        /// varias unidas con '|'. Una maquina cuenta una vez por bitacora, y se
+        /// junta aunque se haya escrito distinto (ClaveDeEquipo). Las mas avisadas
+        /// primero; a igual numero, en orden (PC-2 antes que PC-10).
+        /// </summary>
+        public static List<EquipoSinInternet> ContarSinInternet(IEnumerable<string> listas)
+        {
+            Dictionary<string, EquipoSinInternet> porEquipo = new Dictionary<string, EquipoSinInternet>(StringComparer.Ordinal);
+            foreach (string bitacora in listas.Where(l => !string.IsNullOrWhiteSpace(l)).SelectMany(l => l.Split('|')))
+            {
+                HashSet<string> enEsta = new HashSet<string>(StringComparer.Ordinal);
+                foreach (string equipo in bitacora.Split(',').Select(e => e.Trim()).Where(e => e.Length > 0))
+                {
+                    string clave = ClaveDeEquipo(equipo);
+                    if (!enEsta.Add(clave))
+                    {
+                        continue;
+                    }
+
+                    EquipoSinInternet contado;
+                    if (!porEquipo.TryGetValue(clave, out contado))
+                    {
+                        contado = new EquipoSinInternet { Equipo = equipo };
+                        porEquipo[clave] = contado;
+                    }
+
+                    contado.Alumnos++;
+                }
+            }
+
+            return porEquipo.Values
+                .OrderByDescending(e => e.Alumnos)
+                .ThenBy(e => OrdenDeEquipo(e.Equipo))
+                .ToList();
+        }
+
+        /// <summary>Prefijo y numero, para ordenar PC-2 antes que PC-10.</summary>
+        private static Tuple<string, long> OrdenDeEquipo(string equipo)
+        {
+            Match partes = NumeroConPrefijo.Match(equipo ?? "");
+            long numero;
+            return partes.Success && long.TryParse(SinCeros(partes.Groups[2].Value), out numero)
+                ? Tuple.Create(SoloLetrasYCifras(partes.Groups[1].Value), numero)
+                : Tuple.Create(SoloLetrasYCifras(equipo ?? ""), -1L);
+        }
+
+        // ---------------------------------------------------------------------
+        // Los equipos del laboratorio, para marcarlos en el paso 3 (sin migracion:
+        // no hay tabla de equipos, solo las bitacoras que registraron)
+        // ---------------------------------------------------------------------
+
+        /// <summary>Dias hacia atras: los mismos que la columna "Equipos (30 dias)" de Laboratorios en el ADM.</summary>
+        public const int DiasEquiposRegistrados = 30;
+
+        // Lo que se ofrece para marcar: letras, cifras, espacio, punto, guion y
+        // guion bajo, empezando por letra o cifra, hasta 30. Nada de ',' ni '|'
+        // (separan los avisos guardados) ni '&' o caracteres de control (en la
+        // casilla y en la copia local).
+        private static readonly Regex NombreDeEquipoRegistrado = new Regex(@"^[\p{L}\p{Nd}][\p{L}\p{Nd} ._\-]{0,29}\z");
+        // Los que pone Windows si nadie fijo el numero: no dicen que maquina es.
+        private static readonly Regex NombreDeWindows = new Regex(@"^(DESKTOP|LAPTOP|WIN)-", RegexOptions.IgnoreCase);
+
+        /// <summary>
+        /// Los equipos que registraron bitacoras en este laboratorio en los ultimos
+        /// DiasEquiposRegistrados dias, ya limpios (LimpiarEquiposRegistrados).
+        /// Solo las del DigBit nuevo (registrado_en): el sistema anterior guardaba
+        /// el nombre de Windows de donde corriera, a veces el de una persona, y no
+        /// sabia de laboratorios. Puede lanzar: quien llama decide (sin lista, el
+        /// alumno escribe el numero).
+        /// </summary>
+        public static List<string> EquiposDelLaboratorio(MySqlConnection conexion, int idLaboratorio)
+        {
+            List<KeyValuePair<string, long>> leidos = new List<KeyValuePair<string, long>>();
+            // GROUP BY BINARY: si no, la base junta "pc-07" con "PC-07" y se queda
+            // con cualquiera; se juntan en C#, con la escritura mas reciente. MIN y
+            // UNIX_TIMESTAMP: valen con ONLY_FULL_GROUP_BY (MySQL 8) y en MariaDB 5.5,
+            // y una fecha en ceros no rompe la lectura.
+            using (MySqlCommand comando = new MySqlCommand(@"
+                SELECT MIN(rb.numero_computadora) AS equipo, UNIX_TIMESTAMP(MAX(rb.registrado_en)) AS ultima
+                FROM registros_bitacoras rb
+                INNER JOIN codigos_accesos ca ON ca.idcodigos_accesos = rb.fk_codigo_accesos
+                WHERE ca.laboratorios_idlaboratorios = @Lab
+                  AND COALESCE(ca.fecha, DATE(ca.hora_registro)) >= CURDATE() - INTERVAL @Dias DAY
+                  AND rb.registrado_en IS NOT NULL
+                  AND rb.numero_computadora IS NOT NULL AND rb.numero_computadora <> ''
+                GROUP BY BINARY rb.numero_computadora", conexion))
+            {
+                comando.Parameters.AddWithValue("@Lab", idLaboratorio);
+                comando.Parameters.AddWithValue("@Dias", DiasEquiposRegistrados);
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        long ultima = reader.IsDBNull(1) ? 0 : Convert.ToInt64(reader.GetValue(1));
+                        leidos.Add(new KeyValuePair<string, long>(reader.GetString(0), ultima));
+                    }
+                }
+            }
+
+            return LimpiarEquiposRegistrados(leidos);
+        }
+
+        /// <summary>
+        /// Lo leido de la base (nombre y cuando registro por ultima vez), listo para
+        /// marcar: sin los nombres que no se podrian guardar en un aviso ni los que
+        /// pone Windows (DESKTOP-...), con las formas de llamar a la misma maquina
+        /// juntas (MismoEquipo: "PC-07" y "pc 7", o "7" y "DATABASE-07" si se
+        /// renombro; queda la mas reciente) y en orden (PC-2 antes que PC-10).
+        /// </summary>
+        internal static List<string> LimpiarEquiposRegistrados(IEnumerable<KeyValuePair<string, long>> leidos)
+        {
+            List<string> quedan = new List<string>();
+            foreach (KeyValuePair<string, long> leido in leidos
+                .Select(l => new KeyValuePair<string, long>((l.Key ?? "").Trim(), l.Value))
+                .Where(l => NombreDeEquipoRegistrado.IsMatch(l.Key) && !NombreDeWindows.IsMatch(l.Key))
+                .OrderByDescending(l => l.Value)
+                .ThenBy(l => l.Key, StringComparer.Ordinal))
+            {
+                // De la mas reciente a la mas vieja: la que ya esta gana.
+                if (!quedan.Any(q => MismoEquipo(q, leido.Key)))
+                {
+                    quedan.Add(leido.Key);
+                }
+            }
+
+            return quedan
+                .OrderBy(OrdenDeEquipo)
+                .ThenBy(e => e, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        /// <summary>
+        /// Si dos nombres son la misma maquina: escrita distinto ("PC-07", "pc 7",
+        /// "PC7"), o una solo con el numero y la otra con una etiqueta sin cifras
+        /// delante ("7" y "PC-07"), como en ComoEsteEquipo.
+        /// </summary>
+        internal static bool MismoEquipo(string uno, string otro)
+        {
+            if (string.IsNullOrWhiteSpace(uno) || string.IsNullOrWhiteSpace(otro))
+            {
+                return false;
+            }
+
+            if (ClaveDeEquipo(uno) == ClaveDeEquipo(otro))
+            {
+                return true;
+            }
+
+            Match a = NumeroConPrefijo.Match(uno.Trim());
+            Match b = NumeroConPrefijo.Match(otro.Trim());
+            if (!a.Success || !b.Success || SinCeros(a.Groups[2].Value) != SinCeros(b.Groups[2].Value))
+            {
+                return false;
+            }
+
+            string prefijoA = a.Groups[1].Value;
+            string prefijoB = b.Groups[1].Value;
+            return (prefijoA.Length == 0 && !prefijoB.Any(char.IsDigit)) || (prefijoB.Length == 0 && !prefijoA.Any(char.IsDigit));
+        }
+
+        /// <summary>
+        /// El aviso del paso 3 cuando hay lista: lo marcado, tal cual sale en la
+        /// lista, y lo escrito para las que no estan (NormalizarEquiposSinInternet).
+        /// Una escrita que es de la lista se guarda con el nombre de la lista: en la
+        /// "11", escribir "7" es la "PC-07", no otra. Los mismos limites que al
+        /// escribirlas (MaximoEquiposSinInternet, LargoMaximoAviso). Null y el error
+        /// redactado para el alumno si no se puede guardar.
+        /// </summary>
+        /// <param name="lista">Lo que se le ofrecio para marcar (vacia si no hubo lista).</param>
+        /// <param name="esteEquipo">El numero configurado de esta maquina, o null.</param>
+        public static string UnirEquiposSinInternet(IList<string> marcados, IList<string> lista, string escrito, string esteEquipo, out string error)
+        {
+            error = null;
+            lista = lista ?? new List<string>();
+            List<string> equipos = new List<string>();
+            foreach (string marcado in marcados ?? new List<string>())
+            {
+                string equipo = (marcado ?? "").Trim();
+                if (equipo.Length > 0 && !equipos.Any(e => MismoEquipo(e, equipo)))
+                {
+                    equipos.Add(equipo);
+                }
+            }
+
+            // Solo comas, ";" o "y" (lo que queda al borrar un numero) no es haber escrito nada.
+            if (!string.IsNullOrWhiteSpace(SeparadorDeEquipos.Replace(escrito ?? "", "")))
+            {
+                string escritos = NormalizarEquiposSinInternet(escrito, esteEquipo, out error);
+                if (error != null)
+                {
+                    return null;
+                }
+
+                foreach (string equipo in escritos.Split(','))
+                {
+                    string deLaLista = lista.FirstOrDefault(l => MismoEquipo(l, equipo)) ?? equipo;
+                    if (!equipos.Any(e => MismoEquipo(e, deLaLista)))
+                    {
+                        equipos.Add(deLaLista);
+                    }
+                }
+            }
+
+            if (equipos.Count == 0)
+            {
+                error = lista.Count > 0
+                    ? "Marca la computadora sin internet (o escribe su número), o elige «No»."
+                    : "Escribe el número de la computadora sin internet, o elige «No».";
+                return null;
+            }
+
+            string esta = equipos.FirstOrDefault(e => MismoEquipo(e, esteEquipo));
+            if (esta != null)
+            {
+                error = "La " + esta + " es esta computadora: si no tiene internet, elige «Reportar una falla» en el paso 2.";
+                return null;
+            }
+
+            if (equipos.Count > MaximoEquiposSinInternet)
+            {
+                error = "Avisa solo de las de tu alrededor (hasta " + MaximoEquiposSinInternet + ").";
+                return null;
+            }
+
+            string aviso = string.Join(",", equipos);
+            if (aviso.Length > LargoMaximoAviso)
+            {
+                error = "Son demasiadas para un aviso: marca solo las que tengas más cerca.";
+                return null;
+            }
+
+            return aviso;
+        }
+
+        /// <summary>
+        /// Corto, para una celda: "Sin internet: 12 (2 avisos)" o "Sin internet:
+        /// 12 (2), 7 (1), 9 (1) y 2 más" (solo las tres mas avisadas). Largo:
+        /// "Sin internet: equipo 12 (lo avisaron 2 alumnos) y equipo 7 (lo avisó 1
+        /// alumno)", todas. Vacio si no hay ninguno.
+        /// </summary>
+        public static string DescribirSinInternet(IList<EquipoSinInternet> equipos, bool corto)
+        {
+            if (equipos == null || equipos.Count == 0)
+            {
+                return "";
+            }
+
+            if (corto)
+            {
+                const int Visibles = 3;
+                return "Sin internet: " + (equipos.Count == 1
+                    ? equipos[0].Equipo + " (" + equipos[0].Alumnos + (equipos[0].Alumnos == 1 ? " aviso)" : " avisos)")
+                    : string.Join(", ", equipos.Take(Visibles).Select(e => e.Equipo + " (" + e.Alumnos + ")"))
+                      + (equipos.Count > Visibles ? " y " + (equipos.Count - Visibles) + " más" : ""));
+            }
+
+            return "Sin internet: " + Unir(equipos.Select(e => "equipo " + e.Equipo
+                + (e.Alumnos == 1 ? " (lo avisó 1 estudiante)" : " (lo avisaron " + e.Alumnos + " estudiantes)")).ToList());
+        }
+
+        /// <summary>
+        /// Lo que aviso un alumno de los equipos de alrededor, para el reporte de
+        /// su fila (tablas y PDF): "Avisó sin internet: 11 y 13", o "" si nada.
+        /// </summary>
+        public static string AvisoSinInternet(DataRow fila)
+        {
+            if (!fila.Table.Columns.Contains("avisa_sin_internet"))
+            {
+                return "";
+            }
+
+            List<string> equipos = fila["avisa_sin_internet"].ToString().Split(',').Select(e => e.Trim()).Where(e => e.Length > 0).ToList();
+            return equipos.Count == 0 ? "" : "Avisó sin internet: " + Unir(equipos);
+        }
+
+        /// <summary>"a", "a y b", "a, b y c".</summary>
+        private static string Unir(IList<string> partes)
+        {
+            return partes.Count == 1
+                ? partes[0]
+                : string.Join(", ", partes.Take(partes.Count - 1)) + " y " + partes[partes.Count - 1];
+        }
 
         /// <summary>
         /// Las fallas de la lista de cada area, las que elige el alumno al
@@ -456,8 +1064,9 @@ namespace DigBit.conexion
 
         /// <summary>
         /// Solo lo que el alumno reporto, para la columna de comentarios de las
-        /// tablas y el PDF: "Red: sin internet | Hardware: teclado". Si no
-        /// reporto nada, "Sin novedad".
+        /// tablas y el PDF: "Red: sin internet | Hardware: teclado", y al final lo
+        /// que aviso de otros equipos (AvisoSinInternet). Si no reporto nada,
+        /// "Sin novedad".
         /// </summary>
         public static string DescribirFallas(DataRow fila)
         {
@@ -472,20 +1081,30 @@ namespace DigBit.conexion
                 partes.Add(char.ToUpper(area[0]) + area.Substring(1) + ": " + DetalleDeFalla(fila, area));
             }
 
+            string aviso = AvisoSinInternet(fila);
+            if (aviso.Length > 0)
+            {
+                partes.Add(aviso);
+            }
+
             return partes.Count == 0 ? "Sin novedad" : string.Join(" | ", partes);
         }
 
         /// <summary>
         /// Guarda la bitacora del alumno en una sesion. Sustituye a consultaFinal
-        /// (que buscaba la sesion por el texto del codigo). Mismos mensajes.
+        /// (que buscaba la sesion por el texto del codigo). Dice donde quedo: en
+        /// el servidor, o en este equipo (sin conexion, o porque la red se cayo
+        /// justo al guardar), de donde se envia sola.
         /// </summary>
-        public bool consultaFinalSesion(int idSesion, string matricula, string computadora, string fallared, string comentariored,
-            string fallahardware, string comentariohardware, string fallasotware, string comentariosoftware)
+        /// <param name="equiposSinInternet">Otros equipos que el alumno vio sin internet ("11,13"), o null.</param>
+        public ResultadoGuardado GuardarBitacora(int idSesion, string matricula, string computadora, string fallared, string comentariored,
+            string fallahardware, string comentariohardware, string fallasotware, string comentariosoftware, string equiposSinInternet)
         {
             // Fase 4: sin servidor la bitacora se guarda en la cola local del equipo.
             if (SinConexion.Activo || (idSesion == 0 && Datos_User.SesionSinConexion != null))
             {
-                return GuardarSinConexion(matricula, computadora, fallared, comentariored, fallahardware, comentariohardware, fallasotware, comentariosoftware);
+                return GuardarSinConexion(Datos_User.SesionSinConexion, false, matricula, computadora, fallared, comentariored,
+                    fallahardware, comentariohardware, fallasotware, comentariosoftware, equiposSinInternet);
             }
 
             try
@@ -493,14 +1112,29 @@ namespace DigBit.conexion
                 VentanaCodigo ventana = ObtenerVentanaSesion(idSesion);
                 if (ventana == null)
                 {
-                    MessageBox.Show("La sesion de esta clase ya no existe.", "Codigo no valido", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return false;
+                    MessageBox.Show("La sesión de esta clase ya no existe. Vuelve a escribir el código o a elegir tu clase.", "Código no válido", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return ResultadoGuardado.NoGuardada;
                 }
 
                 if (ventana.Estado != EstadoCodigo.Vigente)
                 {
-                    MessageBox.Show("El codigo ya no esta vigente (valido hasta las " + ventana.Fin.ToString("HH:mm") + "). Pidele uno nuevo a tu profesor.", "Codigo expirado", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return false;
+                    // Con el modo del laboratorio se sabe que hacer; sin el, lo de siempre.
+                    ModoCodigo? modo = null;
+                    try
+                    {
+                        using (MySqlConnection conexion = mconexion.GetConexion())
+                        {
+                            modo = ModosDeAcceso.Leer(conexion, ventana.IdLaboratorio);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Aviso("Bitacora de " + matricula + " fuera de hora: no se pudo leer el modo del laboratorio: " + ex.Message);
+                    }
+
+                    MessageBox.Show(FueraDeHora(ventana, modo), ventana.EsUsoLibre ? "Uso libre terminado" : "Clase terminada",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return ResultadoGuardado.NoGuardada;
                 }
 
                 using (MySqlConnection conexion = mconexion.GetConexion())
@@ -512,7 +1146,7 @@ namespace DigBit.conexion
                         object resultado = cmdUsuario.ExecuteScalar();
                         if (resultado == null)
                         {
-                            throw new Exception("No se encontro al alumno con matricula " + matricula + ".");
+                            throw new BitacoraImposibleException("No se encontro al alumno con matricula " + matricula + ".");
                         }
 
                         idUsuario = Convert.ToInt32(resultado);
@@ -523,17 +1157,30 @@ namespace DigBit.conexion
                     // a registrarse (se fue la luz, se reinicio el equipo) no se inserta
                     // otra ni se cambia la hora: con clases seguidas del mismo profesor,
                     // la hora es lo que dice cuando llego. No basta el UNIQUE
-                    // (fk_codigo_accesos, fk_usuario): la base del TESCHI no puede
-                    // llevarlo por sus duplicados historicos.
+                    // (fk_codigo_accesos, fk_usuario) de la 03: una base con duplicados
+                    // viejos (la base vieja de la escuela) no lo tiene.
+                    // Los equipos sin internet y la hora de llegada, solo si la base ya
+                    // tiene sus columnas (db/10): sin ellas todo sigue como antes.
+                    bool conAviso = !string.IsNullOrEmpty(equiposSinInternet) && Esquema.EquiposSinInternet(conexion);
+                    bool conLlegada = Esquema.HoraDeLlegada(conexion);
+                    if (!string.IsNullOrEmpty(equiposSinInternet) && !conAviso)
+                    {
+                        Log.Aviso("El alumno " + matricula + " aviso de equipos sin internet (" + equiposSinInternet
+                            + "), pero la base aun no tiene donde guardarlo (falta db/10).");
+                    }
+
                     using (MySqlCommand cmdInsertar = new MySqlCommand(@"
                         INSERT INTO registros_bitacoras
                             (fk_codigo_accesos, fk_usuario, numero_computadora, falla_red, comentarios_red, falla_hardware, comentarios_hardware,
-                             falla_software, comentarios_software, registrado_en)
+                             falla_software, comentarios_software, registrado_en"
+                            + (conAviso ? ", equipos_sin_internet" : "") + (conLlegada ? ", recibido_en" : "") + @")
                         SELECT @IdCodigoAcceso, @codigo_usuario, @computadora, @fallared, @comentariored, @fallahardware, @comentariohardware,
-                               @fallasoftware, @comentariosoftware, NOW()
+                               @fallasoftware, @comentariosoftware, NOW()"
+                            + (conAviso ? ", @equipos" : "") + (conLlegada ? ", NOW()" : "") + @"
                         FROM DUAL
                         WHERE NOT EXISTS (SELECT 1 FROM registros_bitacoras WHERE fk_codigo_accesos = @IdCodigoAcceso AND fk_usuario = @codigo_usuario)", conexion))
                     {
+                        cmdInsertar.Parameters.AddWithValue("@equipos", equiposSinInternet ?? "");
                         cmdInsertar.Parameters.AddWithValue("@IdCodigoAcceso", idSesion);
                         cmdInsertar.Parameters.AddWithValue("@codigo_usuario", idUsuario);
                         cmdInsertar.Parameters.AddWithValue("@computadora", computadora);
@@ -544,30 +1191,116 @@ namespace DigBit.conexion
                         cmdInsertar.Parameters.AddWithValue("@fallasoftware", fallasotware);
                         cmdInsertar.Parameters.AddWithValue("@comentariosoftware", comentariosoftware);
 
-                        if (cmdInsertar.ExecuteNonQuery() == 0)
+                        int filas;
+                        try
+                        {
+                            filas = cmdInsertar.ExecuteNonQuery();
+                        }
+                        catch (MySqlException ex) when (ex.Number == 1213)
+                        {
+                            // Dos alumnos de la misma sesion a la vez: el NOT EXISTS
+                            // puede interbloquearse. InnoDB deshizo la orden; una vez mas.
+                            Log.Aviso("Bitacora de " + matricula + ": interbloqueo al guardar; se reintenta una vez.");
+                            filas = cmdInsertar.ExecuteNonQuery();
+                        }
+
+                        if (filas == 0)
                         {
                             // Ya tenia una: la primera se queda como estaba, con su hora.
                             Log.Info("Bitacora de " + matricula + " no guardada: ya tenia una en la sesion " + idSesion + ".");
-                            MessageBox.Show("Ya registraste tu bitacora con este codigo.", "Registro duplicado", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                            return false;
+                            MessageBox.Show("Ya registraste tu bitácora con este código.", "Registro duplicado", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            return ResultadoGuardado.NoGuardada;
+                        }
+
+                        if (filas != 1)
+                        {
+                            // -1: el servidor aborto la orden. No se da por guardada: va a la cola.
+                            throw new EnvioIncompletoException("El servidor no confirmo la bitacora de " + matricula + " (respuesta " + filas + ").");
                         }
 
                         // Sin mensaje: la pantalla del alumno confirma el registro.
-                        return true;
+                        return ResultadoGuardado.EnServidor;
                     }
                 }
             }
             catch (MySqlException ex) when (ex.Number == 1062)
             {
-                MessageBox.Show("Ya registraste tu bitacora con este codigo.", "Registro duplicado", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return false;
+                MessageBox.Show("Ya registraste tu bitácora con este código.", "Registro duplicado", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return ResultadoGuardado.NoGuardada;
+            }
+            catch (BitacoraImposibleException ex)
+            {
+                // Su matricula ya no esta en la base (se borro su cuenta despues de
+                // entrar): el texto de la excepcion es para el log.
+                Log.Error("Guardar la bitacora en la sesion " + idSesion, ex);
+                MessageBox.Show("Tu matrícula no está registrada en el servidor. Avisa a la persona responsable del laboratorio.", "Bitácora no registrada",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return ResultadoGuardado.NoGuardada;
+            }
+            catch (Exception ex) when (ColaBitacoras.Clasificar(ex) != ClaseDeFallo.DeLaBitacora)
+            {
+                // Se cayo la red (o el servidor no acepta la bitacora) justo al
+                // guardar. Antes se perdia con un "Error al insertar". Ahora va a la
+                // cola, como sin conexion, y se envia sola. Es seguro aunque el
+                // INSERT hubiera llegado a confirmarse antes del corte: al subirla,
+                // el NOT EXISTS la descarta como repetida.
+                Log.Error("Guardar la bitacora en la sesion " + idSesion + "; se guarda en este equipo para enviarla despues", ex);
+                VentanaCodigo validada = Datos_User.VentanaActual;
+                if (validada == null || validada.IdCodigo != idSesion)
+                {
+                    MessageBox.Show("No se pudo guardar tu bitácora: no hubo conexión con el servidor." + Environment.NewLine + Environment.NewLine
+                        + "Vuelve a escribir el código o a elegir tu clase.", "Sin conexión", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return ResultadoGuardado.NoGuardada;
+                }
+
+                ResultadoGuardado guardado = GuardarSinConexion(SesionLocal.DesdeVentana(validada), true, matricula, computadora, fallared, comentariored,
+                    fallahardware, comentariohardware, fallasotware, comentariosoftware, equiposSinInternet);
+                if (guardado == ResultadoGuardado.EnEsteEquipo && ColaBitacoras.Clasificar(ex) == ClaseDeFallo.SinConexion)
+                {
+                    // Que el siguiente alumno no espere el tiempo de conexion en cada
+                    // paso: si hay copia local, a modo sin conexion hasta que vuelva.
+                    // Solo si de verdad no se llega al servidor: con un bloqueo o un
+                    // permiso que falta, el siguiente entraria sin contrasena.
+                    SinConexion.IntentarActivar(ex.Message);
+                }
+
+                return guardado;
             }
             catch (Exception ex)
             {
+                // Aqui solo llega lo que es de la bitacora (Clasificar): un dato que la base
+                // rechaza, como un comentario demasiado largo o con simbolos que no admite.
                 Log.Error("Guardar la bitacora en la sesion " + idSesion, ex);
-                MessageBox.Show("Error al insertar el registro en la bitacora: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return false;
+                MessageBox.Show("No se pudo guardar tu bitácora: el servidor rechazó alguno de sus datos "
+                    + "(un comentario muy largo o con símbolos que no admite, por ejemplo)." + Environment.NewLine + Environment.NewLine
+                    + "Acorta o revisa lo que escribiste en «Otro» e inténtalo de nuevo; si sigue, " + MensajeDeFallo.AvisaAlLaboratorio + ".",
+                    "Bitácora no registrada", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return ResultadoGuardado.NoGuardada;
             }
         }
+    }
+
+    /// <summary>Donde quedo una bitacora al pulsar Registrar.</summary>
+    internal enum ResultadoGuardado
+    {
+        NoGuardada,
+        EnServidor,
+        /// <summary>En la cola de este equipo: se envia sola (EnviadorBitacoras).</summary>
+        EnEsteEquipo
+    }
+
+    /// <summary>Lo que va arriba en el PDF de una sesion (Consultas.ConsultarDatosPdfSesion), ya en texto.</summary>
+    internal sealed class EncabezadoPdfSesion
+    {
+        /// <summary>"07:00".</summary>
+        public string HoraEntrada;
+        public string HoraSalida;
+        /// <summary>"Martes 29/09/2026": el dia de la semana y dd/MM/yyyy.</summary>
+        public string Fecha;
+        /// <summary>"Nombre Apellidos"; vacio en el uso libre.</summary>
+        public string Profesor;
+        public string Grupo;
+        public string Materia;
+        public string Laboratorio;
     }
 }

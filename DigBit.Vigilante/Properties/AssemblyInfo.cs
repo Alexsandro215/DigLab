@@ -2,7 +2,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 
 [assembly: AssemblyTitle("DigBit.Vigilante")]
-[assembly: AssemblyDescription("Cierra la sesion de Windows del alumno cuando vence su codigo de acceso de DigBit.")]
+[assembly: AssemblyDescription("Cierra la sesion de Windows de quien usa el equipo cuando vence su codigo de acceso de DigBit.")]
 [assembly: AssemblyProduct("DigBit")]
 [assembly: AssemblyCopyright("Copyright ©  2024")]
 [assembly: ComVisible(false)]

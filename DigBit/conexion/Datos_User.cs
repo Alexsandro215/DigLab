@@ -15,8 +15,9 @@ namespace DigBit.conexion
 
         /// <summary>
         /// Tipo del usuario con la sesion abierta: 1 alumno, 2 profesor,
-        /// 3 administrador, 0 nadie. Lo fija el login y sirve para que una
-        /// pantalla no se abra a quien no le toca.
+        /// 3 administrador, 4 encargado de laboratorio (solo consulta, ver
+        /// Infraestructura.Permisos), 0 nadie. Lo fija el login y sirve para que
+        /// una pantalla no se abra a quien no le toca.
         /// </summary>
         public static int TipoUsuario { get; set; }
 
@@ -49,6 +50,11 @@ namespace DigBit.conexion
         // para encolar la bitacora (VentanaActual.IdCodigo es 0 en ese caso).
         public static SesionLocal SesionSinConexion { get; set; }
 
+        // Contrasenas equivocadas al volver a pedirla antes de un cambio delicado
+        // (DialogoContrasenaAdmin) en esta sesion: cuentan aunque se cierre el
+        // dialogo y se vuelva a abrir, y vuelven a cero al acertar.
+        public static int ConfirmacionesFallidas { get; set; }
+
         // Al cerrar sesion: sin esto el siguiente usuario del mismo equipo hereda
         // la matricula y el codigo del anterior (todo es estatico).
         public static void Limpiar()
@@ -58,6 +64,9 @@ namespace DigBit.conexion
             TipoUsuario = 0;
             VentanaActual = null;
             SesionSinConexion = null;
+            ConfirmacionesFallidas = 0;
+            // La del encargado era de solo consulta: el siguiente vuelve a la del equipo.
+            Conexion.UsarCuentaDelEquipo();
         }
     }
 }

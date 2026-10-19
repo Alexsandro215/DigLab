@@ -250,11 +250,13 @@ namespace DigBit.Vigilante
         private void EnviarAviso(SesionActiva sesion)
         {
             string titulo = "DigBit";
-            string mensaje = "Tu sesion en este equipo termina a las " + sesion.FinLocal.ToString("HH:mm") + ". Guarda tu trabajo y cierra tus programas.";
+            string hora = sesion.FinLocal.ToString("HH:mm");
+            // Lo que lee la persona va con su acento (escrito \u00f3 porque este archivo es ASCII); el log, en ASCII.
+            string mensaje = "Tu sesi\u00f3n en este equipo termina a las " + hora + ". Guarda tu trabajo y cierra tus programas.";
 
             if (simular)
             {
-                Log.Aviso("SIMULACION: aqui se avisaria en la sesion " + sesion.SesionWindows + ": " + mensaje);
+                Log.Aviso("SIMULACION: aqui se avisaria en la sesion " + sesion.SesionWindows + " que la suya termina a las " + hora + ".");
                 return;
             }
 

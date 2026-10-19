@@ -13,11 +13,23 @@
       1. Respalda la base entera con mysqldump y comprueba que el respaldo sirve.
       2. Pasa db/00_revision_previa.sql, que no cambia nada, y SE DETIENE si
          alguna comprobacion dice BLOQUEA.
-      3. Aplica 03, 04, 05, 06, 08 y 09 en orden, parando en el primer error.
+      3. Aplica 03, 04, 05, 06 y de la 08 a la 21 en orden, parando en el primer error.
       4. Vuelve a pasar la revision para enseñar como quedo.
 
-    Las seis migraciones son repetibles: si una ya estaba aplicada lo dice y
+    Las dieciocho migraciones son repetibles: si una ya estaba aplicada lo dice y
     sigue. Se pueden volver a pasar sin romper nada.
+
+    La 18 (encargados de laboratorio) crea ademas la cuenta de MySQL de solo
+    lectura digbit_consulta, y eso solo lo puede hacer root: con otro usuario
+    hace solo su primera parte y lo dice con un AVISO.
+
+    La 20 (vigencia de cada franja) no cambia nada al aplicarla: los cambios de
+    horario solo aplican desde una fecha cuando se enciende en Ajustes, y eso
+    se hace despues de actualizar TODOS los equipos (INSTALAR.md).
+
+    La 21 (historial de cambios) crea una tabla nueva y no toca nada mas. Con
+    root deja ademas que digbit_consulta la lea (los encargados ven las alertas
+    de cambios de horario); con otro usuario, lo dice con un AVISO.
 
 .EXAMPLE
     .\migrar_bd.ps1 -Servidor 127.0.0.1 -Usuario root -ContrasenaAdmin "LaDelAdministrador"
@@ -65,7 +77,19 @@ $migraciones = @(
     "05_migracion_sin_conexion.sql",
     "06_migracion_contrasenas.sql",
     "08_migracion_bajas.sql",
-    "09_codigo_por_profesor.sql"
+    "09_codigo_por_profesor.sql",
+    "10_red_y_autoregistro.sql",
+    "11_modo_de_acceso.sql",
+    "12_color_profesor.sql",
+    "13_recuperacion_contrasena.sql",
+    "14_registro_sin_clase.sql",
+    "15_reportes_profesor.sql",
+    "16_ciclo_preliminar.sql",
+    "17_asistencia_retirada.sql",
+    "18_encargados.sql",
+    "19_personalizacion_clases.sql",
+    "20_vigencia_franjas.sql",
+    "21_historial_cambios.sql"
 ) | ForEach-Object { Join-Path $carpetaDb $_ }
 
 # Repone la clave foranea que la 04 quita un momento, si una migracion se
@@ -205,8 +229,13 @@ foreach ($m in $migraciones) {
     if ($nombre -like "04_*" -and $ContrasenaAdmin) {
         $texto = $texto.Replace("MD5('CAMBIAME')", "MD5('" + $ContrasenaAdmin.Replace("'", "''") + "')")
     }
-    $errores = Nativo { $texto | & $mysql @comunes "--table" $Base 2>&1 | Where-Object { $_ -is [Management.Automation.ErrorRecord] } }
+    $salidaMigracion = Nativo { $texto | & $mysql @comunes "--table" $Base 2>&1 }
     $codigoMigracion = $LASTEXITCODE
+    $errores = @($salidaMigracion | Where-Object { $_ -is [Management.Automation.ErrorRecord] })
+    # Lo que una migracion pide hacer a mano (por ejemplo, un permiso que solo
+    # puede dar root) sale en una fila con AVISO: que no se pierda con el resto.
+    $avisos = @($salidaMigracion | Where-Object { $_ -isnot [Management.Automation.ErrorRecord] -and "$_" -match 'AVISO' } |
+        ForEach-Object { ("$_" -replace '^\|\s*', '' -replace '\s*\|\s*$', '').Trim() })
     if ($codigoMigracion -ne 0) {
         Write-Host ""
         foreach ($e in $errores) { Write-Host "   $e" -ForegroundColor Red }
@@ -236,6 +265,7 @@ foreach ($m in $migraciones) {
         throw "mysql devolvio $codigoMigracion al aplicar $nombre. Las anteriores si se aplicaron. Respaldo: $archivoRespaldo"
     }
     Write-Host " ok" -ForegroundColor Green
+    foreach ($aviso in $avisos) { Write-Host "      $aviso" -ForegroundColor Yellow }
 }
 
 # --- 4. Como quedo -----------------------------------------------------------------
@@ -245,6 +275,6 @@ Paso "4. Como quedo"
 Write-Host ""
 Write-Host "Migraciones aplicadas." -ForegroundColor Green
 if ($ContrasenaAdmin) {
-    Write-Host "El administrador es ADMIN001 con la contrasena que indicaste. Se guarda en MD5 y la aplicacion la reemplaza por PBKDF2 la primera vez que entre." -ForegroundColor Yellow
+    Write-Host "La cuenta de la administracion de DigBit es ADMIN001, con la contrasena que indicaste. Se guarda en MD5 y la aplicacion la reemplaza por PBKDF2 la primera vez que se entre con ella." -ForegroundColor Yellow
 }
 Write-Host "Respaldo por si acaso: $archivoRespaldo" -ForegroundColor DarkGray

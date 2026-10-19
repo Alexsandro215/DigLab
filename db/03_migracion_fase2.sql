@@ -8,11 +8,14 @@
 -- La aplicacion traduce el error 1062 resultante a "ya registraste tu bitacora".
 --
 -- Si la base YA trae duplicados, el UNIQUE no se anade y el script lo dice, en
--- vez de fallar. Es el caso de la base del TESCHI: tiene pares repetidos de
--- 2024 que no se borran, porque son registros reales. Para los registros nuevos
--- la regla la hace cumplir la propia aplicacion: sus dos INSERT llevan un
--- WHERE NOT EXISTS (Consultas.cs y ColaBitacoras.cs), asi que con o sin UNIQUE
--- un alumno no puede registrar dos veces con el mismo codigo.
+-- vez de fallar. Es el caso de la base VIEJA de la escuela (el respaldo del
+-- 23-09): tiene pares repetidos de 2024 que no se borran, porque son registros
+-- reales. La de sql.teschi.edu.mx no los tenia y ya lleva el UNIQUE. Para los
+-- registros nuevos la regla la hace cumplir tambien la propia aplicacion: sus
+-- INSERT llevan un WHERE NOT EXISTS (Consultas.Sesiones.cs y ColaBitacoras.cs),
+-- asi que con o sin UNIQUE un alumno no puede registrar dos veces con el mismo
+-- codigo. Al migrar los datos de la base vieja, esos pares chocaran con el
+-- UNIQUE: hay que decidir antes cual se queda.
 --
 -- Uso:
 --   mysql -u root -p < db/03_migracion_fase2.sql

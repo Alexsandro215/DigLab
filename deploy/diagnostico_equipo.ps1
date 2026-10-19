@@ -79,8 +79,22 @@ if ($hayExe) {
     $escribiblePorUsuarios = $reglasMalas.Count -gt 0
     Linea 'Carpeta protegida contra escritura' $(if ($escribiblePorUsuarios) { "NO: $($reglasMalas[0].IdentityReference) tiene $($reglasMalas[0].FileSystemRights)" } else { 'si, solo lectura para Usuarios' }) (-not $escribiblePorUsuarios)
     if ($escribiblePorUsuarios) {
-        Write-Host "     -> El alumno puede sustituir DigBit.exe. Vuelve a ejecutar configurar_equipo.ps1," -ForegroundColor Yellow
+        Write-Host "     -> Quien use el equipo puede sustituir DigBit.exe. Vuelve a ejecutar configurar_equipo.ps1," -ForegroundColor Yellow
         Write-Host "        o a mano: icacls $Destino /inheritance:r y conceder Usuarios solo RX." -ForegroundColor Yellow
+    }
+}
+
+if ($hayExe) {
+    # Desde la 1.1 DigBit sabe de los modos de acceso (db/11). Una anterior
+    # pediria el codigo del profesor aunque el laboratorio entre sin codigos o
+    # con codigos generados cada semana.
+    $version = (Get-Item (Join-Path $Destino 'DigBit.exe')).VersionInfo.FileVersion
+    $alDia = $false
+    try { $alDia = [version]$version -ge [version]'1.1' } catch { }
+    Linea 'Version de DigBit' $(if ($version) { $version } else { 'sin version' }) $alDia
+    if (-not $alDia) {
+        Write-Host '     -> Anterior a la 1.1: no sabe de los modos de acceso. Actualizala antes' -ForegroundColor Yellow
+        Write-Host '        de que este laboratorio deje el codigo unico de cada docente.' -ForegroundColor Yellow
     }
 }
 
@@ -110,6 +124,23 @@ if ($hayExe) {
             }
         } else {
             Linea 'NumeroMaquina en el config' $maquina $true
+        }
+
+        # "Olvidaste tu contrasena?" (desde la 1.1: en una anterior el enlace abre
+        # la ventana vieja, que no hace nada). Lo normal es la direccion que el
+        # administrador pone en Ajustes (en la base), y desde aqui no se ve si la
+        # hay: amarillo, no verde. Una propia en este equipo manda sobre esa, y si
+        # queda vieja este equipo no recupera nada.
+        $urlPropia = ($xml.configuration.appSettings.add | Where-Object { $_.key -eq 'UrlRecuperacion' }).value
+        if (-not $alDia) {
+            Linea 'Recuperar contrasena por correo' 'no la tiene (DigBit anterior a la 1.1)' $false
+            Write-Host '     -> El enlace abre la ventana vieja, que no hace nada. Actualiza DigBit (descongelado).' -ForegroundColor Yellow
+        } elseif ([string]::IsNullOrWhiteSpace($urlPropia)) {
+            Write-Host ('  {0,-34} ' -f 'Recuperar contrasena por correo:') -NoNewline
+            Write-Host 'la direccion de Ajustes (en la base); compruebala en el ADM con Ajustes -> Probar' -ForegroundColor Yellow
+        } else {
+            Linea 'Recuperar contrasena por correo' "PROPIA de este equipo: $urlPropia" $true
+            Write-Host '     -> Este equipo no usa la de Ajustes. Si no es a proposito, vacia UrlRecuperacion.' -ForegroundColor Yellow
         }
 
         # Los dos factores del acceso de emergencia. Se comprueba que esten los
@@ -150,13 +181,52 @@ if ($hayExe) {
                 Write-Host '     -> No se puede escribir ahi. DigBit volvera al perfil y perdera los datos al reiniciar.' -ForegroundColor Yellow
             }
 
+            # La copia del horario con la que trabaja sin servidor (CacheHorario):
+            # de cuando es y como entraban los alumnos al hacerla.
+            $copia = Join-Path $carpetaDatos 'horario_local.xml'
+            if (Test-Path $copia) {
+                try {
+                    $h = ([xml][IO.File]::ReadAllText($copia)).horario
+                    Linea 'Copia local del horario' "$($h.laboratorio), del $($h.generado)" $true
+                    Linea 'Modo de acceso en la copia' $(if ($h.modoCodigo) { $h.modoCodigo } else { 'fijo (copia de antes de la 1.1)' }) $true
+                } catch {
+                    Linea 'Copia local del horario' 'no se puede leer' $false
+                }
+            }
+
+            # Como las escribe ColaBitacoras: <pendientes><bitacora .../></pendientes>.
             $cola = Join-Path $carpetaDatos 'bitacoras_pendientes.xml'
             if (Test-Path $cola) {
-                $cuantas = ([xml](Get-Content -Raw $cola)).SelectNodes('//BitacoraPendiente').Count
-                Linea 'Bitacoras sin enviar al servidor' $cuantas ($cuantas -eq 0)
-                if ($cuantas -gt 0) {
-                    Write-Host "     -> Hay $cuantas bitacoras esperando servidor en $cola. NO borres esa carpeta." -ForegroundColor Yellow
+                $cuantas = 0
+                try { $cuantas = ([xml](Get-Content -Raw $cola)).SelectNodes('/pendientes/bitacora').Count } catch { $cuantas = -1 }
+                if ($cuantas -lt 0) {
+                    Linea 'Bitacoras sin enviar al servidor' 'el archivo no se puede leer' $false
+                    Write-Host "     -> $cola esta danado. DigBit lo apartara como .corrupto; NO lo borres, avisa." -ForegroundColor Yellow
+                } else {
+                    Linea 'Bitacoras sin enviar al servidor' $cuantas ($cuantas -eq 0)
+                    if ($cuantas -gt 0) {
+                        Write-Host "     -> Hay $cuantas bitacoras esperando servidor en $cola. NO borres esa carpeta." -ForegroundColor Yellow
+                        Write-Host '        DigBit las envia solo en cuanto hay conexion; dejalo encendido en el inicio de sesion.' -ForegroundColor Yellow
+                    }
                 }
+            }
+
+            # Las que fallaron cinco veces por un dato que la base rechaza: no se
+            # reintentan solas y hay que mirarlas a mano.
+            $rechazadas = Join-Path $carpetaDatos 'bitacoras_rechazadas.xml'
+            if (Test-Path $rechazadas) {
+                $cuantas = 0
+                try { $cuantas = ([xml](Get-Content -Raw $rechazadas)).SelectNodes('/pendientes/bitacora').Count } catch { $cuantas = -1 }
+                Linea 'Bitacoras apartadas (no se pudieron enviar)' $(if ($cuantas -lt 0) { 'el archivo no se puede leer' } else { $cuantas }) ($cuantas -eq 0)
+                if ($cuantas -ne 0) {
+                    Write-Host "     -> Revisa $rechazadas y el log de DigBit: dice por que las rechazo el servidor." -ForegroundColor Yellow
+                }
+            }
+
+            $corruptos = @(Get-ChildItem -Path $carpetaDatos -Filter 'bitacoras_*.corrupto' -ErrorAction SilentlyContinue)
+            if ($corruptos.Count -gt 0) {
+                Linea 'Colas danadas apartadas (.corrupto)' $corruptos.Count $false
+                Write-Host "     -> En $carpetaDatos. Pueden tener bitacoras sin enviar: no las borres, avisa." -ForegroundColor Yellow
             }
         }
     }

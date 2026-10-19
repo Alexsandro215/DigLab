@@ -23,12 +23,17 @@
       db\03, db\04, db\05 y db\06 en ese orden
 
     MODIFICA la base. NUNCA contra el servidor de la escuela: se niega si la
-    cadena apunta a teschi.edu.mx.
+    cadena apunta a teschi.edu.mx. Le cambia la contrasena al alumno -Matricula
+    (la deja en '123' como MD5, como el sistema viejo, y luego la migra).
+
+    Los ids se pasan como parametros, tomados de la copia: aqui no se escriben
+    nombres, matriculas ni contrasenas de personas reales.
 
 .EXAMPLE
     .\deploy\probar_esquema_teschi.ps1 `
         -CadenaConexion 'Database=teschi_otru;Server=127.0.0.1;Port=3308;User Id=root;Password=' `
-        -MysqlExe 'C:\mariadb-5.5.68-winx64\bin\mysql.exe'
+        -MysqlExe 'C:\mariadb-5.5.68-winx64\bin\mysql.exe' `
+        -IdProfesor 7 -IdAlumno 12 -Matricula 'A0012' -IdAlumno2 15
 #>
 [CmdletBinding()]
 param(
@@ -37,6 +42,20 @@ param(
 
     [Parameter(Mandatory = $true)]
     [string]$MysqlExe,
+
+    # Ids de la copia: un profesor (fk_tipo_usuario 2) y dos alumnos (tipo 1),
+    # con la matricula (numero_identificador) del primero.
+    [Parameter(Mandatory = $true)]
+    [int]$IdProfesor,
+
+    [Parameter(Mandatory = $true)]
+    [int]$IdAlumno,
+
+    [Parameter(Mandatory = $true)]
+    [string]$Matricula,
+
+    [Parameter(Mandatory = $true)]
+    [int]$IdAlumno2,
 
     [string]$Configuration = 'Release',
 
@@ -55,11 +74,12 @@ $exe = Join-Path $carpeta 'DigBit.exe'
 if (-not (Test-Path $exe)) { throw "No encuentro $exe. Compila antes: .\build.ps1 -Configuration $Configuration -NoRun" }
 $fuenteConsultas = Join-Path $PSScriptRoot '..\DigBit\conexion\Consultas.cs'
 
-# --- Ids REALES de la base del TESCHI -------------------------------------------
-$idProfesor   = 90            # docente de la copia, tipo 2
-$idAlumno     = 43            # alumno de la copia, tipo 1
-$matricula    = '0000000000'  # la de $idAlumno; su contrasena (MD5) es la de la copia
-$idAlumno2    = 53
+# --- Ids de la copia (parametros) y los de esta prueba -----------------------------
+$idProfesor   = $IdProfesor
+$idAlumno     = $IdAlumno
+$matricula    = $Matricula
+$idAlumno2    = $IdAlumno2
+if ($matricula -notmatch '^[A-Za-z0-9]+$') { throw "La matricula solo puede tener letras y numeros: $matricula" }
 $labPropio    = 1
 $labAjeno     = 2
 $idGrupo      = 2
@@ -106,7 +126,7 @@ $mVerificar   = $tContrasenas.GetMethod('Verificar', $todo)
 $mMigrar      = $asm.GetType('DigBit.conexion.Consultas').GetMethod('MigrarContrasena', $todo)
 $tHorarios    = $asm.GetType('DigBit.conexion.HorariosDatos')
 $horarios     = [Activator]::CreateInstance($tHorarios, $true)
-$mResolver    = $tHorarios.GetMethod('ResolverCodigo', [Type[]]@([string], [int], [int]))
+$mResolver    = $tHorarios.GetMethod('ResolverCodigo', [Type[]]@([string], [int], [int], [string]))
 $tCola        = $asm.GetType('DigBit.conexion.ColaBitacoras')
 $mEnviar      = $tCola.GetMethod('Enviar', $todo)
 $tPendiente   = $asm.GetType('DigBit.conexion.BitacoraPendiente')
@@ -157,7 +177,7 @@ Esperar 'y ya no pide rehash' $v.Rehash $false
 Esperar "'124' contra PBKDF2 no entra" (Verificar '124' $nueva).Ok $false
 
 # ================================================================================
-Write-Host "`n== 2. Administrador de la migracion 04" -ForegroundColor Cyan
+Write-Host "`n== 2. Cuenta de la administracion de la migracion 04" -ForegroundColor Cyan
 $fila = "$(Sql "SELECT CONCAT(fk_tipo_usuario, '|', password) FROM usuarios WHERE numero_identificador = 'ADMIN001'")".Trim()
 $tipoAdmin, $claveAdmin = $fila.Split('|')
 Esperar 'ADMIN001 es tipo 3' $tipoAdmin '3'
@@ -180,11 +200,11 @@ INSERT INTO codigos_accesos (codigo, hora_registro, materias_id_materia, grupos_
 VALUES ('$codigo', NOW() - INTERVAL 1 DAY, $idMateria, $idGrupo, $labPropio, $idProfesor, CURDATE() - INTERVAL 1 DAY, '08:00:00', '10:00');
 "@ | Out-Null
 
-$r1 = $mResolver.Invoke($horarios, [object[]]@($codigo, $labPropio, $idAlumno))
+$r1 = $mResolver.Invoke($horarios, [object[]]@($codigo, $labPropio, $idAlumno, $null))
 Esperar "$codigo en su laboratorio" $r1.Motivo 'Aceptado'
-$r2 = $mResolver.Invoke($horarios, [object[]]@($codigo, $labPropio, $idAlumno))
+$r2 = $mResolver.Invoke($horarios, [object[]]@($codigo, $labPropio, $idAlumno, $null))
 Esperar 'otra vez: misma sesion' ($r2.Ventana.IdCodigo -eq $r1.Ventana.IdCodigo) $true
-Esperar "$codigo desde otro laboratorio" ($mResolver.Invoke($horarios, [object[]]@($codigo, $labAjeno, $idAlumno))).Motivo 'OtroLaboratorio'
+Esperar "$codigo desde otro laboratorio" ($mResolver.Invoke($horarios, [object[]]@($codigo, $labAjeno, $idAlumno, $null))).Motivo 'OtroLaboratorio'
 $repetidos = "$(Sql "SELECT COUNT(*) FROM codigos_accesos WHERE codigo = '$codigo'")".Trim()
 Esperar 'el codigo existe en dos sesiones (ayer y hoy)' $repetidos '2'
 $idSesion = $r1.Ventana.IdCodigo
@@ -210,9 +230,9 @@ try {
     Esperar 'reenvio de la misma' ($mEnviar.Invoke($null, [object[]]@($c.psobject.BaseObject, (Pendiente).psobject.BaseObject))) 'Duplicada'
 }
 finally { $c.Close() }
-Esperar 'una sola bitacora de ese alumno en la sesion' "$(Sql "SELECT COUNT(*) FROM registros_bitacoras WHERE fk_codigo_accesos = $idSesion AND fk_usuario = $idAlumno")".Trim() '1'
+Esperar 'una sola bitacora de esa cuenta en la sesion' "$(Sql "SELECT COUNT(*) FROM registros_bitacoras WHERE fk_codigo_accesos = $idSesion AND fk_usuario = $idAlumno")".Trim() '1'
 Esperar 'marcada como registrada sin conexion' "$(Sql "SELECT registrado_sin_conexion FROM registros_bitacoras WHERE fk_codigo_accesos = $idSesion AND fk_usuario = $idAlumno")".Trim() '1'
-Esperar 'el alumno ya no puede volver a usar el codigo' ($mResolver.Invoke($horarios, [object[]]@($codigo, $labPropio, $idAlumno))).Motivo 'YaRegistrado'
+Esperar 'quien ya registro no puede volver a usar el codigo' ($mResolver.Invoke($horarios, [object[]]@($codigo, $labPropio, $idAlumno, $null))).Motivo 'YaRegistrado'
 
 # ================================================================================
 Write-Host "`n== 5. Insercion en linea (Consultas.cs), con su SQL leido del fuente" -ForegroundColor Cyan

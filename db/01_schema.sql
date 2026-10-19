@@ -72,6 +72,13 @@ CREATE TABLE laboratorios (
     -- conserva. Uno con historial se desactiva en vez de borrarse. En una base
     -- ya existente se anade con db/08_migracion_bajas.sql.
     activo             TINYINT(1)  NOT NULL DEFAULT 1,
+    -- Como entran los alumnos a sus clases aqui: 'fijo' con el codigo unico de
+    -- cada profesor; 'renovable' con codigos generados cada semana (uno por
+    -- clase y dia, del secreto 'codigos_secreto' de configuracion; el profesor
+    -- ve el suyo al abrir su clase); 'sin_codigo' solo llenando la bitacora.
+    -- Solo lo cambia el administrador. En una base ya existente se anade con
+    -- db/11_modo_de_acceso.sql.
+    modo_codigo        ENUM('fijo','renovable','sin_codigo') NOT NULL DEFAULT 'fijo',
     PRIMARY KEY (idlaboratorios),
     UNIQUE KEY uq_laboratorios_nombre (nombre_laboratorio)
 ) ENGINE=InnoDB;
@@ -96,9 +103,12 @@ CREATE TABLE usuarios (
     -- la primera vez que ese usuario entra bien (ver conexion/Contrasenas.cs).
     password             VARCHAR(255) NOT NULL,
     -- 1 = alumno, 2 = profesor, 3 = administrador (desde la fase 6; antes estaba
-    -- escrito en duro en Login.cs). No hay tabla de catalogo: el codigo nunca la
-    -- consulta (ver AbrirPestanaSegunTipoUsuario).
-    fk_tipo_usuario      TINYINT      NOT NULL,
+    -- escrito en duro en Login.cs), 4 = encargado de laboratorio: el panel del
+    -- administrador en solo consulta (db/18). No hay tabla de catalogo: el
+    -- codigo no la necesita (ver AbrirPestanaSegunTipoUsuario). Por defecto
+    -- alumno: el alta desde el laboratorio no la nombra, y el usuario de MySQL de
+    -- los equipos no puede escribirla (db/07). En una base ya existente, db/10.
+    fk_tipo_usuario      TINYINT      NOT NULL DEFAULT 1,
     -- 0 = dado de baja: no puede entrar, pero su historial se conserva y se le
     -- puede reactivar. Se da de baja en vez de borrar porque las claves
     -- foraneas borran en cascada sus bitacoras. En una base ya existente se
@@ -109,6 +119,11 @@ CREATE TABLE usuarios (
     -- para todas sus clases (se copia a clases.codigo). En una base ya
     -- existente se anade con db/09_codigo_por_profesor.sql.
     codigo_clase         VARCHAR(16)  NULL,
+    -- Solo profesores: el color de sus clases en los horarios y en el panel,
+    -- '#RRGGBB'. NULL = automatico (por el orden de su primera clase). Lo elige
+    -- el administrador. En una base ya existente se anade con
+    -- db/12_color_profesor.sql.
+    color_horario        VARCHAR(7)   NULL,
     PRIMARY KEY (idusuarios),
     UNIQUE KEY uq_usuarios_numero_identificador (numero_identificador),
     UNIQUE KEY uq_usuarios_codigo_clase (codigo_clase)
@@ -192,6 +207,10 @@ CREATE TABLE horarios (
     dia_semana                  TINYINT NOT NULL,
     hora_inicio                 TIME    NOT NULL,
     hora_fin                    TIME    NOT NULL,
+    -- Vigencia propia de la franja (db/20); NULL = la de su clase. Cambiar o
+    -- quitar una franja con historia le pone fin y crea la nueva desde una fecha.
+    vigente_desde               DATE    NULL,
+    vigente_hasta               DATE    NULL,
     PRIMARY KEY (idhorarios),
     KEY ix_horarios_lab_dia (laboratorios_idlaboratorios, dia_semana),
     KEY ix_horarios_clase (clases_idclases),
@@ -252,8 +271,15 @@ CREATE TABLE horario_excepciones (
 -- como historial: bitacoras y PDF siguen funcionando con ellas.
 CREATE TABLE codigos_accesos (
     idcodigos_accesos           INT         NOT NULL AUTO_INCREMENT,
-    -- Codigo de la clase (clases.codigo). Se repite en cada sesion de la misma
-    -- clase, por eso ya NO es UNIQUE.
+    -- Codigo con el que se entra a la sesion. En un laboratorio 'fijo' es el de
+    -- la clase (clases.codigo) y se repite en cada sesion, por eso ya NO es
+    -- UNIQUE; en uno 'renovable', el generado de 5 cifras de esa clase y dia
+    -- (o uno al azar sin secreto), y en uno 'sin_codigo', uno al azar
+    -- (laboratorios.modo_codigo); 'LIBRE' en las de uso libre. Nunca se cambia.
+    --
+    -- Sesion de USO LIBRE (db/14): la de un laboratorio 'sin_codigo' cuando no
+    -- hay ninguna clase. Sin profesor, materia ni grupo (NULL), sin franja ni
+    -- extra, y con el tramo libre entre clases en hora_entrada y hora_salida.
     codigo                      VARCHAR(16) NOT NULL,
     -- Momento en que se creo la sesion.
     hora_registro               DATETIME    NOT NULL,
@@ -265,8 +291,8 @@ CREATE TABLE codigos_accesos (
     materias_id_materia         INT         NULL,
     grupos_idgrupos             INT         NULL,
     laboratorios_idlaboratorios INT         NULL,
-    -- Profesor de la clase (usuarios.idusuarios).
-    usuarios_idusuarios         INT         NOT NULL,
+    -- Profesor de la clase (usuarios.idusuarios); NULL en las de uso libre.
+    usuarios_idusuarios         INT         NULL,
     horarios_idhorarios         INT         NULL,
     horario_excepciones_id      INT         NULL,
     PRIMARY KEY (idcodigos_accesos),
@@ -300,7 +326,8 @@ CREATE TABLE registros_bitacoras (
     fk_codigo_accesos     INT          NOT NULL,
     -- Alumno que llena la bitacora (usuarios.idusuarios).
     fk_usuario            INT          NOT NULL,
-    -- Environment.MachineName del equipo, no un numero.
+    -- El numero pegado en el equipo (NumeroMaquina, lo pone el instalador); si
+    -- no se configuro, el nombre de Windows.
     numero_computadora    VARCHAR(80)  NULL,
     falla_red             VARCHAR(120) NULL,
     comentarios_red       VARCHAR(500) NULL,
@@ -317,6 +344,13 @@ CREATE TABLE registros_bitacoras (
     -- Con clases seguidas del mismo profesor dice cuando llego. NULL en las
     -- bitacoras en linea de antes del 2026-09-29, que no lo guardaban.
     registrado_en         DATETIME     NULL,
+    -- Numeros de OTROS equipos que el alumno vio sin internet, separados por
+    -- comas ("11,13"). NULL si no aviso de ninguno. En una base ya existente,
+    -- esta y recibido_en se anaden con db/10_red_y_autoregistro.sql.
+    equipos_sin_internet  VARCHAR(120) NULL,
+    -- Cuando llego al servidor (su NOW()). Igual que registrado_en en linea; si
+    -- la bitacora se subio despues desde la cola del equipo, dice cuanto tardo.
+    recibido_en           DATETIME     NULL,
     PRIMARY KEY (idregistros_bitacoras),
     -- Un alumno registra UNA bitacora por codigo (por clase). Un segundo intento
     -- produce el error 1062, que consultaFinal traduce a "ya registraste tu
@@ -329,4 +363,263 @@ CREATE TABLE registros_bitacoras (
     CONSTRAINT fk_bitacoras_usuario
         FOREIGN KEY (fk_usuario) REFERENCES usuarios (idusuarios)
         ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Fallas que reporta el profesor mientras su clase esta en curso (db/15):
+-- una fila por falla, colgada de la sesion de la clase. Las ven el profesor en
+-- la bitacora de su clase y el administrador en las alertas y en Bitacoras.
+CREATE TABLE reportes_profesor (
+    idreportes_profesor INT          NOT NULL AUTO_INCREMENT,
+    fk_codigo_accesos   INT          NOT NULL,
+    -- El profesor que reporta (usuarios.idusuarios).
+    fk_usuario          INT          NOT NULL,
+    -- El numero pegado en el equipo; NULL si es del laboratorio en general.
+    numero_computadora  VARCHAR(80)  NULL,
+    area                ENUM('red','hardware','software','otro') NOT NULL,
+    falla               VARCHAR(120) NOT NULL,
+    comentarios         VARCHAR(500) NULL,
+    registrado_en       DATETIME     NOT NULL,
+    PRIMARY KEY (idreportes_profesor),
+    KEY ix_reportes_profesor_sesion (fk_codigo_accesos),
+    KEY ix_reportes_profesor_usuario (fk_usuario),
+    CONSTRAINT fk_reportes_profesor_sesion
+        FOREIGN KEY (fk_codigo_accesos) REFERENCES codigos_accesos (idcodigos_accesos)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_reportes_profesor_usuario
+        FOREIGN KEY (fk_usuario) REFERENCES usuarios (idusuarios)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Codigos para recuperar la contrasena por correo (db/13): los pide y los
+-- comprueba la API de recuperacion (api/, en un hosting con PHP), no DigBit.
+-- Guarda el HMAC-SHA256 del codigo con el secreto de la API, nunca el codigo.
+-- usuario_id NULL: una matricula que no existe (solo para limitar por IP).
+CREATE TABLE recuperacion_contrasena (
+    idrecuperacion  INT          NOT NULL AUTO_INCREMENT,
+    usuario_id      INT          NULL,
+    matricula       VARCHAR(45)  NOT NULL,
+    codigo_hash     CHAR(64)     NULL,
+    -- HMAC del correo al que salio: si la cuenta cambia de correo, el codigo deja de valer.
+    correo_hash     CHAR(64)     NULL,
+    creado_en       DATETIME     NOT NULL,
+    expira_en       DATETIME     NOT NULL,
+    intentos        INT          NOT NULL DEFAULT 0,
+    usado_en        DATETIME     NULL,
+    ip              VARCHAR(45)  NULL,
+    -- El equipo que lo pidio ("numero @ laboratorio", lo manda DigBit): limite por equipo.
+    equipo          VARCHAR(60)  NULL,
+    PRIMARY KEY (idrecuperacion),
+    KEY ix_recuperacion_usuario (usuario_id, creado_en),
+    KEY ix_recuperacion_ip (ip, creado_en),
+    KEY ix_recuperacion_equipo (equipo, creado_en),
+    KEY ix_recuperacion_creado (creado_en),
+    CONSTRAINT fk_recuperacion_usuario
+        FOREIGN KEY (usuario_id) REFERENCES usuarios (idusuarios)
+        ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- Ajustes de toda la escuela que DigBit lee de la base (db/13), para no tocar
+-- cada equipo: la direccion de la API de recuperacion ('recuperacion_url') y la
+-- clave que le manda DigBit ('recuperacion_clave'). Los pone el administrador.
+-- digbit_equipo solo puede leerla (db/07).
+CREATE TABLE configuracion (
+    clave  VARCHAR(64)   NOT NULL,
+    valor  VARCHAR(500)  NULL,
+    PRIMARY KEY (clave)
+) ENGINE=InnoDB;
+
+-- Asistencias que el profesor quita durante su clase (db/17): quien registro
+-- su bitacora sin estar en el salon. La bitacora sigue contando como bitacora;
+-- solo deja de contar como asistencia. digbit_equipo la lee, inserta y borra (db/07).
+CREATE TABLE asistencias_retiradas (
+    fk_bitacora  INT       NOT NULL,
+    fk_profesor  INT       NOT NULL,
+    retirada_en  DATETIME  NOT NULL,
+    PRIMARY KEY (fk_bitacora),
+    KEY ix_asistencias_retiradas_profesor (fk_profesor),
+    CONSTRAINT fk_asistencias_retiradas_bitacora
+        FOREIGN KEY (fk_bitacora) REFERENCES registros_bitacoras (idregistros_bitacoras)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_asistencias_retiradas_profesor
+        FOREIGN KEY (fk_profesor) REFERENCES usuarios (idusuarios)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Horario preliminar del proximo ciclo (db/16): un BORRADOR que solo ve el
+-- administrador (Horarios > Proximo ciclo). Empieza como copia de la carga de
+-- cada profesor y al publicarse crea clases y franjas normales con la vigencia
+-- del ciclo nuevo. digbit_equipo no tiene permiso sobre estas tablas (db/07).
+CREATE TABLE ciclos_preliminares (
+    idciclo        INT          NOT NULL AUTO_INCREMENT,
+    nombre         VARCHAR(60)  NOT NULL,
+    -- Primer y ultimo dia de clases: la vigencia de sus clases al publicar.
+    desde          DATE         NOT NULL,
+    hasta          DATE         NOT NULL,
+    -- El dia cuyas clases se copiaron; NULL si se empezo en blanco.
+    copiado_del    DATE         NULL,
+    estado         ENUM('borrador','publicado') NOT NULL DEFAULT 'borrador',
+    creado_por     INT          NULL,
+    creado_en      DATETIME     NOT NULL,
+    -- Al publicar: el ultimo dia que se dio a las clases de antes.
+    fin_anterior   DATE         NULL,
+    publicado_por  INT          NULL,
+    publicado_en   DATETIME     NULL,
+    PRIMARY KEY (idciclo),
+    KEY ix_ciclos_preliminares_estado (estado),
+    CONSTRAINT fk_ciclos_preliminares_creador
+        FOREIGN KEY (creado_por) REFERENCES usuarios (idusuarios)
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_ciclos_preliminares_publicador
+        FOREIGN KEY (publicado_por) REFERENCES usuarios (idusuarios)
+        ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE ciclo_profesores (
+    idciclo   INT NOT NULL,
+    profesor  INT NOT NULL,
+    estado    ENUM('por_revisar','revisado','no_sigue') NOT NULL DEFAULT 'por_revisar',
+    PRIMARY KEY (idciclo, profesor),
+    KEY ix_ciclo_profesores_profesor (profesor),
+    CONSTRAINT fk_ciclo_profesores_ciclo
+        FOREIGN KEY (idciclo) REFERENCES ciclos_preliminares (idciclo)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_ciclo_profesores_usuario
+        FOREIGN KEY (profesor) REFERENCES usuarios (idusuarios)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Una materia con un grupo: una clase al publicar. profesor NULL = "Sin profesor".
+CREATE TABLE ciclo_cargas (
+    idcarga          INT           NOT NULL AUTO_INCREMENT,
+    idciclo          INT           NOT NULL,
+    profesor         INT           NULL,
+    grupo            INT           NOT NULL,
+    materia          INT           NOT NULL,
+    quitada          TINYINT(1)    NOT NULL DEFAULT 0,
+    -- De que clase se copio (NULL = agregada a mano) y como era entonces.
+    clase_origen     INT           NULL,
+    profesor_origen  INT           NULL,
+    grupo_origen     INT           NULL,
+    materia_origen   INT           NULL,
+    -- 'lab:dia:HH:MM-HH:MM;...' ordenado por dia, inicio y laboratorio.
+    horario_origen   VARCHAR(1000) NULL,
+    clase_publicada  INT           NULL,
+    PRIMARY KEY (idcarga),
+    KEY ix_ciclo_cargas_ciclo (idciclo, profesor),
+    KEY ix_ciclo_cargas_profesor (profesor),
+    KEY ix_ciclo_cargas_grupo (grupo),
+    KEY ix_ciclo_cargas_materia (materia),
+    KEY ix_ciclo_cargas_origen (clase_origen),
+    KEY ix_ciclo_cargas_publicada (clase_publicada),
+    CONSTRAINT fk_ciclo_cargas_ciclo
+        FOREIGN KEY (idciclo) REFERENCES ciclos_preliminares (idciclo)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_ciclo_cargas_profesor
+        FOREIGN KEY (profesor) REFERENCES usuarios (idusuarios)
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_ciclo_cargas_grupo
+        FOREIGN KEY (grupo) REFERENCES grupos (idgrupos)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_ciclo_cargas_materia
+        FOREIGN KEY (materia) REFERENCES materias (id_materia)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_ciclo_cargas_origen
+        FOREIGN KEY (clase_origen) REFERENCES clases (idclases)
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_ciclo_cargas_publicada
+        FOREIGN KEY (clase_publicada) REFERENCES clases (idclases)
+        ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE ciclo_franjas (
+    idfranja     INT      NOT NULL AUTO_INCREMENT,
+    idcarga      INT      NOT NULL,
+    laboratorio  INT      NOT NULL,
+    dia_semana   TINYINT  NOT NULL,
+    hora_inicio  TIME     NOT NULL,
+    hora_fin     TIME     NOT NULL,
+    PRIMARY KEY (idfranja),
+    KEY ix_ciclo_franjas_carga (idcarga),
+    KEY ix_ciclo_franjas_lab_dia (laboratorio, dia_semana),
+    CONSTRAINT fk_ciclo_franjas_carga
+        FOREIGN KEY (idcarga) REFERENCES ciclo_cargas (idcarga)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_ciclo_franjas_laboratorio
+        FOREIGN KEY (laboratorio) REFERENCES laboratorios (idlaboratorios)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Lo que Publicar acorto de las clases de antes, para Deshacer.
+CREATE TABLE ciclo_recortes (
+    idciclo      INT   NOT NULL,
+    clase        INT   NOT NULL,
+    hasta_antes  DATE  NOT NULL,
+    PRIMARY KEY (idciclo, clase),
+    KEY ix_ciclo_recortes_clase (clase),
+    CONSTRAINT fk_ciclo_recortes_ciclo
+        FOREIGN KEY (idciclo) REFERENCES ciclos_preliminares (idciclo)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_ciclo_recortes_clase
+        FOREIGN KEY (clase) REFERENCES clases (idclases)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Lo que cada profesor elige para sus clases (db/19): una imagen (en un
+-- circulo), un color y un nombre corto. Solo lo ven sus pantallas; la clase no
+-- cambia. fk_grupo = 0 vale para todos sus grupos de esa materia (tambien los
+-- del ciclo siguiente); un grupo con su propia fila no sigue a la de la
+-- materia. La imagen ya llega recortada por DigBit (128 x 128, 60 000 bytes
+-- como mucho). digbit_equipo la lee, inserta, cambia y borra (db/07).
+CREATE TABLE personalizacion_clases (
+    fk_profesor     INT          NOT NULL,
+    fk_materia      INT          NOT NULL,
+    -- 0 = todos sus grupos de esa materia; sin clave foranea (el 0 no es un grupo).
+    fk_grupo        INT          NOT NULL DEFAULT 0,
+    color           VARCHAR(7)   NULL,
+    nombre_corto    VARCHAR(24)  NULL,
+    -- MEDIUMBLOB: con sql_mode vacio un BLOB cortaria sin error.
+    imagen          MEDIUMBLOB   NULL,
+    imagen_sha1     CHAR(40)     NULL,
+    actualizado_en  DATETIME     NOT NULL,
+    PRIMARY KEY (fk_profesor, fk_materia, fk_grupo),
+    KEY ix_personalizacion_clases_materia (fk_materia),
+    CONSTRAINT fk_personalizacion_clases_profesor
+        FOREIGN KEY (fk_profesor) REFERENCES usuarios (idusuarios)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_personalizacion_clases_materia
+        FOREIGN KEY (fk_materia) REFERENCES materias (id_materia)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Quien cambio que y cuando (db/21): cada alta, cambio, fin o baja de franjas y
+-- clases, cada cancelacion y sesion extra que se pone o se quita, cada
+-- correccion de una bitacora y cada cambio de un laboratorio o de su forma de
+-- entrar. Lo escribe DigBit en la misma transaccion que el cambio y nunca lo
+-- cambia ni lo borra. De ahi salen las alertas "Cambio de horario" y el
+-- historial de Alertas. Sin claves foraneas: no se borra con nada. "cuando" sin
+-- DEFAULT (MariaDB 5.5 no admite DEFAULT CURRENT_TIMESTAMP en DATETIME): lo
+-- pone DigBit con NOW(). digbit_admin lo escribe, digbit_consulta solo lo lee
+-- (db/18) y digbit_equipo no lo toca (db/07).
+CREATE TABLE historial_cambios (
+    idhistorial_cambios  INT           NOT NULL AUTO_INCREMENT,
+    cuando               DATETIME      NOT NULL,
+    -- Quien: su cuenta y su numero tal como entro.
+    usuario_id           INT           NULL,
+    usuario              VARCHAR(45)   NULL,
+    -- 'franja', 'clase', 'cancelacion', 'extra', 'bitacora', 'laboratorio' o 'forma_de_entrar'.
+    tipo                 VARCHAR(20)   NOT NULL,
+    -- 'alta', 'cambio', 'fin', 'quitar', 'recorte', 'activar' o 'desactivar'.
+    accion               VARCHAR(20)   NOT NULL,
+    tabla                VARCHAR(40)   NOT NULL,
+    registro_id          INT           NULL,
+    laboratorio_id       INT           NULL,
+    fecha                DATE          NULL,
+    descripcion          VARCHAR(500)  NOT NULL,
+    -- Un dato por linea; nunca el codigo de una clase (el encargado lo lee).
+    antes                TEXT          NULL,
+    despues              TEXT          NULL,
+    PRIMARY KEY (idhistorial_cambios),
+    KEY ix_historial_cambios_cuando (cuando),
+    KEY ix_historial_cambios_tipo (tipo, cuando),
+    KEY ix_historial_cambios_registro (tabla, registro_id)
 ) ENGINE=InnoDB;

@@ -1,0 +1,26 @@
+# DigBit - API de recuperacion: desde el navegador solo se abre recuperar.php.
+# Todo lo demas queda cerrado, tambien lo que alguien deje aqui despues: una
+# copia de config.php (config.php.bak, config.php~, config.php.txt...) llevaria
+# las contrasenas de la base y del correo. Lista blanca, no lista negra.
+#
+# Sin "Options -Indexes": algunos hostings no dejan cambiar Options desde un
+# .htaccess y responden 500 a todo. Con la carpeta cerrada tampoco hace falta.
+
+<IfModule mod_authz_core.c>
+    Require all denied
+    <Files "recuperar.php">
+        Require all granted
+    </Files>
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+    <Files "recuperar.php">
+        Order deny,allow
+        Allow from all
+    </Files>
+</IfModule>
+
+# Opcional, y mejor: config.php fuera de la carpeta publica. Quita el "# " y pon
+# su ruta completa (en el hosting suele ser /home/<usuario>/...):
+# SetEnv DIGBIT_API_CONFIG /home/usuario/digbit_config.php

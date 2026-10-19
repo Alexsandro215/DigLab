@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
 using DigBit.conexion;
+using DigBit.Infraestructura;
 
 namespace DigBit
 {
@@ -12,30 +13,46 @@ namespace DigBit
     /// elegido, editar, restablecer la contrasena y dar de baja o reactivar.
     /// Sustituye a las pantallas viejas de alta, edicion y borrado: ya no hace
     /// falta saberse una matricula de memoria, y quitar a un alumno ya no borra
-    /// sus bitacoras.
+    /// sus bitacoras. "Ver sus bitacoras" abre su historial (VentanaHistorialAlumno),
+    /// desde donde se exportan sus datos. En solo consulta (el encargado de
+    /// laboratorio) solo se busca y se mira: los botones que escriben no se crean.
     /// </summary>
     public class AdministrarAlumnos : PantallaAdmin
     {
-        private const string Activos = "Activos";
-        private const string DadosDeBaja = "Dados de baja";
-        private const string Todos = "Todos";
+        // Lo que se muestra es la cuenta (activa, de baja): sin "activos" ni "dados de baja".
+        private const string Activos = "Cuentas activas";
+        private const string DadosDeBaja = "Cuentas de baja";
+        private const string Todos = "Todas";
 
         private readonly AlumnosDatos datos = new AlumnosDatos();
         private readonly Dictionary<int, string> textoBusqueda = new Dictionary<int, string>();
         private List<AlumnoInfo> alumnos = new List<AlumnoInfo>();
+        // El encargado de laboratorio: sin "Registrar estudiante", "Editar",
+        // "Restablecer contrasena", "Dar de baja" ni "Datos personales" (no se
+        // crean); el doble clic abre sus bitacoras.
+        private readonly bool soloConsulta = Permisos.SoloConsulta;
 
         private readonly TextBox txtBuscar;
         private readonly ComboBox cboCarrera;
         private readonly ComboBox cboMostrar;
         private readonly Button btnEditar;
+        private readonly Button btnBitacoras;
         private readonly Button btnContrasena;
         private readonly Button btnBaja;
+        private readonly Button btnDatosPersonales;
         private bool cargandoFiltros;
 
+        // 1400 de ancho pedidos: a 1366x768 PantallaAdmin la deja en lo que cabe
+        // (unos 1350) y la Carrera entera cabe a 10 pt tambien con la columna Estado.
         public AdministrarAlumnos()
-            : base("Alumnos", "Busca por matrícula, nombre o correo. Doble clic en un alumno para editarlo.", new Size(1180, 700))
+            : base("Estudiantes", Permisos.SoloConsulta
+                ? "Busca por matrícula, nombre o correo. Doble clic para ver sus bitácoras. F5 actualiza."
+                : "Busca por matrícula, nombre o correo. Doble clic para editar. F5 actualiza.", new Size(1400, 700))
         {
-            BotonPrincipalArriba("Nuevo alumno", 170).Click += (s, e) => NuevoAlumno();
+            if (!soloConsulta)
+            {
+                BotonPrincipalArriba("Registrar estudiante", 200).Click += (s, e) => NuevoAlumno();
+            }
 
             txtBuscar = CrearBuscador(new Point(Margen, 112), 330);
 
@@ -45,11 +62,25 @@ namespace DigBit
             Controls.Add(cboCarrera);
 
             Controls.Add(EstiloHorarios.CrearEtiqueta("Mostrar", new Point(700, 88)));
-            cboMostrar = EstiloHorarios.CrearCombo(new Point(700, 111), 150);
+            cboMostrar = EstiloHorarios.CrearCombo(new Point(700, 111), 170);
             cboMostrar.Items.AddRange(new object[] { Activos, DadosDeBaja, Todos });
             cboMostrar.SelectedIndex = 0;
             cboMostrar.SelectedIndexChanged += (s, e) => { if (!cargandoFiltros) Aplicar(null); };
             Controls.Add(cboMostrar);
+
+            if (!soloConsulta)
+            {
+                // Derechos ARCO de quien este elegido: entregarle sus datos o, con la
+                // cuenta de baja, anonimizarla (DerechosArco). Arriba, junto a los
+                // filtros: abajo ya no caben mas botones con las lineas de estado.
+                btnDatosPersonales = EstiloHorarios.CrearBoton("Datos personales...", new Point(ClientSize.Width - Margen - 200, 104), new Size(200, 40));
+                btnDatosPersonales.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+                btnDatosPersonales.Click += (s, e) => DatosPersonales();
+                ayuda.SetToolTip(btnDatosPersonales, "De la persona elegida: exportar sus datos o, si su cuenta está de baja, anonimizarla (derechos ARCO).");
+                Controls.Add(btnDatosPersonales);
+                // Mas angosta, el boton pisaria el filtro Mostrar.
+                MinimumSize = new Size(1120, MinimumSize.Height);
+            }
 
             CrearLista(156);
             grid.Columns.Add("matricula", "Matrícula");
@@ -60,22 +91,60 @@ namespace DigBit
             grid.Columns.Add("bitacoras", "Bitácoras");
             grid.Columns.Add("ultima", "Última bitácora");
             grid.Columns.Add("estado", "Estado");
-            EstiloHorarios.Pesos(grid, 90, 200, 220, 70, 180, 70, 120, 100);
+            // A 10 pt: la Carrera ("Ingenieria en Sistemas Computacionales") entera a
+            // 1366 de ancho, tambien con Estado (ColumnasDeLista.TextoEntero, al leer);
+            // las cortas, con el peso de su encabezado entero, y lo demas al nombre y al correo.
+            EstiloHorarios.Pesos(grid, 100, 220, 320, 95, 240, 95, 95, 127);
+            ColumnasDeLista.EncabezadoEntero(grid, "matricula", "semestre", "bitacoras", "estado");
             grid.Columns["bitacoras"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
 
             Button cerrar = BotonAbajo("Cerrar", 110);
             cerrar.Click += (s, e) => Close();
             CancelButton = cerrar;
             SeparacionAbajo(20);
-            btnBaja = BotonAbajo("Dar de baja", 150);
-            btnBaja.Click += (s, e) => CambiarEstadoSeleccionado();
-            btnContrasena = BotonAbajo("Restablecer contraseña", 210);
-            btnContrasena.Click += (s, e) => RestablecerContrasenaSeleccionado();
-            btnEditar = BotonAbajo("Editar", 110);
-            btnEditar.Click += (s, e) => EditarSeleccionado();
+            // Solo consulta: quedan "Ver sus bitacoras" y "Cerrar".
+            if (!soloConsulta)
+            {
+                btnBaja = BotonAbajo("Dar de baja", 150);
+                btnBaja.Click += (s, e) => CambiarEstadoSeleccionado();
+                btnContrasena = BotonAbajo("Restablecer contraseña", 210);
+                btnContrasena.Click += (s, e) => RestablecerContrasenaSeleccionado();
+            }
+
+            // Su historial: cada bitacora que registro, con "Ver la sesion" y la
+            // exportacion de sus datos (eso, solo el administrador).
+            btnBitacoras = BotonAbajo("Ver sus bitácoras", 170);
+            btnBitacoras.Click += (s, e) => VerBitacorasSeleccionado();
+            ayuda.SetToolTip(btnBitacoras, "Cada bitácora que registró, con su clase, el equipo y lo que reportó.");
+            if (!soloConsulta)
+            {
+                btnEditar = BotonAbajo("Editar", 110);
+                btnEditar.Click += (s, e) => EditarSeleccionado();
+            }
 
             ActiveControl = txtBuscar;
             ActualizarBotones();
+        }
+
+        /// <summary>F5: vuelve a leer la lista, como en Bitacoras (la fila elegida se conserva).</summary>
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == Keys.F5)
+            {
+                Cursor = Cursors.WaitCursor;
+                try
+                {
+                    Recargar(null);
+                }
+                finally
+                {
+                    Cursor = Cursors.Default;
+                }
+
+                return true;
+            }
+
+            return base.ProcessCmdKey(ref msg, keyData);
         }
 
         // =====================================================================
@@ -91,7 +160,7 @@ namespace DigBit
             catch (Exception ex)
             {
                 alumnos = new List<AlumnoInfo>();
-                MostrarError("Leer la lista de alumnos", ex, "No se pudo leer la lista de alumnos");
+                AvisoDeFalloAdmin.Mostrar(this, "Leer la lista de alumnos", ex, "No se pudo leer la lista de estudiantes", Text);
             }
 
             textoBusqueda.Clear();
@@ -101,8 +170,9 @@ namespace DigBit
             }
 
             // Sin la migracion 08 no hay bajas: se ve a todos y no se da de baja a nadie.
+            // En solo consulta no hay "Dar de baja": la nota no le dice nada.
             cboMostrar.Enabled = datos.BajasDisponibles;
-            NotaFija = datos.BajasDisponibles ? "" : "Para dar de baja falta aplicar la migración 08 en la base.";
+            NotaFija = soloConsulta || datos.BajasDisponibles ? "" : "Para dar de baja falta aplicar la migración 08 en la base.";
 
             RellenarCarreras();
             Aplicar(seleccionar);
@@ -173,43 +243,71 @@ namespace DigBit
                     a.Correo,
                     a.Bitacoras,
                     EstiloAdmin.Fecha(a.UltimaBitacora),
-                    a.Activo ? "Activo" : "Baja" + (a.BajaEn.HasValue ? " " + a.BajaEn.Value.ToString("dd/MM/yyyy") : "")
+                    EstadoDe(a)
                 },
                 a => !a.Activo, a => a.Matricula, seleccionarMatricula);
+            // La carrera entera (a 10 pt y 1366 de ancho se cortaba); las demas, con lo que quede.
+            ColumnasDeLista.TextoEntero(grid, 340, "carrera");
 
             int bajas = alumnos.Count(a => !a.Activo);
             if (alumnos.Count == 0)
             {
-                lblResumen.Text = "Todavía no hay alumnos registrados.";
+                lblResumen.Text = "Todavía no hay cuentas de estudiantes.";
             }
             else if (visibles.Count == 0)
             {
-                lblResumen.Text = "Ningún alumno coincide con la búsqueda.";
+                lblResumen.Text = "Nadie coincide con la búsqueda.";
             }
             else
             {
                 lblResumen.Text = (visibles.Count == alumnos.Count ? "" : visibles.Count + " de ")
-                    + alumnos.Count + (alumnos.Count == 1 ? " alumno" : " alumnos")
-                    + (bajas > 0 ? " (" + bajas + (bajas == 1 ? " dado de baja)" : " dados de baja)") : "");
+                    + alumnos.Count + (alumnos.Count == 1 ? " estudiante" : " estudiantes")
+                    + (bajas > 0 ? " (" + bajas + " de baja)" : "");
             }
+        }
+
+        /// <summary>La columna Estado: la cuenta activa, de baja (con su fecha) o anonimizada.</summary>
+        internal static string EstadoDe(UsuarioInfo persona)
+        {
+            return persona.Anonimizada ? "Anonimizada"
+                : persona.Activo ? "Activa"
+                : "Baja" + (persona.BajaEn.HasValue ? " " + persona.BajaEn.Value.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture) : "");
         }
 
         protected override void ActualizarBotones()
         {
-            if (btnEditar == null)
+            // Antes de crear los botones (la lista va primero) no hay nada que hacer.
+            // "Ver sus bitacoras" esta siempre; los demas, solo si no es solo consulta.
+            if (btnBitacoras == null)
             {
                 return;
             }
 
             AlumnoInfo alumno = Seleccionado<AlumnoInfo>();
-            btnEditar.Enabled = alumno != null;
+            btnBitacoras.Enabled = alumno != null;
+            if (btnEditar == null)
+            {
+                return;
+            }
+
+            // Una cuenta anonimizada ya no se edita ni se reactiva (UsuariosDatos.Anonimizar).
+            bool anonimizada = alumno != null && alumno.Anonimizada;
+            btnEditar.Enabled = alumno != null && !anonimizada;
             btnContrasena.Enabled = alumno != null && alumno.Activo;
-            btnBaja.Enabled = alumno != null && datos.BajasDisponibles;
+            btnBaja.Enabled = alumno != null && datos.BajasDisponibles && !anonimizada;
             btnBaja.Text = alumno != null && !alumno.Activo ? "Reactivar" : "Dar de baja";
+            btnDatosPersonales.Enabled = alumno != null;
         }
 
         protected override void AlDobleClic()
         {
+            // En solo consulta no se edita: el doble clic (y Enter) abre sus bitacoras.
+            if (soloConsulta)
+            {
+                VerBitacorasSeleccionado();
+                return;
+            }
+
             EditarSeleccionado();
         }
 
@@ -219,6 +317,8 @@ namespace DigBit
 
         private void NuevoAlumno()
         {
+            if (Permisos.Bloquear(this, "Dar de alta un alumno")) return;
+
             using (DialogoUsuario dialogo = new DialogoUsuario(datos, null, CarreraFiltro()))
             {
                 if (dialogo.ShowDialog(this) == DialogResult.OK)
@@ -231,9 +331,19 @@ namespace DigBit
 
         private void EditarSeleccionado()
         {
+            if (Permisos.Bloquear(this, "Editar un alumno")) return;
+
             AlumnoInfo alumno = Seleccionado<AlumnoInfo>();
             if (alumno == null)
             {
+                return;
+            }
+
+            if (alumno.Anonimizada)
+            {
+                // Tambien con el doble clic: la cuenta ya no tiene datos que editar.
+                // El mismo aviso corto que en Docentes, donde la linea es mas angosta.
+                Avisar("Cuenta anonimizada: ya no se puede editar.");
                 return;
             }
 
@@ -247,8 +357,65 @@ namespace DigBit
             }
         }
 
+        /// <summary>
+        /// El historial del elegido: sus bitacoras, "Ver la sesion" y "Exportar sus
+        /// datos". Solo lee: tambien en solo consulta (la lista no cambia; F5 la
+        /// vuelve a leer).
+        /// </summary>
+        private void VerBitacorasSeleccionado()
+        {
+            AlumnoInfo alumno = Seleccionado<AlumnoInfo>();
+            if (alumno == null)
+            {
+                return;
+            }
+
+            using (VentanaHistorialAlumno historial = new VentanaHistorialAlumno(alumno))
+            {
+                historial.ShowDialog(this);
+            }
+        }
+
+        /// <summary>
+        /// "Datos personales...": debajo del boton, exportar los datos de quien este
+        /// elegido o, si su cuenta esta de baja, anonimizarla (DerechosArco). Los
+        /// avisos, cortos: la linea de estado mide unos 460 px a 1366 (la ruta del
+        /// archivo sale en un mensaje).
+        /// </summary>
+        private void DatosPersonales()
+        {
+            AlumnoInfo alumno = Seleccionado<AlumnoInfo>();
+            if (alumno == null)
+            {
+                return;
+            }
+
+            DerechosArco.MostrarMenu(btnDatosPersonales, alumno, () =>
+            {
+                string ruta = DerechosArco.ExportarEstudiante(this, alumno, null);
+                if (ruta != null)
+                {
+                    Avisar("Se exportaron sus datos.");
+                    DerechosArco.AvisarExportado(this, ruta);
+                }
+            }, () =>
+            {
+                if (DerechosArco.Anonimizar(this, datos, alumno, false))
+                {
+                    // Buscandola por su identificador nuevo: con la busqueda de antes (su
+                    // nombre o su matricula) ya no saldria.
+                    string anonimo = UsuariosDatos.IdentificadorAnonimo(alumno.Id);
+                    txtBuscar.Text = anonimo;
+                    Recargar(anonimo);
+                    Avisar("Cuenta anonimizada: ahora es " + anonimo + ".");
+                }
+            });
+        }
+
         private void RestablecerContrasenaSeleccionado()
         {
+            if (Permisos.Bloquear(this, "Restablecer la contrasena de un alumno")) return;
+
             AlumnoInfo alumno = Seleccionado<AlumnoInfo>();
             if (alumno == null)
             {
@@ -269,13 +436,15 @@ namespace DigBit
                 }
                 catch (Exception ex)
                 {
-                    MostrarError("Restablecer la contrasena de " + alumno.Matricula, ex, "No se pudo cambiar la contraseña");
+                    AvisoDeFalloAdmin.Mostrar(this, "Restablecer la contrasena de " + alumno.Matricula, ex, "No se pudo cambiar la contraseña", Text);
                 }
             }
         }
 
         private void CambiarEstadoSeleccionado()
         {
+            if (Permisos.Bloquear(this, "Dar de baja o reactivar un alumno")) return;
+
             AlumnoInfo alumno = Seleccionado<AlumnoInfo>();
             if (alumno == null)
             {
@@ -300,7 +469,7 @@ namespace DigBit
 
                     datos.DarDeBaja(alumno.Id);
                     Recargar(alumno.Matricula);
-                    Avisar("Se dio de baja a " + alumno.NombreCompleto + ". Aparece en «Mostrar: Dados de baja».");
+                    Avisar("Se dio de baja a " + alumno.NombreCompleto + ". Aparece en «Mostrar: " + DadosDeBaja + "».");
                 }
                 else
                 {
@@ -316,7 +485,7 @@ namespace DigBit
             }
             catch (Exception ex)
             {
-                MostrarError("Cambiar el estado del alumno " + alumno.Matricula, ex, "No se pudo cambiar el estado del alumno");
+                AvisoDeFalloAdmin.Mostrar(this, "Cambiar el estado del alumno " + alumno.Matricula, ex, "No se pudo cambiar el estado de la cuenta", Text);
             }
         }
     }

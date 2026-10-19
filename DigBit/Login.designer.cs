@@ -46,11 +46,13 @@ namespace DigBit
             this.splitter1 = new System.Windows.Forms.Splitter();
             this.imgPasswd = new System.Windows.Forms.PictureBox();
             this.imgUsuario = new System.Windows.Forms.PictureBox();
+            this.imgLogo = new System.Windows.Forms.PictureBox();
             this.panelLogin.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.imgMinimizar)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.imgSalir)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.imgPasswd)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.imgUsuario)).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)(this.imgLogo)).BeginInit();
             this.SuspendLayout();
             // 
             // panelLogin
@@ -70,6 +72,7 @@ namespace DigBit
             this.panelLogin.Controls.Add(this.splitter1);
             this.panelLogin.Controls.Add(this.imgPasswd);
             this.panelLogin.Controls.Add(this.imgUsuario);
+            this.panelLogin.Controls.Add(this.imgLogo);
             this.panelLogin.Location = new System.Drawing.Point(-8, -6);
             this.panelLogin.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
             this.panelLogin.Name = "panelLogin";
@@ -105,15 +108,18 @@ namespace DigBit
             // 
             // linkPasswd
             // 
-            this.linkPasswd.ActiveLinkColor = System.Drawing.Color.Red;
+            this.linkPasswd.ActiveLinkColor = System.Drawing.Color.Green;
             this.linkPasswd.AutoSize = true;
-            this.linkPasswd.BackColor = System.Drawing.Color.Transparent;
+            this.linkPasswd.BackColor = System.Drawing.Color.White;
             this.linkPasswd.DisabledLinkColor = System.Drawing.Color.Transparent;
-            this.linkPasswd.Location = new System.Drawing.Point(124, 318);
+            this.linkPasswd.Font = new System.Drawing.Font("Century Gothic", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.linkPasswd.LinkColor = System.Drawing.Color.DarkGreen;
+            this.linkPasswd.Location = new System.Drawing.Point(124, 364);
             this.linkPasswd.Margin = new System.Windows.Forms.Padding(4, 0, 4, 0);
             this.linkPasswd.Name = "linkPasswd";
+            this.linkPasswd.Padding = new System.Windows.Forms.Padding(5, 3, 5, 3);
             this.linkPasswd.Size = new System.Drawing.Size(161, 16);
-            this.linkPasswd.TabIndex = 19;
+            this.linkPasswd.TabIndex = 3;
             this.linkPasswd.TabStop = true;
             this.linkPasswd.Text = "¿Olvidaste tu contraseña?";
             this.linkPasswd.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.linkPasswd_LinkClicked_1);
@@ -130,51 +136,47 @@ namespace DigBit
             this.btnRegistro.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.btnRegistro.Font = new System.Drawing.Font("Century Gothic", 12F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
             this.btnRegistro.ForeColor = System.Drawing.Color.DarkGreen;
-            this.btnRegistro.Location = new System.Drawing.Point(111, 354);
+            this.btnRegistro.Location = new System.Drawing.Point(111, 403);
             this.btnRegistro.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
             this.btnRegistro.Name = "btnRegistro";
             this.btnRegistro.Size = new System.Drawing.Size(201, 46);
-            this.btnRegistro.TabIndex = 18;
-            this.btnRegistro.Text = "REGISTRATE";
+            this.btnRegistro.TabIndex = 4;
+            this.btnRegistro.Text = "CREAR CUENTA";
             this.btnRegistro.TextColor = System.Drawing.Color.DarkGreen;
             this.btnRegistro.UseVisualStyleBackColor = false;
             this.btnRegistro.Click += new System.EventHandler(this.btnRegistro_Click);
             // 
             // txtPassword
-            // 
+            //
+            this.txtPassword.AccessibleName = "Contraseña";
             this.txtPassword.BorderStyle = System.Windows.Forms.BorderStyle.None;
             this.txtPassword.Font = new System.Drawing.Font("Century Gothic", 12F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
             this.txtPassword.ForeColor = System.Drawing.Color.DarkGreen;
-            this.txtPassword.Location = new System.Drawing.Point(95, 164);
+            this.txtPassword.Location = new System.Drawing.Point(95, 213);
             this.txtPassword.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
             this.txtPassword.Name = "txtPassword";
             this.txtPassword.Size = new System.Drawing.Size(180, 25);
-            this.txtPassword.TabIndex = 17;
-            this.txtPassword.Text = "CONTRASEÑA";
-            this.txtPassword.TextChanged += new System.EventHandler(this.txtPassword_TextChanged);
-            this.txtPassword.Enter += new System.EventHandler(this.txtPassword_Enter);
-            this.txtPassword.Leave += new System.EventHandler(this.txtPassword_Leave);
-            // 
+            this.txtPassword.TabIndex = 1;
+            this.txtPassword.UseSystemPasswordChar = true;
+            //
             // txtUsuario
-            // 
+            //
+            this.txtUsuario.AccessibleName = "Usuario";
             this.txtUsuario.BorderStyle = System.Windows.Forms.BorderStyle.None;
             this.txtUsuario.Font = new System.Drawing.Font("Century Gothic", 12F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
             this.txtUsuario.ForeColor = System.Drawing.Color.DarkGreen;
-            this.txtUsuario.Location = new System.Drawing.Point(95, 82);
+            this.txtUsuario.Location = new System.Drawing.Point(95, 131);
             this.txtUsuario.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
             this.txtUsuario.Name = "txtUsuario";
             this.txtUsuario.Size = new System.Drawing.Size(133, 25);
-            this.txtUsuario.TabIndex = 16;
-            this.txtUsuario.Text = "USUARIO";
-            this.txtUsuario.Enter += new System.EventHandler(this.txtUsuario_Enter);
-            this.txtUsuario.Leave += new System.EventHandler(this.txtUsuario_Leave);
-            // 
+            this.txtUsuario.TabIndex = 0;
+            //
             // label3
-            // 
+            //
             this.label3.AutoSize = true;
             this.label3.BackColor = System.Drawing.SystemColors.Window;
             this.label3.ForeColor = System.Drawing.Color.DarkGreen;
-            this.label3.Location = new System.Drawing.Point(92, 175);
+            this.label3.Location = new System.Drawing.Point(92, 224);
             this.label3.Margin = new System.Windows.Forms.Padding(4, 0, 4, 0);
             this.label3.Name = "label3";
             this.label3.Size = new System.Drawing.Size(126, 16);
@@ -186,7 +188,7 @@ namespace DigBit
             this.label2.AutoSize = true;
             this.label2.BackColor = System.Drawing.SystemColors.Window;
             this.label2.ForeColor = System.Drawing.Color.DarkGreen;
-            this.label2.Location = new System.Drawing.Point(91, 95);
+            this.label2.Location = new System.Drawing.Point(91, 144);
             this.label2.Margin = new System.Windows.Forms.Padding(4, 0, 4, 0);
             this.label2.Name = "label2";
             this.label2.Size = new System.Drawing.Size(126, 16);
@@ -214,11 +216,11 @@ namespace DigBit
             this.btnIniciarSesion.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.btnIniciarSesion.Font = new System.Drawing.Font("Century Gothic", 12F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
             this.btnIniciarSesion.ForeColor = System.Drawing.Color.DarkGreen;
-            this.btnIniciarSesion.Location = new System.Drawing.Point(111, 257);
+            this.btnIniciarSesion.Location = new System.Drawing.Point(111, 306);
             this.btnIniciarSesion.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
             this.btnIniciarSesion.Name = "btnIniciarSesion";
             this.btnIniciarSesion.Size = new System.Drawing.Size(201, 46);
-            this.btnIniciarSesion.TabIndex = 9;
+            this.btnIniciarSesion.TabIndex = 2;
             this.btnIniciarSesion.Text = "INICIAR  SESIÓN";
             this.btnIniciarSesion.TextColor = System.Drawing.Color.DarkGreen;
             this.btnIniciarSesion.UseVisualStyleBackColor = false;
@@ -237,7 +239,7 @@ namespace DigBit
             // 
             this.imgPasswd.BackColor = System.Drawing.SystemColors.ButtonHighlight;
             this.imgPasswd.BackgroundImage = ((System.Drawing.Image)(resources.GetObject("imgPasswd.BackgroundImage")));
-            this.imgPasswd.Location = new System.Drawing.Point(15, 146);
+            this.imgPasswd.Location = new System.Drawing.Point(15, 195);
             this.imgPasswd.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
             this.imgPasswd.Name = "imgPasswd";
             this.imgPasswd.Size = new System.Drawing.Size(71, 62);
@@ -248,15 +250,29 @@ namespace DigBit
             // 
             this.imgUsuario.BackColor = System.Drawing.SystemColors.ButtonHighlight;
             this.imgUsuario.BackgroundImage = ((System.Drawing.Image)(resources.GetObject("imgUsuario.BackgroundImage")));
-            this.imgUsuario.Location = new System.Drawing.Point(15, 64);
+            this.imgUsuario.Location = new System.Drawing.Point(15, 113);
             this.imgUsuario.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
             this.imgUsuario.Name = "imgUsuario";
             this.imgUsuario.Size = new System.Drawing.Size(68, 63);
             this.imgUsuario.TabIndex = 4;
             this.imgUsuario.TabStop = false;
-            // 
+            //
+            // imgLogo
+            //
+            this.imgLogo.AccessibleName = "Tecnológico de Estudios Superiores de Chimalhuacán";
+            this.imgLogo.BackColor = System.Drawing.Color.Transparent;
+            this.imgLogo.Image = global::DigBit.Properties.Resources.logoteschi;
+            this.imgLogo.Location = new System.Drawing.Point(19, 32);
+            this.imgLogo.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
+            this.imgLogo.Name = "imgLogo";
+            this.imgLogo.Size = new System.Drawing.Size(160, 64);
+            this.imgLogo.SizeMode = System.Windows.Forms.PictureBoxSizeMode.Zoom;
+            this.imgLogo.TabIndex = 22;
+            this.imgLogo.TabStop = false;
+            //
             // Login
-            // 
+            //
+            this.AcceptButton = this.btnIniciarSesion;
             this.AutoScaleDimensions = new System.Drawing.SizeF(8F, 16F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(400, 492);
@@ -266,30 +282,16 @@ namespace DigBit
             this.Margin = new System.Windows.Forms.Padding(4, 4, 4, 4);
             this.Name = "Login";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
-            this.Text = "Login";
+            this.Text = "Iniciar sesión - DigBit";
             this.panelLogin.ResumeLayout(false);
             this.panelLogin.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)(this.imgMinimizar)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.imgSalir)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.imgPasswd)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.imgUsuario)).EndInit();
+            ((System.ComponentModel.ISupportInitialize)(this.imgLogo)).EndInit();
             this.ResumeLayout(false);
 
-        }
-
-        private void LinkPasswd_LinkClicked_1(object sender, LinkLabelLinkClickedEventArgs e)
-        {
-            throw new NotImplementedException();
-        }
-
-        private void txtPassword_TextChanged(object sender, EventArgs e)
-        {
-      
-        }
-
-        private void linkPasswd_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
-        {
-            throw new NotImplementedException();
         }
 
         #endregion
@@ -308,6 +310,7 @@ namespace DigBit
         private System.Windows.Forms.LinkLabel linkPasswd;
         private System.Windows.Forms.PictureBox imgSalir;
         private System.Windows.Forms.PictureBox imgMinimizar;
+        private System.Windows.Forms.PictureBox imgLogo;
     }
 }
 

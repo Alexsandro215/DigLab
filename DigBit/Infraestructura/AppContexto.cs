@@ -1,8 +1,11 @@
 using System;
 using System.Configuration;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using DigBit.conexion;
+using Timer = System.Windows.Forms.Timer;
 
 namespace DigBit.Infraestructura
 {
@@ -41,12 +44,16 @@ namespace DigBit.Infraestructura
             // pantalla de "sin conexion". De paso, la fase 3 se puede probar sin base.
             if (SesionEquipo.Reanudar())
             {
+                // Tambien aqui: antes este camino salia sin vigilancia y un DigBit
+                // relanzado con el escritorio abierto no volvia a mirar el servidor.
+                // (La cola la envia EnviadorBitacoras, que arranca en Program.Main.)
+                IniciarVigilanciaConexion();
                 return true;
             }
 
             while (true)
             {
-                string titulo = "Sin conexion";
+                string titulo = "Sin conexión";
                 string problema = ComprobarEntorno();
                 if (problema == null)
                 {
@@ -59,7 +66,7 @@ namespace DigBit.Infraestructura
                         SinConexion.AlConectar(LaboratorioEquipo.Id);
                     }
                 }
-                else if (SinConexion.IntentarActivar(problema))
+                else if (SinConexion.IntentarActivar(ParaElLog(problema)))
                 {
                     // Sin servidor pero con copia local valida: se atiende a los
                     // alumnos con ella y se vigila la conexion para volver.
@@ -117,6 +124,9 @@ namespace DigBit.Infraestructura
         {
             Log.Info("Cierre de sesion de '" + (Datos_User.getUser() ?? "-") + "'.");
             Datos_User.Limpiar();
+            // Las imagenes y los circulos de las clases del profesor: en un equipo
+            // del laboratorio entra otro despues.
+            PersonalizacionClases.Olvidar();
 
             // Primero se abre el login nuevo y despues se cierra lo viejo, para que
             // nunca haya un instante sin ventanas visibles (ver Formulario_FormClosed).
@@ -125,6 +135,119 @@ namespace DigBit.Infraestructura
             foreach (Form formulario in abiertos)
             {
                 Kiosco.CerrarAutorizado(formulario);
+            }
+        }
+
+        private bool cerrandoPorSeguridad;
+
+        /// <summary>
+        /// True desde el tercer fallo hasta que la sesion se cierra: entonces ya no
+        /// se pide ni se comprueba ninguna contrasena (DialogoContrasenaAdmin).
+        /// </summary>
+        public bool CerrandoPorSeguridad
+        {
+            get { return cerrandoPorSeguridad; }
+        }
+
+        /// <summary>
+        /// Cierra la sesion porque quien esta no es su dueno (tres contrasenas
+        /// equivocadas al confirmar un cambio, DialogoContrasenaAdmin) y lo avisa
+        /// en el login. Se llama desde dentro de dialogos modales, asi que primero
+        /// se cierran todos: cada ShowDialog vuelve como cancelado y el codigo que
+        /// lo abrio sigue su camino normal. En cuanto no queda ninguno se cierra la
+        /// sesion como con el boton. Cerrar de golpe la ventana duena con sus
+        /// dialogos encima dejaria ese codigo trabajando con ventanas destruidas.
+        /// </summary>
+        public void CerrarSesionPorSeguridad(string aviso)
+        {
+            if (cerrandoPorSeguridad)
+            {
+                return;
+            }
+
+            cerrandoPorSeguridad = true;
+            Log.Aviso("Cierre de sesion por seguridad de '" + (Datos_User.getUser() ?? "-") + "'.");
+            SinDialogos(() =>
+            {
+                try
+                {
+                    CerrarSesion();
+                }
+                finally
+                {
+                    cerrandoPorSeguridad = false;
+                }
+
+                MessageBox.Show(Application.OpenForms.OfType<Login>().LastOrDefault(), aviso, "Sesión cerrada",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            });
+        }
+
+        private bool cerrandoPorInactividad;
+
+        /// <summary>
+        /// Cierra la sesion que se quedo sola (Inactividad: nadie toco el teclado
+        /// ni el raton y nadie pulso "Seguir aqui"). Como CerrarSesionPorSeguridad,
+        /// primero los dialogos modales que hubiera abiertos y despues la sesion,
+        /// pero sin aviso en el login: el siguiente no tiene nada que cerrar.
+        /// </summary>
+        public void CerrarSesionPorInactividad()
+        {
+            if (cerrandoPorSeguridad || cerrandoPorInactividad)
+            {
+                return;
+            }
+
+            cerrandoPorInactividad = true;
+            SinDialogos(() =>
+            {
+                try
+                {
+                    CerrarSesion();
+                }
+                finally
+                {
+                    cerrandoPorInactividad = false;
+                }
+            });
+        }
+
+        /// <summary>
+        /// Cierra los dialogos modales abiertos y, en cuanto no queda ninguno, hace
+        /// lo que se pide (cerrar la sesion): cada ShowDialog vuelve antes como
+        /// cancelado y el codigo que lo abrio sigue su camino normal.
+        /// </summary>
+        private static void SinDialogos(Action despues)
+        {
+            CerrarDialogos();
+
+            // Si algun dialogo no se dejara cerrar, a los 10 s se sigue igual (con
+            // un cronometro: el reloj de Windows se puede cambiar).
+            System.Diagnostics.Stopwatch reloj = System.Diagnostics.Stopwatch.StartNew();
+            Timer espera = new Timer { Interval = 50 };
+            espera.Tick += (s, e) =>
+            {
+                if (Application.OpenForms.Cast<Form>().Any(f => f.Modal) && reloj.ElapsedMilliseconds < 10000)
+                {
+                    // Lo que se abrio mientras tanto (un Enter que ya estaba en cola
+                    // vuelve a abrir el dialogo antes del primer tick) se cierra tambien.
+                    CerrarDialogos();
+                    return;
+                }
+
+                espera.Stop();
+                espera.Dispose();
+                despues();
+            };
+            espera.Start();
+        }
+
+        /// <summary>Cierra los dialogos modales abiertos, del de arriba al de abajo.</summary>
+        private static void CerrarDialogos()
+        {
+            foreach (Form dialogo in Application.OpenForms.Cast<Form>().Where(f => f.Modal).Reverse().ToArray())
+            {
+                Kiosco.CerrarAutorizado(dialogo);
             }
         }
 
@@ -163,12 +286,15 @@ namespace DigBit.Infraestructura
 
         private Timer vigilanciaConexion;
         private int minutosDesdeRefresco;
+        private int sondeando;
 
         /// <summary>
         /// Fase 4: cada minuto. Sin conexion, prueba el servidor y, si volvio,
-        /// sale del modo sin conexion, sube la cola y refresca la copia. Con
-        /// conexion, cada 10 minutos refresca la copia y vacia la cola por si algo
-        /// quedo pendiente. Todo en silencio; los fallos van al log.
+        /// sale del modo sin conexion y refresca la copia. Con conexion, cada 10
+        /// minutos refresca la copia. La consulta va en segundo plano (antes, sin
+        /// red, congelaba la pantalla hasta 5 s cada minuto) y lo que encuentra se
+        /// aplica en el hilo de la interfaz. La cola no es cosa suya: la envia
+        /// EnviadorBitacoras, aqui solo se le avisa de que volvio el servidor.
         /// </summary>
         private void IniciarVigilanciaConexion()
         {
@@ -182,40 +308,123 @@ namespace DigBit.Infraestructura
             vigilanciaConexion.Start();
         }
 
+        /// <summary>Lo que averiguo un sondeo en segundo plano.</summary>
+        private sealed class Sondeo
+        {
+            public bool EraSinConexion;
+            public bool Respondio;
+            public int LaboratorioId;
+            public string Laboratorio;
+            public string Problema;
+            public CacheHorario Copia;
+            public Exception Error;
+        }
+
         private void VigilarConexion()
         {
+            bool sinConexion = SinConexion.Activo;
+            bool refrescar = false;
+            if (!sinConexion)
+            {
+                minutosDesdeRefresco++;
+                refrescar = minutosDesdeRefresco >= 10 && LaboratorioEquipo.Resuelto;
+            }
+
+            if (!sinConexion && !refrescar)
+            {
+                return;
+            }
+
+            if (Interlocked.Exchange(ref sondeando, 1) == 1)
+            {
+                return;
+            }
+
+            if (refrescar)
+            {
+                minutosDesdeRefresco = 0;
+            }
+
+            int laboratorio = LaboratorioEquipo.Id;
+            Task.Run(() => Sondear(sinConexion, laboratorio))
+                .ContinueWith(tarea =>
+                {
+                    Interlocked.Exchange(ref sondeando, 0);
+                    AplicarSondeo(tarea.Result);
+                }, TaskScheduler.FromCurrentSynchronizationContext());
+        }
+
+        /// <summary>En segundo plano. Nunca lanza: el error va en el resultado.</summary>
+        private static Sondeo Sondear(bool sinConexion, int laboratorio)
+        {
+            Sondeo sondeo = new Sondeo { EraSinConexion = sinConexion };
             try
             {
-                if (SinConexion.Activo)
+                if (sinConexion)
                 {
-                    Conexion.Probar();
-                    SinConexion.Desactivar();
-                    string problema = LaboratorioEquipo.Resolver();
-                    if (problema != null)
-                    {
-                        Log.Aviso("Al recuperar la conexion: " + problema.Replace(Environment.NewLine, " "));
-                    }
+                    Conexion.Probar(false);
+                    sondeo.Respondio = true;
 
-                    SinConexion.AlConectar(LaboratorioEquipo.Id);
-                    minutosDesdeRefresco = 0;
-                    return;
+                    int id;
+                    string nombre;
+                    sondeo.Problema = LaboratorioEquipo.Buscar(out id, out nombre);
+                    sondeo.LaboratorioId = id;
+                    sondeo.Laboratorio = nombre;
+                    laboratorio = id > 0 ? id : laboratorio;
                 }
 
-                minutosDesdeRefresco++;
-                if (minutosDesdeRefresco >= 10)
+                if (laboratorio > 0)
                 {
-                    minutosDesdeRefresco = 0;
-                    SinConexion.AlConectar(LaboratorioEquipo.Id);
+                    sondeo.Copia = CacheHorario.Actualizar(laboratorio);
                 }
             }
             catch (Exception ex)
             {
-                // Sin conexion todavia (o volvio a caerse): se reintenta en un minuto.
-                if (!SinConexion.Activo)
-                {
-                    Log.Aviso("Vigilancia de conexion: " + ex.Message);
-                }
+                sondeo.Error = ex;
             }
+
+            return sondeo;
+        }
+
+        /// <summary>En el hilo de la interfaz: aplica lo que encontro el sondeo.</summary>
+        private void AplicarSondeo(Sondeo sondeo)
+        {
+            if (sondeo.EraSinConexion)
+            {
+                // Sigue sin servidor (o se volvio a ir a media consulta): se queda
+                // como esta y se reintenta en el siguiente minuto, sin ensuciar el log.
+                if (!sondeo.Respondio || (sondeo.Error != null && sondeo.LaboratorioId == 0))
+                {
+                    return;
+                }
+
+                if (sondeo.LaboratorioId > 0)
+                {
+                    LaboratorioEquipo.Fijar(sondeo.LaboratorioId, sondeo.Laboratorio);
+                }
+                else if (sondeo.Problema != null)
+                {
+                    // Problema es el texto para la pantalla; el motivo tecnico ya lo
+                    // apunto LaboratorioEquipo.Buscar.
+                    Log.Aviso("Al recuperar la conexion no se pudo resolver el laboratorio de este equipo; ver el aviso del laboratorio, mas arriba.");
+                }
+
+                SinConexion.Desactivar();
+                minutosDesdeRefresco = 0;
+                EnviadorBitacoras.Despertar();
+            }
+
+            if (sondeo.Error != null)
+            {
+                if (!sondeo.EraSinConexion)
+                {
+                    Log.Aviso("Vigilancia de conexion: " + sondeo.Error.Message);
+                }
+
+                return;
+            }
+
+            SinConexion.UsarCopia(sondeo.Copia);
         }
 
         /// <summary>
@@ -239,14 +448,17 @@ namespace DigBit.Infraestructura
                     return problema;
                 }
 
-                Log.Aviso("Laboratorio del equipo sin resolver (modo escritorio): " + problema.Replace(Environment.NewLine, " "));
+                // problema es el texto para la pantalla; el motivo tecnico ya lo
+                // apunto LaboratorioEquipo.Buscar.
+                Log.Aviso("Laboratorio del equipo sin resolver (modo escritorio); ver el aviso del laboratorio, mas arriba.");
                 return null;
             }
             catch (Exception ex)
             {
+                // La causa y que hacer; el detalle tecnico, al registro (la pantalla dice donde esta).
                 Log.Error("Resolver el laboratorio del equipo", ex);
                 return Kiosco.Activo
-                    ? "No se pudo comprobar el laboratorio de este equipo." + Environment.NewLine + Environment.NewLine + "Detalle: " + ex.Message
+                    ? MensajeDeFallo.Explicar("No se pudo comprobar el laboratorio de este equipo", ex, MensajeDeFallo.AvisaAlLaboratorio)
                     : null;
             }
         }
@@ -259,11 +471,15 @@ namespace DigBit.Infraestructura
                 Log.Info("Conexion con el servidor comprobada.");
                 return null;
             }
+            // En pantalla, la causa y que hacer; el texto del driver solo va al
+            // registro (PantallaError dice en que archivo).
             catch (ConfigurationErrorsException ex)
             {
                 Log.Error("Configuracion de conexion", ex);
-                return "No se pudo leer la configuracion de conexion a la base de datos." +
-                       Environment.NewLine + Environment.NewLine + ex.Message;
+                return "No se pudo leer la configuración de conexión a la base de datos: el archivo connections.config "
+                       + "de DigBit falta o está dañado." +
+                       Environment.NewLine + Environment.NewLine +
+                       "Vuelve a instalar este equipo con DigBit-Instalador.exe, que lo escribe; si sigue, avisa a la persona responsable del laboratorio.";
             }
             catch (Exception ex)
             {
@@ -274,20 +490,35 @@ namespace DigBit.Infraestructura
                 // donde no era (paso al instalar con la contrasena en mayusculas).
                 if (AccesoDenegado(ex))
                 {
-                    return "El servidor de bitacoras rechazo el usuario o la contrasena de la base." +
+                    return "El servidor de bitácoras rechazó el usuario o la contraseña de la base." +
                            Environment.NewLine + Environment.NewLine +
-                           "La contrasena distingue mayusculas y minusculas. Vuelve a instalar este equipo con " +
-                           "DigBit-Instalador.exe y escribela bien, o corrige C:\\DigBit\\connections.config." +
-                           Environment.NewLine + Environment.NewLine +
-                           "Detalle: " + ex.Message;
+                           "La contraseña distingue mayúsculas y minúsculas. Vuelve a instalar este equipo con " +
+                           "DigBit-Instalador.exe y escríbela bien, o corrige C:\\DigBit\\connections.config.";
                 }
 
-                return "No hay conexion con el servidor de bitacoras." +
+                return "No hay conexión con el servidor de bitácoras." +
                        Environment.NewLine + Environment.NewLine +
-                       "Comprueba que el equipo tiene red y que el servidor esta encendido." +
-                       Environment.NewLine + Environment.NewLine +
-                       "Detalle: " + ex.Message;
+                       "Comprueba que el equipo tiene red y que el servidor está encendido; si sigue, avisa a la persona responsable del laboratorio.";
             }
+        }
+
+        /// <summary>
+        /// El texto sin acentos ni signos de apertura, para el log (que va en
+        /// ASCII): el motivo del modo sin conexion se apunta alli.
+        /// </summary>
+        private static string ParaElLog(string texto)
+        {
+            System.Text.StringBuilder limpio = new System.Text.StringBuilder(texto.Length);
+            foreach (char c in texto.Normalize(System.Text.NormalizationForm.FormD))
+            {
+                if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.NonSpacingMark
+                    && c != '¿' && c != '¡')
+                {
+                    limpio.Append(c);
+                }
+            }
+
+            return limpio.ToString().Normalize(System.Text.NormalizationForm.FormC);
         }
 
         /// <summary>Error 1045 de MySQL (Access denied), en la excepcion o en alguna de las internas.</summary>

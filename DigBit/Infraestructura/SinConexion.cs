@@ -54,7 +54,8 @@ namespace DigBit.Infraestructura
             Motivo = motivo;
             LaboratorioEquipo.UsarCopiaLocal(cache.LaboratorioId, cache.Laboratorio);
             Log.Aviso("MODO SIN CONEXION activado con la copia del horario del " + cache.Generado.ToString("dd/MM/yyyy HH:mm")
-                + " (" + ColaBitacoras.Pendientes() + " bitacoras pendientes de enviar). Motivo: " + PrimeraLinea(motivo));
+                + " (" + ColaBitacoras.Pendientes() + " bitacoras pendientes de enviar; acceso " + ModosDeAcceso.Valor(cache.Modo)
+                + "). Motivo: " + PrimeraLinea(motivo));
             return true;
         }
 
@@ -70,20 +71,13 @@ namespace DigBit.Infraestructura
         }
 
         /// <summary>
-        /// Con servidor a la vista: sube la cola y refresca la copia local. Nunca
-        /// lanza; lo que falle queda en el log y se reintenta en la siguiente.
+        /// Con servidor a la vista: avisa al enviador (la cola la sube el, en su
+        /// hilo) y refresca la copia local. Nunca lanza; lo que falle queda en el
+        /// log y se reintenta en la siguiente.
         /// </summary>
         public static void AlConectar(int idLaboratorio)
         {
-            try
-            {
-                ColaBitacoras.Sincronizar();
-            }
-            catch (Exception ex)
-            {
-                Log.Error("Sincronizar las bitacoras pendientes", ex);
-            }
-
+            EnviadorBitacoras.Despertar();
             try
             {
                 if (idLaboratorio > 0)
@@ -97,18 +91,39 @@ namespace DigBit.Infraestructura
             }
         }
 
-        /// <summary>Texto para la pantalla de login (vacio si hay conexion).</summary>
+        /// <summary>La copia que acaba de leer la vigilancia de conexion, en segundo plano.</summary>
+        public static void UsarCopia(CacheHorario copia)
+        {
+            if (copia != null)
+            {
+                Cache = copia;
+            }
+        }
+
+        /// <summary>
+        /// Texto para la franja de la pantalla de inicio: el modo sin conexion y,
+        /// tambien con conexion, las bitacoras de este equipo que aun no llegaron
+        /// (antes solo se veian sin conexion, y una atascada no la veia nadie).
+        /// Vacio si no hay nada que decir. Lee el estado del enviador, que esta en
+        /// memoria: no el archivo cada 5 s.
+        /// </summary>
         public static string TextoAviso()
         {
-            if (!Activo || Cache == null)
+            EstadoCola cola = EnviadorBitacoras.Estado;
+            string pendientes = cola.Pendientes == 0 ? ""
+                : " Bitácoras de este equipo por enviar: " + cola.Pendientes + " (se envían solas).";
+            string apartadas = cola.Rechazadas == 0 ? ""
+                : " " + cola.Rechazadas + (cola.Rechazadas == 1 ? " no se pudo enviar" : " no se pudieron enviar") + ": avisa a la persona responsable del laboratorio.";
+
+            if (Activo && Cache != null)
             {
-                return "";
+                return "SIN CONEXIÓN con el servidor. Horario del " + Cache.Generado.ToString("dd/MM HH:mm")
+                    + ". Estudiantes: escribe tu matrícula (la contraseña no se puede comprobar)."
+                    + (Cache.Modo == ModoCodigo.Renovable ? " Elige tu clase de la lista: sin conexión el código de la clase no se puede comprobar." : "")
+                    + pendientes + apartadas;
             }
 
-            int pendientes = ColaBitacoras.Pendientes();
-            return "SIN CONEXION con el servidor. Horario del " + Cache.Generado.ToString("dd/MM HH:mm")
-                + ". Alumnos: escribe tu matricula (la contrasena no se puede comprobar)."
-                + (pendientes > 0 ? " Bitacoras por enviar: " + pendientes + "." : "");
+            return (pendientes + apartadas).Trim();
         }
 
         private static string PrimeraLinea(string texto)

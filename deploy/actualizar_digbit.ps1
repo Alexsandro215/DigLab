@@ -54,6 +54,23 @@ if (-not (Test-Path $Destino)) {
     throw "No hay nada instalado en $Destino. Usa deploy\configurar_equipo.ps1 la primera vez."
 }
 
+# Deep Freeze. Con el disco CONGELADO la copia va a una capa temporal: todo sale
+# en verde (hasta la comprobacion del paso 4) y el reinicio que pide este guion
+# la borra, asi que el equipo sigue con el DigBit viejo. Igual que
+# configurar_equipo.ps1: mejor no empezar.
+. (Join-Path $PSScriptRoot 'deepfreeze.ps1')
+$deepFreeze = Obtener-EstadoDeepFreeze
+if ($deepFreeze.Presente) {
+    Write-Host ''
+    Write-Host "== Deep Freeze: $($deepFreeze.Detalle)" -ForegroundColor Yellow
+}
+if ($deepFreeze.Congelado -eq $true) {
+    throw 'Este equipo tiene Deep Freeze CONGELADO: la actualizacion desapareceria en el siguiente reinicio. Ponlo en Thawed (Mayus + doble clic en el icono de Deep Freeze, Boot Thawed), reinicia, vuelve a ejecutar esto y, cuando compruebes que arranca bien, vuelve a congelarlo.'
+}
+if ($deepFreeze.Presente -and $null -eq $deepFreeze.Congelado) {
+    Write-Warning 'No se pudo confirmar que Deep Freeze este descongelado. Si estuviera congelado, la actualizacion se perderia al reiniciar.'
+}
+
 Write-Host ''
 Write-Host '== 1. Detener DigBit y el vigilante' -ForegroundColor Cyan
 
@@ -130,32 +147,36 @@ if (Test-Path $rutaConexion) {
     Write-Warning "   No habia connections.config en $Destino."
 }
 
-$ajustes = @{}
-if (Test-Path $rutaConfig) {
-    foreach ($clave in @('ModoKiosco', 'Laboratorio')) {
-        $nodo = ([xml](Get-Content -Raw $rutaConfig)).configuration.appSettings.add | Where-Object { $_.key -eq $clave }
-        if ($nodo) {
-            $ajustes[$clave] = $nodo.value
-            Write-Host ("   {0} = '{1}'" -f $clave, $nodo.value)
+# TODOS los ajustes con valor, no una lista: configurar_equipo.ps1 y el
+# instalador escriben ModoKiosco, Laboratorio, NumeroMaquina, CarpetaDatos,
+# EmergenciaMemoria... y el vigilante su CarpetaDatos. Reponer solo dos dejaba
+# las bitacoras pendientes en el ThawSpace sin enviar y la cola nueva en el
+# disco congelado, la bitacora con el nombre de Windows y la memoria de
+# emergencia sin valer.
+$rutaConfigVigilante = Join-Path $Destino 'Vigilante\DigBit.Vigilante.exe.config'
+
+function LeerAjustes([string]$archivo) {
+    $leidos = [ordered]@{}
+    if (Test-Path $archivo) {
+        foreach ($nodo in @(([xml](Get-Content -Raw $archivo)).configuration.appSettings.add)) {
+            if ($nodo -and -not [string]::IsNullOrEmpty($nodo.value)) { $leidos[$nodo.key] = $nodo.value }
         }
     }
-} else {
-    Write-Warning "   No habia DigBit.exe.config en $Destino."
+    return $leidos
 }
 
-Write-Host ''
-Write-Host "== 3. Copiar a $Destino" -ForegroundColor Cyan
-Copy-Item (Join-Path $origenDigBit '*') $Destino -Recurse -Force
-Write-Host '   DigBit copiado'
-
-# Devolver lo del equipo. El DigBit.exe.config NUEVO se conserva (puede traer
-# claves que antes no existian) y solo se le reponen los valores desplegados.
-if ($conexionGuardada) {
-    Set-Content -Path $rutaConexion -Value $conexionGuardada -Encoding UTF8 -NoNewline
-    Write-Host '   connections.config devuelto'
+# Los valores secretos (la memoria de emergencia va hasheada, la clave de la API
+# de recuperacion) no se escriben en pantalla.
+function Ensenar([string]$clave, [string]$valor) {
+    if ($clave -match 'Memoria|Clave|Contrasena|Password') { return '(guardado, no se muestra)' }
+    return "'$valor'"
 }
-if ($ajustes.Count -gt 0 -and (Test-Path $rutaConfig)) {
-    [xml]$xml = Get-Content -Raw $rutaConfig
+
+function ReponerAjustes([string]$archivo, $ajustes) {
+    [xml]$xml = Get-Content -Raw $archivo
+    if (-not $xml.configuration.appSettings) {
+        [void]$xml.configuration.AppendChild($xml.CreateElement('appSettings'))
+    }
     foreach ($clave in $ajustes.Keys) {
         $nodo = $xml.configuration.appSettings.add | Where-Object { $_.key -eq $clave }
         if (-not $nodo) {
@@ -165,14 +186,53 @@ if ($ajustes.Count -gt 0 -and (Test-Path $rutaConfig)) {
         }
         $nodo.SetAttribute('value', $ajustes[$clave])
     }
-    $xml.Save($rutaConfig)
-    Write-Host ("   DigBit.exe.config: ModoKiosco y Laboratorio repuestos")
+    $xml.Save($archivo)
+}
+
+if (-not (Test-Path $rutaConfig)) {
+    Write-Warning "   No habia DigBit.exe.config en $Destino."
+}
+$ajustes = LeerAjustes $rutaConfig
+foreach ($clave in $ajustes.Keys) { Write-Host ("   {0} = {1}" -f $clave, (Ensenar $clave $ajustes[$clave])) }
+$ajustesVigilante = LeerAjustes $rutaConfigVigilante
+foreach ($clave in $ajustesVigilante.Keys) { Write-Host ("   vigilante: {0} = {1}" -f $clave, (Ensenar $clave $ajustesVigilante[$clave])) }
+
+Write-Host ''
+Write-Host "== 3. Copiar a $Destino" -ForegroundColor Cyan
+Copy-Item (Join-Path $origenDigBit '*') $Destino -Recurse -Force
+Write-Host '   DigBit copiado'
+
+# Devolver lo del equipo. Los .config NUEVOS se conservan (pueden traer claves
+# que antes no existian) y solo se les reponen los valores que tenia el equipo.
+if ($conexionGuardada) {
+    Set-Content -Path $rutaConexion -Value $conexionGuardada -Encoding UTF8 -NoNewline
+    Write-Host '   connections.config devuelto'
+}
+if ($ajustes.Count -gt 0 -and (Test-Path $rutaConfig)) {
+    ReponerAjustes $rutaConfig $ajustes
+    Write-Host ("   DigBit.exe.config: repuestos " + ($ajustes.Keys -join ', '))
 }
 if (Test-Path (Join-Path $origenVigilante '*.exe')) {
     $carpetaVigilante = Join-Path $Destino 'Vigilante'
     New-Item -ItemType Directory -Force $carpetaVigilante | Out-Null
     Copy-Item (Join-Path $origenVigilante '*') $carpetaVigilante -Recurse -Force
     Write-Host '   vigilante copiado'
+}
+if ($ajustesVigilante.Count -gt 0 -and (Test-Path $rutaConfigVigilante)) {
+    ReponerAjustes $rutaConfigVigilante $ajustesVigilante
+    Write-Host ("   DigBit.Vigilante.exe.config: repuestos " + ($ajustesVigilante.Keys -join ', '))
+}
+
+# Que de verdad quedaron: si algo no se repuso, mejor saberlo aqui que al ver
+# las bitacoras sin numero de maquina.
+$perdidos = @()
+$despues = LeerAjustes $rutaConfig
+foreach ($clave in $ajustes.Keys) { if ($despues[$clave] -ne $ajustes[$clave]) { $perdidos += "DigBit.exe.config: $clave" } }
+$despuesVigilante = LeerAjustes $rutaConfigVigilante
+foreach ($clave in $ajustesVigilante.Keys) { if ($despuesVigilante[$clave] -ne $ajustesVigilante[$clave]) { $perdidos += "vigilante: $clave" } }
+if ($perdidos.Count -gt 0) {
+    $perdidos | ForEach-Object { Write-Host "   NO SE REPUSO $_" -ForegroundColor Red }
+    throw 'La configuracion del equipo no quedo como estaba.'
 }
 
 Write-Host ''
@@ -202,3 +262,6 @@ if ($servicio) {
 
 Write-Host ''
 Write-Host 'Listo. Reinicia la maquina para probar con el DigBit nuevo.' -ForegroundColor Green
+if ($deepFreeze.Presente) {
+    Write-Host 'Cuando compruebes que arranca bien (diagnostico_equipo.ps1 dice la version), vuelve a congelarlo.' -ForegroundColor Yellow
+}

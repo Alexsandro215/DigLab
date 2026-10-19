@@ -1,12 +1,11 @@
 using DigBit.conexion;
 using DigBit.Infraestructura;
-using iTextSharp.text;
-using iTextSharp.text.pdf;
-using iTextSharp.tool.xml;
 using System;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.Data;
-using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
@@ -18,7 +17,15 @@ namespace DigBit
     /// Quien registro su bitacora en una clase concreta. La abre el profesor al
     /// pulsar una clase de su horario (BitacoraMisClases) y el administrador
     /// desde sus pantallas. Se refresca sola mientras dura la clase, lleva la
-    /// cuenta atras hasta la hora de salida y descarga el PDF de esa sesion.
+    /// cuenta atras hasta la hora de salida y descarga el PDF de esa sesion
+    /// (primero la vista previa, VisorPdf; desde ahi se elige donde guardarlo).
+    /// No escribe en la base: el encargado de laboratorio (solo consulta) la usa
+    /// igual desde Alertas y Faltas, sin el codigo en el nombre del PDF.
+    ///
+    /// Las fallas que reporto el profesor (db/15) van a la vista, en una franja
+    /// naranja entre el encabezado y la tabla, un renglon por reporte. La fila
+    /// elegida va en verde claro (la de una falla, en un naranja mas intenso) y
+    /// ni el refresco de cada 10 s ni F5 la cambian, ni el orden, ni lo que se ve.
     /// </summary>
     public class BitacoraSesion : Form
     {
@@ -26,7 +33,25 @@ namespace DigBit
         // intenso para la celda con la falla.
         private static readonly Color ColorConFalla = Color.FromArgb(255, 240, 214);
         private static readonly Color ColorFallaCelda = Color.FromArgb(255, 176, 79);
+        // La fila elegida: el verde claro de las listas (EstiloHorarios.FilaElegida) con
+        // letra negra, no el azul de Windows. La de una falla sigue naranja, mas
+        // intensa: en verde no se veria la falla.
+        private static readonly Color ColorConFallaElegida = Color.FromArgb(255, 218, 168);
+        private static readonly Color ColorFallaCeldaElegida = Color.FromArgb(234, 150, 52);
+        // Los equipos que el alumno aviso sin internet (columna Sin internet).
+        private static readonly Color TextoSinInternet = Color.FromArgb(190, 85, 0);
+        // La franja de lo que reporto el profesor: el fondo de las filas con falla,
+        // una barra del naranja de la celda a la izquierda y el titulo en naranja oscuro.
+        private static readonly Color TituloReportes = Color.FromArgb(160, 75, 0);
+        private static readonly Color TextoReportes = Color.FromArgb(50, 50, 50);
         private const int SegundosEntreRefrescos = 10;
+        // Donde empieza la tabla sin franja, la franja y lo que queda debajo de la tabla.
+        private const int ArribaDeLaTabla = 102;
+        private const int ArribaDeLaFranja = 100;
+        private const int DebajoDeLaTabla = 60;
+        private const int BarraFranja = 4;
+        // Dentro del borde de la franja, arriba y abajo del texto.
+        private const int RellenoFranja = 6;
 
         private readonly Consultas consultas = new Consultas();
         private readonly int? idFranja;
@@ -41,10 +66,31 @@ namespace DigBit
         private DateTime finEnRelojLocal;
         private int ticks;
         private Timer temporizador;
+        // Mientras se lee (o se ensena el error de Actualizar), el temporizador no
+        // vuelve a entrar: el MessageBox sigue despachando sus ticks.
+        private bool refrescando;
+        // El refresco automatico fallo: se dice en vez de la cuenta atras hasta que una lectura salga bien.
+        private bool sinLeer;
 
         private Label lblClase;
         private Label lblHorario;
         private Label lblRestante;
+        // La franja de las fallas que reporto el profesor: el marco (pinta la barra y
+        // el borde, no se desplaza) y, dentro, el titulo y los renglones, que se
+        // desplazan si no caben.
+        private Panel pnlReportes;
+        private Panel pnlRenglones;
+        private Label lblReportesTitulo;
+        private Label lblReportes;
+        // Lo que dice la franja (vacio: sin franja); se compara para no rehacerla cada 10 s.
+        private string renglonesPuestos = "";
+        // Cuantos reportes dice la franja: la linea de abajo los cuenta aunque la lectura siguiente falle.
+        private int reportesPuestos;
+        // Ya se anoto en el log que no se pudieron leer los reportes (no cada 10 s).
+        private bool avisoReportes;
+        private readonly ToolTip ayudaBotones = new ToolTip();
+        // La celda de la falla, en negrita con la letra de la tabla (no con la del formulario).
+        private readonly DrawingFont fuenteFalla = new DrawingFont("Century Gothic", 9F, FontStyle.Bold);
         private DataGridView dgvAlumnos;
         private Label lblCantidad;
         private Panel pnlLeyenda;
@@ -84,7 +130,7 @@ namespace DigBit
             MinimizeBox = false;
             StartPosition = FormStartPosition.CenterParent;
             ShowInTaskbar = false;
-            Text = "Bitacora de la clase";
+            Text = "Bitácora de la clase";
 
             int ancho = ClientSize.Width;
             int alto = ClientSize.Height;
@@ -111,9 +157,12 @@ namespace DigBit
                 Text = descripcionHorario
             };
 
+            // Con "..." y su ayuda si no cabe: el aviso de un fallo para la administracion
+            // (revisa el registro...) pide unos 920 px y la ventana se puede achicar a 860.
             lblRestante = new Label
             {
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                AutoEllipsis = true,
                 AutoSize = false,
                 Font = new DrawingFont("Century Gothic", 10.5F, FontStyle.Bold),
                 ForeColor = Color.FromArgb(190, 90, 0),
@@ -122,11 +171,42 @@ namespace DigBit
                 Text = ""
             };
 
+            // Oculta hasta que haya un reporte del profesor (Leer y AcomodarReportes).
+            pnlReportes = new Panel
+            {
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                BackColor = ColorConFalla,
+                Location = new Point(24, ArribaDeLaFranja),
+                Size = new Size(ancho - 48, 40),
+                Visible = false
+            };
+            pnlReportes.Paint += PintarMarcoReportes;
+            pnlRenglones = new Panel { AutoScroll = true, BackColor = ColorConFalla };
+            lblReportesTitulo = new Label
+            {
+                AutoSize = true,
+                Font = new DrawingFont("Century Gothic", 9.75F, FontStyle.Bold),
+                ForeColor = TituloReportes,
+                Text = "Reportado por su docente:",
+                UseMnemonic = false
+            };
+            // Su tamano lo pone AcomodarReportes: el ancho que queda y el alto de sus renglones partidos.
+            lblReportes = new Label
+            {
+                AutoSize = false,
+                Font = new DrawingFont("Century Gothic", 9.75F),
+                ForeColor = TextoReportes,
+                UseMnemonic = false
+            };
+            pnlRenglones.Controls.Add(lblReportesTitulo);
+            pnlRenglones.Controls.Add(lblReportes);
+            pnlReportes.Controls.Add(pnlRenglones);
+
             dgvAlumnos = new DataGridView
             {
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
-                Location = new Point(24, 102),
-                Size = new Size(ancho - 48, alto - 162),
+                Location = new Point(24, ArribaDeLaTabla),
+                Size = new Size(ancho - 48, alto - ArribaDeLaTabla - DebajoDeLaTabla),
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
                 AllowUserToResizeRows = false,
@@ -143,16 +223,22 @@ namespace DigBit
             dgvAlumnos.ColumnHeadersDefaultCellStyle.ForeColor = Color.DarkGreen;
             dgvAlumnos.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(240, 248, 240);
             dgvAlumnos.DefaultCellStyle.Font = new DrawingFont("Century Gothic", 9F);
+            dgvAlumnos.DefaultCellStyle.SelectionBackColor = EstiloHorarios.FilaElegida;
+            dgvAlumnos.DefaultCellStyle.SelectionForeColor = Color.Black;
             dgvAlumnos.CellFormatting += dgvAlumnos_CellFormatting;
 
+            // Hasta 10 px antes de Actualizar: si no cabe (ventana chica), "..." y el texto entero al pasar el raton.
             lblCantidad = new Label
             {
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
-                AutoSize = true,
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                AutoEllipsis = true,
+                AutoSize = false,
                 Font = new DrawingFont("Century Gothic", 9.75F, FontStyle.Bold),
                 ForeColor = Color.DarkGreen,
                 Location = new Point(26, alto - 52),
-                Text = ""
+                Size = new Size(ancho - 344 - 10 - 26, 20),
+                Text = "",
+                UseMnemonic = false
             };
 
             pnlLeyenda = new Panel
@@ -171,11 +257,12 @@ namespace DigBit
                 Font = new DrawingFont("Century Gothic", 8.25F),
                 ForeColor = Color.FromArgb(50, 50, 50),
                 Location = new Point(45, alto - 29),
-                Text = "Naranja: la falla reportada"
+                Text = "Naranja: la falla que se reportó en la bitácora"
             };
 
             btnActualizar = CrearBoton("Actualizar", new Point(ancho - 344, alto - 44), new Size(100, 34));
             btnActualizar.Click += (s, e) => Refrescar();
+            ayudaBotones.SetToolTip(btnActualizar, "Vuelve a leer quién registró (F5).");
 
             btnDescargar = CrearBoton("Descargar PDF", new Point(ancho - 234, alto - 44), new Size(130, 34));
             btnDescargar.Click += (s, e) => DescargarPdf();
@@ -191,6 +278,7 @@ namespace DigBit
             Controls.Add(lblClase);
             Controls.Add(lblHorario);
             Controls.Add(lblRestante);
+            Controls.Add(pnlReportes);
             Controls.Add(dgvAlumnos);
             Controls.Add(lblCantidad);
             Controls.Add(pnlLeyenda);
@@ -200,6 +288,8 @@ namespace DigBit
             Controls.Add(btnCerrar);
 
             CancelButton = btnCerrar;
+            // F5 actualiza desde cualquier sitio de la ventana (OnKeyDown), como en Mis grupos y Bitacoras.
+            KeyPreview = true;
 
             temporizador = new Timer { Interval = 1000 };
             temporizador.Tick += Temporizador_Tick;
@@ -235,62 +325,314 @@ namespace DigBit
                 temporizador = null;
             }
 
+            ayudaBotones.Dispose();
             base.OnFormClosed(e);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing)
+            {
+                fuenteFalla.Dispose();
+            }
+        }
+
+        /// <summary>F5, desde cualquier sitio de la ventana (KeyPreview): lo mismo que Actualizar.</summary>
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            base.OnKeyDown(e);
+            if (!e.Handled && e.KeyCode == Keys.F5 && e.Modifiers == Keys.None)
+            {
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                Refrescar();
+            }
+        }
+
+        protected override void OnClientSizeChanged(EventArgs e)
+        {
+            base.OnClientSizeChanged(e);
+            // Al cambiar el ancho, los renglones se parten en otro sitio: la franja y la tabla se recolocan.
+            AcomodarReportes(true);
         }
 
         // =====================================================================
         // Datos
         // =====================================================================
 
-        private void Refrescar()
+        /// <summary>
+        /// Lee quien registro. El refresco automatico (cada 10 s) no avisa con un
+        /// MessageBox si falla: lo dice en la linea de la cuenta atras y lo
+        /// reintenta en el siguiente; al abrir y con Actualizar, si.
+        /// </summary>
+        private void Refrescar(bool automatico = false)
         {
+            if (refrescando)
+            {
+                return;
+            }
+
+            refrescando = true;
             try
             {
-                if (idSesion == 0)
-                {
-                    // Aun no hay sesion: se busca otra vez, por si el primer
-                    // alumno acaba de entrar.
-                    idSesion = idFranja.HasValue
-                        ? (fecha.HasValue ? consultas.ObtenerIdSesionDeFranja(idFranja.Value, fecha.Value) : consultas.ObtenerIdSesionDeFranja(idFranja.Value))
-                        : idExcepcion.HasValue ? consultas.ObtenerIdSesionDeExcepcion(idExcepcion.Value) : 0;
-
-                    if (idSesion != 0)
-                    {
-                        ventana = consultas.ObtenerVentanaSesion(idSesion);
-                        if (ventana != null)
-                        {
-                            // La ventana se lee UNA vez con el reloj del servidor y
-                            // se traslada al reloj local: el temporizador no vuelve
-                            // a consultar la base.
-                            finEnRelojLocal = ventana.FinEnRelojLocal;
-                            lblHorario.Text = descripcionHorario + "  ·  sesion del " + ventana.Inicio.ToString("dd/MM/yyyy");
-                        }
-                    }
-                }
-
-                if (idSesion == 0)
-                {
-                    dgvAlumnos.DataSource = null;
-                    lblRestante.Text = "Todavia nadie ha registrado su bitacora en esta clase.";
-                    lblCantidad.Text = "";
-                    btnDescargar.Enabled = false;
-                    return;
-                }
-
-                DataTable alumnos = consultas.consultaRegistroSesion(idSesion);
-                dgvAlumnos.DataSource = alumnos;
-                ConfigurarColumnas();
-
-                int conFalla = alumnos.Rows.Cast<DataRow>().Count(Consultas.ConFalla);
-                lblCantidad.Text = "Registrados: " + alumnos.Rows.Count
-                    + (conFalla > 0 ? "  ·  con falla reportada: " + conFalla : "  ·  sin fallas reportadas");
-                btnDescargar.Enabled = true;
-                MostrarTiempoRestante();
+                sinLeer = false;
+                Leer();
             }
             catch (Exception ex)
             {
                 Log.Error("BitacoraSesion.Refrescar", ex);
-                MessageBox.Show("No se pudo leer la bitacora: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                if (automatico)
+                {
+                    // En su linea, corto: si fue la red y que se reintenta sola; si no, a quien avisar.
+                    sinLeer = true;
+                    lblRestante.Text = MensajeDeFallo.EsDeRed(ex)
+                        ? "No se pudo leer la bitácora: no hay conexión con el servidor. Se vuelve a intentar sola."
+                        : "No se pudo leer la bitácora: se vuelve a intentar sola; si sigue, " + AvisoDeFalloDocente.SiSigue + ".";
+                }
+                else
+                {
+                    // La causa y que hacer; el detalle tecnico, al registro (arriba). Sin dueno,
+                    // como antes: al abrir, esto pasa en el constructor, sin ventana aun.
+                    MessageBox.Show(MensajeDeFallo.Explicar("No se pudo leer la bitácora", ex, AvisoDeFalloDocente.SiSigue), Text,
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+            finally
+            {
+                refrescando = false;
+            }
+        }
+
+        private void Leer()
+        {
+            if (idSesion == 0)
+            {
+                // Aun no hay sesion: se busca otra vez, por si el primer
+                // alumno acaba de entrar.
+                idSesion = idFranja.HasValue
+                    ? (fecha.HasValue ? consultas.ObtenerIdSesionDeFranja(idFranja.Value, fecha.Value) : consultas.ObtenerIdSesionDeFranja(idFranja.Value))
+                    : idExcepcion.HasValue ? consultas.ObtenerIdSesionDeExcepcion(idExcepcion.Value) : 0;
+
+                if (idSesion != 0)
+                {
+                    ventana = consultas.ObtenerVentanaSesion(idSesion);
+                    if (ventana != null)
+                    {
+                        // La ventana se lee UNA vez con el reloj del servidor y
+                        // se traslada al reloj local: el temporizador no vuelve
+                        // a consultar la base.
+                        finEnRelojLocal = ventana.FinEnRelojLocal;
+                        lblHorario.Text = descripcionHorario + " (sesión del " + ventana.Inicio.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) + ")";
+                    }
+                }
+            }
+
+            if (idSesion == 0)
+            {
+                dgvAlumnos.DataSource = null;
+                PonerReportes(new List<ReporteProfesor>());
+                lblRestante.Text = "Todavía nadie ha registrado su bitácora en esta clase.";
+                lblCantidad.Text = "";
+                btnDescargar.Enabled = false;
+                return;
+            }
+
+            DataTable alumnos = consultas.consultaRegistroSesion(idSesion);
+            VistaDeLaTabla vista = VistaDeLaTabla.Tomar(dgvAlumnos);
+            dgvAlumnos.DataSource = alumnos;
+            ConfigurarColumnas();
+            vista.Devolver(dgvAlumnos);
+
+            // Las fallas que reporto el profesor en esta clase (db/15). Si no se
+            // pueden leer, quien registro se ve igual y la franja se queda como estaba.
+            try
+            {
+                PonerReportes(new ReportesProfesorDatos().DeLaSesion(idSesion));
+            }
+            catch (Exception ex)
+            {
+                if (!avisoReportes)
+                {
+                    avisoReportes = true;
+                    Log.Aviso("BitacoraSesion: no se pudieron leer los reportes del profesor de la sesion " + idSesion + ": " + ex.Message);
+                }
+            }
+
+            int conFalla = alumnos.Rows.Cast<DataRow>().Count(Consultas.ConFalla);
+            string sinInternet = Consultas.DescribirSinInternet(Consultas.ContarSinInternet(
+                alumnos.Rows.Cast<DataRow>().Select(f => f["avisa_sin_internet"].ToString())), true);
+            // Los que dice la franja (si esta vez no se pudieron leer, los de la lectura anterior).
+            int delProfesor = reportesPuestos;
+            // "Ningun alumno reporto fallas" y no "sin fallas": junto a lo que reporto el profesor
+            // se contradiria. Sin registros (la sesion la abrio un reporte del profesor), nada
+            // de los alumnos.
+            lblCantidad.Text = "Registros: " + alumnos.Rows.Count
+                + (alumnos.Rows.Count == 0 ? ""
+                    : conFalla == 0 ? ". Nadie reportó fallas en su bitácora"
+                    : conFalla == 1 ? ". 1 estudiante reportó fallas" : ". " + conFalla + " estudiantes reportaron fallas")
+                + (sinInternet.Length > 0 ? ". " + sinInternet : "")
+                + (delProfesor == 1 ? ". Su docente reportó 1 falla"
+                    : delProfesor > 1 ? ". Su docente reportó " + delProfesor + " fallas" : "")
+                + ".";
+            btnDescargar.Enabled = true;
+            MostrarTiempoRestante();
+        }
+
+        /// <summary>
+        /// La franja con lo que reporto el profesor: un renglon por reporte
+        /// (ReporteProfesor.Renglon), o sin franja si no reporto nada. Solo se
+        /// rehace si cambio lo que dice: el refresco de cada 10 s no la mueve.
+        /// </summary>
+        private void PonerReportes(List<ReporteProfesor> reportes)
+        {
+            string renglones = string.Join(Environment.NewLine, reportes.Select(r => r.Renglon));
+            if (renglones == renglonesPuestos)
+            {
+                return;
+            }
+
+            renglonesPuestos = renglones;
+            reportesPuestos = reportes.Count;
+            lblReportes.Text = renglones;
+            pnlReportes.AccessibleName = renglones.Length == 0 ? null : lblReportesTitulo.Text + " " + renglones.Replace(Environment.NewLine, " ");
+            AcomodarReportes(false);
+        }
+
+        /// <summary>
+        /// La franja, del ancho de la tabla en 100: 4 px de barra naranja, 1 de
+        /// borde y, dentro, "Reportado por el profesor:" y a su derecha los
+        /// renglones (partidos si no caben). Mide lo que su texto, hasta un 40 % de
+        /// lo que queda para la tabla; si no cabe, se desplaza. La tabla empieza 8
+        /// px debajo de ella (sin franja, en 102) y acaba 60 px antes del borde.
+        /// Con mantener (al cambiar el tamano), lo desplazado se queda donde estaba.
+        /// </summary>
+        private void AcomodarReportes(bool mantener)
+        {
+            Size cliente = ClientSize;
+            if (pnlReportes == null || dgvAlumnos == null || cliente.Width < 100 || cliente.Height < 100)
+            {
+                return;
+            }
+
+            int ancho = cliente.Width - 48;
+            int arriba = ArribaDeLaTabla;
+            bool conFranja = renglonesPuestos.Length > 0;
+            if (conFranja)
+            {
+                Point desplazado = mantener ? pnlRenglones.AutoScrollPosition : Point.Empty;
+                // Los hijos de un panel desplazado se colocan respecto a lo que se ve: primero, arriba del todo.
+                pnlRenglones.AutoScrollPosition = Point.Empty;
+                int dentro = ancho - BarraFranja - 2;
+                int xRenglones = 10 + lblReportesTitulo.PreferredSize.Width + 8;
+                int anchoRenglones = Math.Max(80, dentro - xRenglones - 10);
+                int maximo = Math.Max(48, (cliente.Height - ArribaDeLaFranja - DebajoDeLaTabla - 8) * 2 / 5);
+                if (AltoDeLaFranja(anchoRenglones) > maximo)
+                {
+                    // Con la barra de desplazamiento, los renglones tienen menos ancho.
+                    anchoRenglones = Math.Max(80, anchoRenglones - SystemInformation.VerticalScrollBarWidth);
+                }
+
+                int altoFranja = Math.Min(AltoDeLaFranja(anchoRenglones), maximo);
+                pnlReportes.SetBounds(24, ArribaDeLaFranja, ancho, altoFranja);
+                pnlRenglones.SetBounds(BarraFranja + 1, 1, dentro, altoFranja - 2);
+                pnlRenglones.AutoScrollMargin = new Size(0, RellenoFranja);
+                lblReportesTitulo.Location = new Point(10, RellenoFranja);
+                lblReportes.SetBounds(xRenglones, RellenoFranja, anchoRenglones, AltoDeLosRenglones(anchoRenglones));
+                if (mantener && desplazado != Point.Empty)
+                {
+                    pnlRenglones.AutoScrollPosition = new Point(-desplazado.X, -desplazado.Y);
+                }
+
+                arriba = pnlReportes.Bottom + 8;
+            }
+
+            pnlReportes.Visible = conFranja;
+            dgvAlumnos.SetBounds(24, arriba, ancho, Math.Max(40, cliente.Height - DebajoDeLaTabla - arriba));
+        }
+
+        /// <summary>Lo que mide la franja con los renglones partidos a ese ancho (con su borde de 1 px arriba y abajo).</summary>
+        private int AltoDeLaFranja(int anchoRenglones)
+        {
+            int texto = Math.Max(lblReportesTitulo.PreferredSize.Height, AltoDeLosRenglones(anchoRenglones));
+            return 1 + RellenoFranja + texto + RellenoFranja + 1;
+        }
+
+        /// <summary>El alto de los renglones partidos a ese ancho, como los pinta su Label.</summary>
+        private int AltoDeLosRenglones(int anchoRenglones)
+        {
+            return lblReportes.GetPreferredSize(new Size(anchoRenglones, 0)).Height;
+        }
+
+        /// <summary>El marco de la franja: la barra naranja de la izquierda y un borde de 1 px del mismo naranja.</summary>
+        private void PintarMarcoReportes(object sender, PaintEventArgs e)
+        {
+            Rectangle r = pnlReportes.ClientRectangle;
+            using (SolidBrush barra = new SolidBrush(ColorFallaCelda))
+            using (Pen borde = new Pen(ColorFallaCelda))
+            {
+                e.Graphics.FillRectangle(barra, 0, 0, BarraFranja + 1, r.Height);
+                e.Graphics.DrawRectangle(borde, 0, 0, r.Width - 1, r.Height - 1);
+            }
+        }
+
+        /// <summary>
+        /// La fila que estaba elegida (por su matricula), la primera fila que se
+        /// veia y el orden por columna: al volver a llenar la tabla (cada 10 s
+        /// mientras dura la clase) se devuelven, y nada salta.
+        /// </summary>
+        private sealed class VistaDeLaTabla
+        {
+            private string matricula;
+            private int primeraFila = -1;
+            private string columnaOrden;
+            private SortOrder sentido;
+
+            public static VistaDeLaTabla Tomar(DataGridView tabla)
+            {
+                VistaDeLaTabla vista = new VistaDeLaTabla
+                {
+                    primeraFila = tabla.FirstDisplayedScrollingRowIndex,
+                    columnaOrden = tabla.SortedColumn == null ? null : tabla.SortedColumn.Name,
+                    sentido = tabla.SortOrder
+                };
+                DataRowView fila = tabla.SelectedRows.Count > 0 ? tabla.SelectedRows[0].DataBoundItem as DataRowView : null;
+                vista.matricula = fila == null ? null : Convert.ToString(fila.Row["numero_identificador"]);
+                return vista;
+            }
+
+            public void Devolver(DataGridView tabla)
+            {
+                if (columnaOrden != null && sentido != SortOrder.None && tabla.Columns.Contains(columnaOrden))
+                {
+                    tabla.Sort(tabla.Columns[columnaOrden], sentido == SortOrder.Descending ? ListSortDirection.Descending : ListSortDirection.Ascending);
+                }
+
+                if (matricula != null)
+                {
+                    DataGridViewRow elegida = tabla.Rows.Cast<DataGridViewRow>().FirstOrDefault(f =>
+                        f.DataBoundItem is DataRowView && Convert.ToString(((DataRowView)f.DataBoundItem).Row["numero_identificador"]) == matricula);
+                    DataGridViewColumn primera = tabla.Columns.GetFirstColumn(DataGridViewElementStates.Visible);
+                    if (elegida != null && primera != null)
+                    {
+                        // Poner la celda actual lleva la tabla hasta ella; lo que se veia se devuelve despues.
+                        tabla.CurrentCell = elegida.Cells[primera.Index];
+                        tabla.ClearSelection();
+                        elegida.Selected = true;
+                    }
+                }
+
+                if (primeraFila >= 0 && primeraFila < tabla.Rows.Count && tabla.FirstDisplayedScrollingRowIndex != primeraFila)
+                {
+                    try
+                    {
+                        tabla.FirstDisplayedScrollingRowIndex = primeraFila;
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // Sin alto para mostrar filas (minimizada): se queda arriba.
+                    }
+                }
             }
         }
 
@@ -317,8 +659,8 @@ namespace DigBit
                 dgvAlumnos.Columns["falla_" + area].Visible = false;
             }
 
-            dgvAlumnos.Columns["nombre_completo"].HeaderText = "Alumno";
-            dgvAlumnos.Columns["numero_identificador"].HeaderText = "Matricula";
+            dgvAlumnos.Columns["nombre_completo"].HeaderText = "Estudiante";
+            dgvAlumnos.Columns["numero_identificador"].HeaderText = "Matrícula";
             dgvAlumnos.Columns["numero_computadora"].HeaderText = "Equipo";
             dgvAlumnos.Columns["comentarios_red"].HeaderText = "Red";
             dgvAlumnos.Columns["comentarios_hardware"].HeaderText = "Hardware";
@@ -326,6 +668,16 @@ namespace DigBit
 
             // La hora de su primer registro: con clases seguidas, dice cuando llego.
             dgvAlumnos.Columns["hora_registro"].HeaderText = "Hora";
+
+            // Otros equipos que vio sin internet (db/10): solo si alguien aviso.
+            DataGridViewColumn avisos = dgvAlumnos.Columns["avisa_sin_internet"];
+            avisos.HeaderText = "Sin internet";
+            avisos.ToolTipText = "Otros equipos que avisó sin internet al registrar su bitácora.";
+            avisos.FillWeight = 13;
+            avisos.DefaultCellStyle.ForeColor = TextoSinInternet;
+            avisos.DefaultCellStyle.SelectionForeColor = TextoSinInternet;
+            avisos.Visible = dgvAlumnos.DataSource is DataTable
+                && ((DataTable)dgvAlumnos.DataSource).Rows.Cast<DataRow>().Any(f => f["avisa_sin_internet"].ToString().Length > 0);
 
             dgvAlumnos.Columns["nombre_completo"].DisplayIndex = 0;
             dgvAlumnos.Columns["numero_identificador"].DisplayIndex = 1;
@@ -363,6 +715,11 @@ namespace DigBit
                 e.Value = Consultas.ConFallaEn(vista.Row, area) ? Consultas.DetalleDeFalla(vista.Row, area) : "";
                 e.FormattingApplied = true;
             }
+            else if (columna == "avisa_sin_internet" && e.Value != null)
+            {
+                e.Value = e.Value.ToString().Replace(",", ", ");
+                e.FormattingApplied = true;
+            }
 
             if (!Consultas.ConFalla(vista.Row))
             {
@@ -370,13 +727,13 @@ namespace DigBit
             }
 
             bool esLaFalla = esColumnaDeArea && Consultas.ConFallaEn(vista.Row, area);
-            Color fondo = esLaFalla ? ColorFallaCelda : ColorConFalla;
-            e.CellStyle.BackColor = fondo;
-            e.CellStyle.SelectionBackColor = ControlPaint.Dark(fondo, 0.12f);
-            e.CellStyle.SelectionForeColor = Color.Black;
+            e.CellStyle.BackColor = esLaFalla ? ColorFallaCelda : ColorConFalla;
+            // Elegida, su naranja mas intenso (no el verde: se perderia la falla) y su letra de siempre.
+            e.CellStyle.SelectionBackColor = esLaFalla ? ColorFallaCeldaElegida : ColorConFallaElegida;
+            e.CellStyle.SelectionForeColor = e.CellStyle.ForeColor;
             if (esLaFalla)
             {
-                e.CellStyle.Font = new DrawingFont(dgvAlumnos.Font, FontStyle.Bold);
+                e.CellStyle.Font = fuenteFalla;
             }
         }
 
@@ -394,22 +751,22 @@ namespace DigBit
             ticks++;
             if (ticks % SegundosEntreRefrescos == 0)
             {
-                Refrescar();
+                Refrescar(true);
             }
         }
 
         private void MostrarTiempoRestante()
         {
-            if (ventana == null)
+            if (ventana == null || sinLeer)
             {
                 return;
             }
 
             TimeSpan restante = finEnRelojLocal - DateTime.Now;
             lblRestante.Text = restante <= TimeSpan.Zero
-                ? "La clase termino a las " + ventana.Fin.ToString("HH:mm") + "."
-                : "Termina a las " + ventana.Fin.ToString("HH:mm") + "  ·  quedan "
-                  + (int)restante.TotalHours + restante.ToString("\\:mm\\:ss");
+                ? "La clase terminó a las " + ventana.Fin.ToString("HH:mm") + "."
+                : "Termina a las " + ventana.Fin.ToString("HH:mm") + " (quedan "
+                  + (int)restante.TotalHours + restante.ToString("\\:mm\\:ss") + ").";
         }
 
         // =====================================================================
@@ -420,117 +777,84 @@ namespace DigBit
         {
             if (idSesion == 0)
             {
-                MessageBox.Show("Esta clase todavia no tiene registros.", "Sin registros", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, "Esta clase todavía no tiene registros.", "Sin registros", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            Usuario datosPdf = consultas.ConsultarDatosPdfSesion(idSesion);
-            if (datosPdf == null)
-            {
-                MessageBox.Show("No se encontraron datos de la sesion.", "Informacion", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            string nombreArchivo = SanitizarNombreArchivo(
-                (ventana != null ? ventana.Codigo + "_" + ventana.Inicio.ToString("yyyy-MM-dd") + "_" : "") + nombreProfesor) + ".pdf";
-
-            string rutaCompleta;
-            using (SaveFileDialog dialogo = new SaveFileDialog())
-            {
-                dialogo.Title = "Guardar bitacora PDF";
-                dialogo.Filter = "Archivo PDF (*.pdf)|*.pdf";
-                dialogo.DefaultExt = "pdf";
-                dialogo.FileName = nombreArchivo;
-                dialogo.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-                if (dialogo.ShowDialog() != DialogResult.OK)
-                {
-                    return;
-                }
-
-                rutaCompleta = dialogo.FileName;
-            }
-
+            // Sin conexion (u otro fallo al leer), la causa y que hacer: antes salia
+            // la pantalla de error de la aplicacion.
+            EncabezadoPdfSesion datosPdf;
             try
             {
-                GenerarPdf(datosPdf, rutaCompleta);
+                datosPdf = consultas.ConsultarDatosPdfSesion(idSesion);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("BitacoraSesion.DescargarPdf (datos de la sesion " + idSesion + ")", ex);
+                MessageBox.Show(this, MensajeDeFallo.Explicar("No se pudo preparar el PDF", ex, AvisoDeFalloDocente.SiSigue), Text,
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            if (datosPdf == null)
+            {
+                MessageBox.Show(this, "No se pudo preparar el PDF: el servidor ya no tiene los datos de esta sesión (quizá se quitó mientras tanto). "
+                    + "Cierra esta ventana y vuelve a abrir la clase; si sigue, " + AvisoDeFalloDocente.SiSigue + ".", Text,
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            // Como en Bitacoras: "codigo_fecha_HHmm_laboratorio_profesor.pdf". El codigo
+            // de la sesion es lo que teclean los alumnos: el encargado de laboratorio
+            // no lo ve, tampoco en el nombre del archivo (Permisos).
+            string nombreArchivo = ventana == null
+                ? PdfBitacora.NombreArchivo(nombreProfesor)
+                : PdfBitacora.NombreArchivo(
+                    Permisos.VeCodigosDeProfesor ? ventana.Codigo : "",
+                    ventana.Inicio.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    ventana.Inicio.ToString("HHmm", CultureInfo.InvariantCulture),
+                    ventana.Laboratorio,
+                    nombreProfesor);
+
+            // Primero se ve como saldra (VisorPdf); desde ahi se elige donde guardarlo.
+            byte[] pdf;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                using (MemoryStream memoria = new MemoryStream())
+                {
+                    GenerarPdf(datosPdf, memoria);
+                    pdf = memoria.ToArray();
+                }
             }
             catch (Exception ex)
             {
                 Log.Error("BitacoraSesion.DescargarPdf", ex);
-                MessageBox.Show("No se pudo generar el PDF: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this, MensajeDeFallo.Explicar("No se pudo preparar el PDF", ex, AvisoDeFalloDocente.SiSigue), Text,
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
 
-            MessageBox.Show("El PDF se guardo en: " + rutaCompleta, "Informacion", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            AbrirArchivo(rutaCompleta);
+            VisorPdf.Mostrar(this, pdf, nombreArchivo);
         }
 
-        private void GenerarPdf(Usuario datosPdf, string rutaCompleta)
+        /// <summary>
+        /// El PDF de la sesion en destino: el mismo de Bitacoras (PdfBitacora), con
+        /// el profesor, el grupo, la materia y el laboratorio de la sesion.
+        /// </summary>
+        private void GenerarPdf(EncabezadoPdfSesion datosPdf, Stream destino)
         {
-            string paginahtml_texto = Properties.Resources.plantilla.ToString();
-            paginahtml_texto = paginahtml_texto.Replace("@HORARIODEENTRADA", datosPdf.HoraEntrada);
-            paginahtml_texto = paginahtml_texto.Replace("@HORARIODESALIDA", datosPdf.HoraSalida);
-            paginahtml_texto = paginahtml_texto.Replace("@PROFESOR", nombreProfesor);
-            paginahtml_texto = paginahtml_texto.Replace("@GRUPO", datosPdf.GruposId);
-            paginahtml_texto = paginahtml_texto.Replace("@MATERIA", datosPdf.MateriasId);
-            paginahtml_texto = paginahtml_texto.Replace("@FECHA", datosPdf.HoraRegistro);
-
-            using (FileStream stream = new FileStream(rutaCompleta, FileMode.Create))
+            // Sin profesor guardado en la sesion (no deberia pasar con una clase): el de la clase que se abrio.
+            if (string.IsNullOrWhiteSpace(datosPdf.Profesor))
             {
-                Document pdfDoc = new Document(PageSize.A4, 25, 25, 25, 25);
-                PdfWriter writer = PdfWriter.GetInstance(pdfDoc, stream);
-                pdfDoc.Open();
-                pdfDoc.AddTitle("Bitacora DigBit");
-                pdfDoc.AddAuthor("DigBit");
-
-                iTextSharp.text.Image logoTeschi = iTextSharp.text.Image.GetInstance(Properties.Resources.logoteschi, System.Drawing.Imaging.ImageFormat.Png);
-                logoTeschi.ScaleToFit(100, 60);
-                logoTeschi.Alignment = iTextSharp.text.Image.UNDERLYING;
-                logoTeschi.SetAbsolutePosition(470, 750);
-                pdfDoc.Add(logoTeschi);
-
-                iTextSharp.text.Image logoEDOMEX = iTextSharp.text.Image.GetInstance(Properties.Resources.estadoMexico, System.Drawing.Imaging.ImageFormat.Png);
-                logoEDOMEX.ScaleToFit(100, 60);
-                logoEDOMEX.Alignment = iTextSharp.text.Image.UNDERLYING;
-                logoEDOMEX.SetAbsolutePosition(40, 750);
-                pdfDoc.Add(logoEDOMEX);
-
-                using (StringReader sr = new StringReader(paginahtml_texto))
-                {
-                    XMLWorkerHelper.GetInstance().ParseXHtml(writer, pdfDoc, sr);
-                }
-
-                TablaAlumnosPdf.Agregar(pdfDoc, consultas.consultaRegistroSesion(idSesion));
-                pdfDoc.Close();
-            }
-        }
-
-        private static string SanitizarNombreArchivo(string nombre)
-        {
-            if (string.IsNullOrWhiteSpace(nombre))
-            {
-                return "Bitacora";
+                datosPdf.Profesor = nombreProfesor;
             }
 
-            foreach (char invalido in Path.GetInvalidFileNameChars())
-            {
-                nombre = nombre.Replace(invalido, '_');
-            }
-
-            return nombre;
-        }
-
-        private void AbrirArchivo(string ruta)
-        {
-            try
-            {
-                Process.Start(new ProcessStartInfo { FileName = ruta, UseShellExecute = true });
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("El PDF se guardo, pero no se pudo abrir: " + ex.Message,
-                    "Vista previa no disponible", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
+            PdfBitacora.Escribir(datosPdf, consultas.consultaRegistroSesion(idSesion), destino);
         }
     }
 }

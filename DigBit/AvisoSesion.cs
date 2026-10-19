@@ -13,15 +13,21 @@ namespace DigBit
     {
         public AvisoSesion(string mensaje)
         {
+            // Con "Tu bitacora quedo registrada." delante (liberado con menos de 5
+            // minutos) el mensaje puede pasar de dos lineas: la ventana crece con el.
+            DrawingFont letraMensaje = new DrawingFont("Century Gothic", 10.5F);
+            int altoMensaje = Math.Max(70, TextRenderer.MeasureText(mensaje ?? "", letraMensaje, new Size(470, int.MaxValue),
+                TextFormatFlags.WordBreak).Height + 6);
+
             BackColor = Color.White;
-            ClientSize = new Size(520, 190);
+            ClientSize = new Size(520, 120 + altoMensaje);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
             ShowInTaskbar = true;
             StartPosition = FormStartPosition.CenterScreen;
             TopMost = true;
-            Text = "DigBit - Tu sesion termina pronto";
+            Text = "DigBit - Tu sesión termina pronto";
 
             Label lblTitulo = new Label
             {
@@ -30,16 +36,16 @@ namespace DigBit
                 ForeColor = Color.DarkGreen,
                 Location = new Point(25, 20),
                 Size = new Size(470, 32),
-                Text = "Tu sesion termina pronto"
+                Text = "Tu sesión termina pronto"
             };
 
             Label lblMensaje = new Label
             {
                 AutoSize = false,
-                Font = new DrawingFont("Century Gothic", 10.5F),
+                Font = letraMensaje,
                 ForeColor = Color.Black,
                 Location = new Point(25, 60),
-                Size = new Size(470, 70),
+                Size = new Size(470, altoMensaje),
                 Text = mensaje
             };
 
@@ -49,7 +55,7 @@ namespace DigBit
                 FlatStyle = FlatStyle.Flat,
                 Font = new DrawingFont("Century Gothic", 10F, FontStyle.Bold),
                 ForeColor = Color.DarkGreen,
-                Location = new Point(365, 135),
+                Location = new Point(365, 65 + altoMensaje),
                 Size = new Size(130, 40),
                 Text = "Entendido",
                 UseVisualStyleBackColor = false
