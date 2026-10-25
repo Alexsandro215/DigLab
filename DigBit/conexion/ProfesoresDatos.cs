@@ -33,7 +33,10 @@ namespace DigBit.conexion
         public DataTable Clases;
         /// <summary>clases_idclases, dia_semana, hora_inicio, hora_fin, laboratorio, vigente_desde y vigente_hasta (db/20; si no, NULL).</summary>
         public DataTable Franjas;
-        /// <summary>idcodigos_accesos, fecha, hora_entrada, hora_salida, laboratorio, materia, grupo, extra (1/0), bitacoras.</summary>
+        /// <summary>
+        /// idcodigos_accesos, fecha, hora_entrada, hora_salida, laboratorio, materia, grupo, extra (1/0), bitacoras
+        /// y, con db/22, dadas (las asistencias que dio sin bitacora y que cuentan; sin la 22 no hay columna).
+        /// </summary>
         public DataTable Sesiones;
         /// <summary>Las fallas que reporto (db/15), o null sin la tabla.</summary>
         public DataTable Reportes;
@@ -240,8 +243,9 @@ namespace DigBit.conexion
         /// <summary>
         /// Lo que se entrega a un docente que pide sus datos (derechos ARCO): sus
         /// clases de siempre (con su horario y su vigencia), sus sesiones (cada vez
-        /// que se dio una, con cuantas bitacoras se registraron) y, con db/15, las
-        /// fallas que reporto. Solo lee; su perfil ya esta en ProfesorInfo.
+        /// que se dio una, con cuantas bitacoras se registraron y, con db/22, cuantas
+        /// asistencias dio sin bitacora) y, con db/15, las fallas que reporto. Solo
+        /// lee; su perfil ya esta en ProfesorInfo.
         /// </summary>
         public DatosDeDocente DatosParaExportar(int idProfesor)
         {
@@ -249,6 +253,13 @@ namespace DigBit.conexion
             using (MySqlConnection conexion = mconexion.GetConexion())
             {
                 bool conVigencia = Esquema.VigenciaDeFranjas(conexion);
+                // Solo el numero, y solo las que cuentan (no las que anulo): el detalle de
+                // cada una es del estudiante, no del docente.
+                string dadas = Esquema.AsistenciaDada(conexion)
+                    ? @",
+                           (SELECT COUNT(*) FROM asistencias_dadas ad
+                             WHERE ad.fk_codigo_accesos = ca.idcodigos_accesos AND ad.fk_profesor = @Id AND ad.activa = 1) AS dadas"
+                    : "";
                 datos.Clases = Tabla(conexion, @"
                     SELECT c.idclases, COALESCE(m.nombre_materia, '') AS materia, COALESCE(g.nombre_grupo, '') AS grupo,
                            c.vigente_desde, c.vigente_hasta, IF(c.activa = 1, 1, 0) AS activa
@@ -269,7 +280,7 @@ namespace DigBit.conexion
                     SELECT ca.idcodigos_accesos, COALESCE(ca.fecha, DATE(ca.hora_registro)) AS fecha, ca.hora_entrada, ca.hora_salida,
                            COALESCE(l.nombre_laboratorio, '') AS laboratorio, COALESCE(m.nombre_materia, '') AS materia,
                            COALESCE(g.nombre_grupo, '') AS grupo, IF(ca.horario_excepciones_id IS NULL, 0, 1) AS extra,
-                           (SELECT COUNT(*) FROM registros_bitacoras rb WHERE rb.fk_codigo_accesos = ca.idcodigos_accesos) AS bitacoras
+                           (SELECT COUNT(*) FROM registros_bitacoras rb WHERE rb.fk_codigo_accesos = ca.idcodigos_accesos) AS bitacoras" + dadas + @"
                     FROM codigos_accesos ca
                     LEFT JOIN laboratorios l ON l.idlaboratorios = ca.laboratorios_idlaboratorios
                     LEFT JOIN materias m     ON m.id_materia = ca.materias_id_materia

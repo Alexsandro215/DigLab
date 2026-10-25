@@ -60,6 +60,9 @@ namespace DigBit.conexion
         /// <summary>La forma general guardada en configuracion (ModosDeAcceso.LeerGeneral), o null.</summary>
         public ModoCodigo? GeneralGuardada { get; private set; }
 
+        /// <summary>"Los docentes no ven los codigos" (CodigosSoloResponsables); null sin db/13: entonces no se ofrece.</summary>
+        public bool? DocentesSinCodigos { get; private set; }
+
         public List<LaboratorioInfo> Listar()
         {
             List<LaboratorioInfo> lista = new List<LaboratorioInfo>();
@@ -69,7 +72,9 @@ namespace DigBit.conexion
                 ModosDisponibles = Esquema.ModoDeAcceso(conexion);
                 SesionesUnicas = Esquema.SesionesUnicas(conexion);
                 UsoLibre = Esquema.UsoLibre(conexion);
-                GeneralGuardada = ModosDisponibles ? ModosDeAcceso.LeerGeneral(conexion) : null;
+                AjustesDeCodigos ajustes = ModosDeAcceso.LeerAjustes(conexion);
+                GeneralGuardada = ModosDisponibles ? ajustes.General : null;
+                DocentesSinCodigos = ajustes.SoloResponsables;
                 bool conVigencia = Esquema.VigenciaDeFranjas(conexion);
                 using (MySqlCommand comando = new MySqlCommand(@"
                     SELECT l.idlaboratorios, l.nombre_laboratorio, " + (DesactivacionDisponible ? "l.activo" : "1 AS activo") + @",
@@ -201,6 +206,15 @@ namespace DigBit.conexion
         /// </summary>
         public void CambiarModos(ModoCodigo? general, IDictionary<int, ModoCodigo> nuevos)
         {
+            CambiarModos(general, nuevos, null);
+        }
+
+        /// <summary>
+        /// Lo mismo y, si se da docentesSinCodigos (con db/13), tambien "Los docentes
+        /// no ven los codigos" (CodigosSoloResponsables) en la misma transaccion.
+        /// </summary>
+        public void CambiarModos(ModoCodigo? general, IDictionary<int, ModoCodigo> nuevos, bool? docentesSinCodigos)
+        {
             Permisos.Exigir("Cambiar los codigos de las clases");
             using (MySqlConnection conexion = mconexion.GetConexion())
             {
@@ -213,10 +227,12 @@ namespace DigBit.conexion
                 Dictionary<int, ModoCodigo> antes = ModosDeAcceso.LeerTodos(conexion);
                 List<KeyValuePair<int, ModoCodigo>> cambian = (nuevos ?? new Dictionary<int, ModoCodigo>())
                     .Where(p => ModosDeAcceso.De(antes, p.Key) != p.Value).ToList();
-                bool conAjustes = general.HasValue && Esquema.Ajustes(conexion);
-                ModoCodigo? generalGuardada = conAjustes ? ModosDeAcceso.LeerGeneral(conexion) : null;
-                bool guardarGeneral = conAjustes && generalGuardada != general;
-                if (cambian.Count == 0 && !guardarGeneral)
+                bool conAjustes = (general.HasValue || docentesSinCodigos.HasValue) && Esquema.Ajustes(conexion);
+                AjustesDeCodigos ajustes = conAjustes ? ModosDeAcceso.LeerAjustes(conexion) : new AjustesDeCodigos();
+                ModoCodigo? generalGuardada = ajustes.General;
+                bool guardarGeneral = conAjustes && general.HasValue && generalGuardada != general;
+                bool guardarDocentes = conAjustes && docentesSinCodigos.HasValue && (ajustes.SoloResponsables ?? false) != docentesSinCodigos.Value;
+                if (cambian.Count == 0 && !guardarGeneral && !guardarDocentes)
                 {
                     return;
                 }
@@ -258,8 +274,32 @@ namespace DigBit.conexion
                         }
                     }
 
+                    if (guardarDocentes)
+                    {
+                        using (MySqlCommand comando = new MySqlCommand(
+                            "INSERT INTO configuracion (clave, valor) VALUES (@Clave, @Valor) ON DUPLICATE KEY UPDATE valor = VALUES(valor)",
+                            conexion, transaccion))
+                        {
+                            comando.Parameters.AddWithValue("@Clave", CodigosSoloResponsables.Clave);
+                            comando.Parameters.AddWithValue("@Valor", CodigosSoloResponsables.Valor(docentesSinCodigos.Value));
+                            comando.ExecuteNonQuery();
+                        }
+                    }
+
                     AnotarFormasDeEntrar(conexion, transaccion, antes, cambian, guardarGeneral ? generalAntes : (ModoCodigo?)null, general);
+                    if (guardarDocentes)
+                    {
+                        AnotarQuienVeLosCodigos(conexion, transaccion, docentesSinCodigos.Value);
+                    }
+
                     transaccion.Commit();
+                }
+
+                if (guardarDocentes)
+                {
+                    CodigosSoloResponsables.Recordar(docentesSinCodigos.Value);
+                    Log.Info("Codigos de las clases: los docentes " + (docentesSinCodigos.Value ? "ya no ven" : "vuelven a ver")
+                        + " los codigos, por " + Quien() + ".");
                 }
 
                 if (conservadas > 0)
@@ -343,6 +383,29 @@ namespace DigBit.conexion
                     Despues = HistorialCambios.Datos("Forma general", a)
                 });
             }
+        }
+
+        /// <summary>Historial (db/21): "Los docentes no ven los codigos" se encendio o se apago. Sin db/21, nada.</summary>
+        private static void AnotarQuienVeLosCodigos(MySqlConnection conexion, MySqlTransaction transaccion, bool docentesSinCodigos)
+        {
+            if (!HistorialCambios.Activo(conexion, transaccion))
+            {
+                return;
+            }
+
+            string antes = docentesSinCodigos ? "Sí" : "No";
+            string despues = docentesSinCodigos ? "No" : "Sí";
+            HistorialCambios.Anotar(conexion, transaccion, new CambioPorAnotar
+            {
+                Tipo = TipoDeCambio.FormaDeEntrar,
+                Accion = AccionDeCambio.Cambio,
+                Tabla = "configuracion",
+                Descripcion = docentesSinCodigos
+                    ? "Toda la escuela: los docentes ya no ven los códigos; solo la administración y los responsables de laboratorio."
+                    : "Toda la escuela: los docentes vuelven a ver los códigos de sus clases.",
+                Antes = HistorialCambios.Datos("Los docentes ven los códigos", antes),
+                Despues = HistorialCambios.Datos("Los docentes ven los códigos", despues)
+            });
         }
 
         /// <summary>El nombre de un laboratorio, o null si ya no esta.</summary>

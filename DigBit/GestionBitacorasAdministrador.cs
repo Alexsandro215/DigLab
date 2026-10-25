@@ -46,6 +46,11 @@ namespace DigBit
         private const string TodosLosLaboratorios = "Todos los laboratorios";
 
         private readonly Consultas consultas = new Consultas();
+        // Las asistencias que dio el profesor a quien no pudo registrar (db/22): no son
+        // bitacoras, asi que no cuentan en la lista; el detalle las dice y el PDF las
+        // lleva en su propia tabla.
+        private readonly LectorDeDadas lectorDadas = new LectorDeDadas();
+        private bool avisoDadas;
         private readonly int idProfesor;
         // Ver toda la escuela (idProfesor 0) no es poder corregir: el encargado de
         // laboratorio ve todo, como el administrador, pero en solo consulta.
@@ -410,6 +415,8 @@ namespace DigBit
             }
 
             sesiones = tabla == null ? new List<SesionInfo>() : tabla.Rows.Cast<DataRow>().Select(LeerSesion).ToList();
+            // Quien ve los codigos pudo cambiar con la ventana abierta (CodigosSoloResponsables).
+            grid.Columns["codigo"].Visible = Permisos.VeCodigosDeProfesor;
             RellenarLaboratorios();
 
             // Lo que se ve abajo tambien se vuelve a leer (pudo registrar alguien).
@@ -868,9 +875,13 @@ namespace DigBit
             }
 
             int conFallas = tabla.Rows.Cast<DataRow>().Count(Consultas.ConFalla);
-            lblSesionTitulo.Text += tabla.Rows.Count == 0
-                ? ": nadie registró bitácora"
-                : ": " + Plural(tabla.Rows.Count, "estudiante", "estudiantes") + (conFallas > 0 ? ", " + conFallas + " con fallas" : ", sin fallas");
+            int dadas = ContarDadas(id);
+            // En "Mis bitacoras" la sesion es del profesor que la ve: se le habla a el.
+            lblSesionTitulo.Text += (tabla.Rows.Count == 0
+                    ? ": nadie registró bitácora"
+                    : ": " + Plural(tabla.Rows.Count, "estudiante", "estudiantes") + (conFallas > 0 ? ", " + conFallas + " con fallas" : ", sin fallas"))
+                + (dadas == 0 ? ""
+                    : (idProfesor == 0 ? "; su docente dio " : "; diste ") + Plural(dadas, "asistencia", "asistencias") + " sin bitácora");
 
             gridAlumnos.ClearSelection();
             if (seleccionarAlumno != null)
@@ -898,6 +909,29 @@ namespace DigBit
 
             return texto + (sesion.Codigo.Length > 0 ? ". Código " + sesion.Codigo : "")
                 + (sesion.EnCurso ? ". En curso: pueden llegar más bitácoras (F5 actualiza)." : ".");
+        }
+
+        /// <summary>
+        /// Cuantas asistencias dio su docente sin bitacora en esa sesion (db/22; 0 sin
+        /// ella). Si no se pueden leer, 0 y una sola nota en el log: quien registro se
+        /// ve igual.
+        /// </summary>
+        private int ContarDadas(int idSesion)
+        {
+            try
+            {
+                return lectorDadas.Contar(idSesion);
+            }
+            catch (Exception ex)
+            {
+                if (!avisoDadas)
+                {
+                    avisoDadas = true;
+                    Log.Aviso("Bitacoras: no se pudieron leer las asistencias dadas de la sesion " + idSesion + ": " + ex.Message);
+                }
+
+                return 0;
+            }
         }
 
         /// <summary>"Apellidos, Nombre", como la lista de Alumnos y el orden de la consulta.</summary>
@@ -1134,8 +1168,9 @@ namespace DigBit
 
         /// <summary>
         /// El PDF de una sesion en destino: encabezado de la plantilla (con el
-        /// laboratorio), logos y la tabla de alumnos (PdfBitacora, el mismo de la
-        /// bitacora de una clase).
+        /// laboratorio), logos, la tabla de alumnos y, si las hay, las asistencias
+        /// que dio su docente sin bitacora (PdfBitacora, el mismo de la bitacora de
+        /// una clase).
         /// </summary>
         private void GenerarPdfSesion(SesionInfo sesion, Stream destino)
         {
@@ -1146,7 +1181,8 @@ namespace DigBit
                 throw new ErrorDeDatos("La sesión ya no existe en la base: pulsa F5 para actualizar la lista.");
             }
 
-            PdfBitacora.Escribir(datos, consultas.consultaRegistroSesion(sesion.Id), destino);
+            // Si no se pueden leer, falla el PDF entero (no sale uno al que le faltan).
+            PdfBitacora.Escribir(datos, consultas.consultaRegistroSesion(sesion.Id), lectorDadas.DeLaSesion(sesion.Id), destino);
         }
 
         /// <summary>

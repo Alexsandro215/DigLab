@@ -13,6 +13,19 @@ using DrawingFont = System.Drawing.Font;
 
 namespace DigBit
 {
+    /// <summary>Lo que el profesor pide hacer con la asistencia de hoy de un alumno (menu de su casilla).</summary>
+    internal enum AccionAsistencia
+    {
+        /// <summary>Registro su bitacora pero no esta en el salon (db/17).</summary>
+        Quitar,
+        /// <summary>Se le quito y si esta en el salon (db/17).</summary>
+        Devolver,
+        /// <summary>Esta en el salon pero su equipo no pudo registrar su bitacora (db/22).</summary>
+        Dar,
+        /// <summary>Se la dio el profesor y ya no esta en el salon (db/22).</summary>
+        QuitarLaQueDiste
+    }
+
     /// <summary>
     /// La lista de asistencia de una clase como la hoja de Excel que el profesor
     /// ya conoce (lo pidio el usuario: "debe ser familiar"). Arriba, en una linea,
@@ -31,7 +44,12 @@ namespace DigBit
     /// Mientras dura la clase de hoy, la casilla de hoy de quien ya registro se
     /// pulsa para quitarle la asistencia (registro su bitacora pero no esta en el
     /// salon) o devolversela: lo hace quien la usa (CambiarAsistencia). La fila de
-    /// quien registro sin estar se ve en naranja.
+    /// quien registro sin estar se ve en naranja. Con db/22, la P de quien esta en
+    /// el salon pero no pudo registrar se pulsa para darle la asistencia (su
+    /// casilla se ve verde, como el estilo "Bueno" de Excel) y la verde, para
+    /// quitarsela; debajo, un enlace da la asistencia a quien aun no esta en la
+    /// lista (DarSinLista). La dada va como "A" al copiar y en el CSV, que al
+    /// final dice cuales fueron, cuando y por que.
     ///
     /// Todo se coloca a mano (Acomodar): la cuadricula mide lo que su contenido,
     /// sin pasarse del alto que le dejan el membrete y lo de abajo. Desde fuera se
@@ -52,6 +70,9 @@ namespace DigBit
         internal static readonly Color RetiradaFondo = Color.FromArgb(248, 203, 173);
         internal static readonly Color RetiradaTexto = Color.FromArgb(131, 60, 12);
         internal static readonly Color FilaRetirada = Color.FromArgb(252, 228, 214);
+        // La asistencia que dio el profesor sin bitacora (db/22): el estilo "Bueno" de Excel.
+        internal static readonly Color DadaFondo = Color.FromArgb(198, 239, 206);
+        internal static readonly Color DadaTexto = Color.FromArgb(0, 97, 0);
         private static readonly Color TotalFondo = Color.FromArgb(242, 242, 242);
         private static readonly Color TextoGris = Color.FromArgb(110, 110, 110);
         // Lo de alrededor de la cuadricula: el rotulo de la simbologia y lo que dice cada muestra.
@@ -74,6 +95,19 @@ namespace DigBit
         private const int AntesDeLaSimbologia = 8;
         private const int AntesDeLaAyuda = 4;
         private const string TextoSinAlumnos = "Aún no hay estudiantes: la lista se arma con la primera clase en que registren su bitácora.";
+        private const string TextoSinAlumnosConDadas = "Aún no hay estudiantes: la lista se arma con la primera clase en que registren su bitácora o les des la asistencia.";
+        // La ayuda de debajo de la simbologia, segun lo que la base deja cambiar (db/17 quitar, db/22 dar).
+        private const string AyudaQuitar = "Mientras dura la clase de hoy, pulsa la casilla de hoy de quien registró sin estar en el salón "
+            + "para quitarle la asistencia: su fila se pinta de naranja. Vuelve a pulsarla para devolvérsela.";
+        // Sin "su bitacora" tras "registrar": asi cabe en un renglon a 1920 (1460 px de 1518).
+        private const string AyudaQuitarYDar = "Mientras dura la clase, pulsa la casilla de hoy de un estudiante: si registró sin estar en el salón, "
+            + "quítale la asistencia (su fila se pinta de naranja); si está en el salón y su equipo no pudo registrar, "
+            + "dásela (su casilla se pinta de verde). Vuelve a pulsarla para deshacerlo.";
+        private const string AyudaDar = "Mientras dura la clase, pulsa la P de quien está en el salón pero su equipo no pudo registrar su bitácora "
+            + "para darle la asistencia: su casilla se pinta de verde. Vuelve a pulsarla para quitársela.";
+        internal const string TextoDarSinLista = "Dar asistencia a alguien que no está en la lista...";
+        // Lo mas que se ensena de un detalle en el menu de la casilla: el menu no crece sin fin.
+        private const int DetalleEnMenu = 60;
         private static readonly CultureInfo Espanol = CultureInfo.GetCultureInfo("es-MX");
 
         private readonly DrawingFont fuente = new DrawingFont("Calibri", 11F);
@@ -89,7 +123,11 @@ namespace DigBit
         private readonly FlowLayoutPanel simbologia;
         private readonly FlowLayoutPanel muestraPendiente;
         private readonly FlowLayoutPanel muestraRetirada;
+        // La A verde (db/22): si alguien la tiene, o si hoy se puede dar.
+        private readonly FlowLayoutPanel muestraDada;
         private readonly Texto lblComoQuitar;
+        // "Dar asistencia a alguien que no esta en la lista..." (db/22, mientras dura la clase).
+        private readonly LinkLabel lnkDarSinLista;
         // Como pasarla a Excel: con la simbologia (hay alumnos), debajo de todo.
         private readonly Texto lblComoCopiar;
         private readonly Texto lblSinAlumnos;
@@ -112,6 +150,10 @@ namespace DigBit
         private bool verSimbologia;
         private bool verAyuda;
         private bool verAviso;
+        private bool verEnlace;
+        // Lo que GDI deja a la izquierda del texto del enlace (LinkLabel no tiene NoPadding): el
+        // enlace va tanto mas a la izquierda, para que su texto empiece donde los demas (-1: sin medir).
+        private int sangriaEnlace = -1;
         // Se lee otra lista: la cuadricula conserva la caja de la anterior (cajaPuesta: ya hubo una).
         private bool cargando;
         private bool cajaPuesta;
@@ -120,8 +162,11 @@ namespace DigBit
         // El color que el profesor eligio para la clase (db/19), o null: sin cinta.
         private Color? colorDeLaClase;
 
-        /// <summary>El profesor quiere quitar (true) o devolver (false) la asistencia de hoy a ese alumno.</summary>
-        public event Action<AlumnoDeAsistencia, DateTime, bool> CambiarAsistencia;
+        /// <summary>El profesor quiere quitar, devolver, dar o anular (la que dio) la asistencia de hoy a ese alumno.</summary>
+        public event Action<AlumnoDeAsistencia, DateTime, AccionAsistencia> CambiarAsistencia;
+
+        /// <summary>El profesor quiere dar la asistencia de hoy a alguien que aun no esta en la lista (por su matricula).</summary>
+        public event Action DarSinLista;
 
         /// <summary>
         /// El profesor pulso o se movio en la hoja (cambio la seleccion): la marca
@@ -168,7 +213,8 @@ namespace DigBit
                 RowHeadersVisible = false,
                 MultiSelect = true,
                 SelectionMode = DataGridViewSelectionMode.CellSelect,
-                ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableAlwaysIncludeHeaderText,
+                // En el kiosco la lista no sale del equipo: ni "Copiar la lista" ni Ctrl+C.
+                ClipboardCopyMode = Kiosco.Activo ? DataGridViewClipboardCopyMode.Disable : DataGridViewClipboardCopyMode.EnableAlwaysIncludeHeaderText,
                 CellBorderStyle = DataGridViewCellBorderStyle.Single,
                 GridColor = ColorCuadricula,
                 ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
@@ -225,6 +271,7 @@ namespace DigBit
                 Text = "SIMBOLOGÍA"
             });
             Muestra("A", Color.White, Color.Black, "Registró su bitácora");
+            muestraDada = Muestra("A", DadaFondo, DadaTexto, "Se la diste sin bitácora");
             Muestra("F", FaltaFondo, FaltaTexto, "Falta");
             muestraPendiente = Muestra("P", HoyFondo, HoyTexto, "Pendiente: aún no registra");
             muestraRetirada = Muestra("F", RetiradaFondo, RetiradaTexto, "Registró sin estar en el salón");
@@ -239,10 +286,33 @@ namespace DigBit
                 Partir = true,
                 Font = fuenteChica,
                 ForeColor = TextoGris,
-                Text = "Mientras dura la clase de hoy, pulsa la casilla de hoy de quien registró sin estar en el salón "
-                    + "para quitarle la asistencia: su fila se pinta de naranja. Vuelve a pulsarla para devolvérsela.",
+                Text = AyudaQuitar,
                 Visible = false
             };
+            // En su propio renglon, debajo de la ayuda (o del aviso sin estudiantes).
+            lnkDarSinLista = new LinkLabel
+            {
+                AutoSize = true,
+                Font = fuenteChica,
+                LinkColor = VerdeExcel,
+                ActiveLinkColor = Color.DarkGreen,
+                VisitedLinkColor = VerdeExcel,
+                LinkBehavior = LinkBehavior.HoverUnderline,
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                Text = TextoDarSinLista,
+                UseMnemonic = false,
+                Visible = false
+            };
+            lnkDarSinLista.LinkClicked += (s, e) =>
+            {
+                if (DarSinLista != null)
+                {
+                    DarSinLista();
+                }
+            };
+            ayuda.SetToolTip(lnkDarSinLista, "Para quien está en el salón, no pudo registrar su bitácora y aún no está en la lista "
+                + "(es su primera clase contigo): escribe su matrícula, comprueba su nombre y dale la asistencia de hoy.");
             lblComoCopiar = new Texto
             {
                 Partir = true,
@@ -264,7 +334,7 @@ namespace DigBit
 
             menu = new ContextMenuStrip { Font = fuenteMenu };
 
-            Controls.AddRange(new Control[] { membrete, grid, simbologia, lblComoQuitar, lblComoCopiar, lblSinAlumnos });
+            Controls.AddRange(new Control[] { membrete, grid, simbologia, lblComoQuitar, lnkDarSinLista, lblComoCopiar, lblSinAlumnos });
         }
 
         protected override void Dispose(bool disposing)
@@ -286,10 +356,11 @@ namespace DigBit
         }
 
         /// <summary>
-        /// Un bloque de la clase de hoy esta en curso: se puede quitar o devolver la
-        /// asistencia (lo decide la ventana; en el hueco entre dos bloques, no).
+        /// Un bloque de la clase de hoy esta en curso: se puede quitar, devolver o
+        /// dar la asistencia (lo decide la ventana; en el hueco entre dos bloques,
+        /// no). Quien decide de verdad es el servidor, con su reloj.
         /// </summary>
-        public bool PuedeQuitar { get; set; } = true;
+        public bool PuedeCambiar { get; set; } = true;
 
         /// <summary>Hay un menu abierto: no conviene rehacer la hoja debajo de el.</summary>
         public bool MenuAbierto
@@ -405,9 +476,11 @@ namespace DigBit
                 PonerDatos(materia, grupo, profesor, null);
                 grid.Columns.Clear();
                 grid.Rows.Clear();
-                // La ayuda y el aviso eran de la lista anterior; quitarlos no mueve nada.
+                // La ayuda, el enlace y el aviso eran de la lista anterior; quitarlos no mueve nada.
                 verAyuda = false;
                 lblComoQuitar.Visible = false;
+                verEnlace = false;
+                lnkDarSinLista.Visible = false;
                 verAviso = false;
                 lblSinAlumnos.Visible = false;
                 Acomodar();
@@ -429,6 +502,8 @@ namespace DigBit
             lblComoCopiar.Visible = false;
             verAyuda = false;
             lblComoQuitar.Visible = false;
+            verEnlace = false;
+            lnkDarSinLista.Visible = false;
             lblSinAlumnos.ForeColor = FaltaTexto;
             lblSinAlumnos.Text = texto ?? "";
             verAviso = true;
@@ -500,12 +575,47 @@ namespace DigBit
             }
         }
 
+        /// <summary>El id del alumno de esa fila de la cuadricula, o null (la fila Asistieron, o fuera de rango).</summary>
+        private int? IdDeLaFila(int fila)
+        {
+            if (fila < 0 || fila >= grid.Rows.Count)
+            {
+                return null;
+            }
+
+            AlumnoDeAsistencia alumno = grid.Rows[fila].Tag as AlumnoDeAsistencia;
+            return alumno == null ? (int?)null : alumno.Id;
+        }
+
+        /// <summary>La fila de ese alumno en la cuadricula nueva; si ya no esta (o no habia), el mismo numero de antes.</summary>
+        private int FilaDe(int? idAlumno, int antes)
+        {
+            if (idAlumno.HasValue)
+            {
+                foreach (DataGridViewRow fila in grid.Rows)
+                {
+                    AlumnoDeAsistencia alumno = fila.Tag as AlumnoDeAsistencia;
+                    if (alumno != null && alumno.Id == idAlumno.Value)
+                    {
+                        return fila.Index;
+                    }
+                }
+            }
+
+            return antes;
+        }
+
         private void Llenar(AsistenciaDeClase leida, string profesor)
         {
             bool misma = asistencia != null && asistencia.ClaseId == leida.ClaseId;
             int primeraFila = misma ? grid.FirstDisplayedScrollingRowIndex : -1;
             int desplazamiento = misma ? grid.HorizontalScrollingOffset : 0;
             Point activa = misma && grid.CurrentCell != null ? new Point(grid.CurrentCell.ColumnIndex, grid.CurrentCell.RowIndex) : new Point(-1, -1);
+            // De quien eran esas filas: si alguien entra a la lista (o sale), la fila elegida y la de
+            // arriba siguen siendo las de esos estudiantes, no las del mismo numero de renglon.
+            int? idActiva = activa.Y >= 0 ? IdDeLaFila(activa.Y) : null;
+            bool activaEnTotales = activa.Y >= 0 && activa.Y == grid.Rows.Count - 1 && idActiva == null;
+            int? idArriba = primeraFila >= 0 ? IdDeLaFila(primeraFila) : null;
 
             cargando = false;
             asistencia = leida;
@@ -554,6 +664,8 @@ namespace DigBit
 
             int numero = 0;
             int[] asistieron = new int[total];
+            // De ellos, a cuantos se la dio el profesor sin bitacora (db/22).
+            int[] dadas = new int[total];
             int asistenciasDelGrupo = 0;
             int faltasDelGrupo = 0;
             foreach (AlumnoDeAsistencia alumno in leida.Alumnos)
@@ -561,44 +673,75 @@ namespace DigBit
                 numero++;
                 DataGridViewRow fila = grid.Rows[grid.Rows.Add()];
                 fila.Tag = alumno;
+                // La ayuda del nombre: los dias en que registro sin estar (su fila va en
+                // naranja) y en los que le dio la asistencia sin bitacora (su fila no se pinta).
+                List<string> delNombre = new List<string>();
                 if (alumno.Retiradas.Count > 0)
                 {
                     fila.DefaultCellStyle.BackColor = FilaRetirada;
                     fila.DefaultCellStyle.SelectionBackColor = FilaRetirada;
-                    fila.Cells["alumno"].ToolTipText = "Registró su bitácora sin estar en el salón: "
-                        + string.Join(", ", alumno.Retiradas.OrderBy(d => d).Select(d => d.ToString("dd/MM"))) + ".";
+                    delNombre.Add("Registró su bitácora sin estar en el salón: "
+                        + string.Join(", ", alumno.Retiradas.OrderBy(d => d).Select(d => d.ToString("dd/MM"))) + ".");
+                }
+
+                if (alumno.SinBitacora.Count > 0)
+                {
+                    delNombre.Add("Le diste la asistencia sin bitácora: "
+                        + string.Join(", ", alumno.SinBitacora.OrderBy(d => d).Select(d => d.ToString("dd/MM"))) + ".");
+                }
+
+                if (delNombre.Count > 0)
+                {
+                    fila.Cells["alumno"].ToolTipText = string.Join(Environment.NewLine, delNombre);
                 }
 
                 fila.Cells["no"].Value = numero;
                 fila.Cells["matricula"].Value = alumno.Matricula;
                 fila.Cells["alumno"].Value = alumno.Nombre;
-                // Su primera bitacora en la clase: antes de ese dia aun no estaba en la lista.
-                DateTime entro = alumno.BitacorasDelDia.Keys.DefaultIfEmpty(DateTime.MaxValue).Min();
+                // Su primer dia en la clase (bitacora o asistencia dada): antes aun no estaba en la lista.
+                DateTime entro = alumno.Entro;
                 int vino = 0;
                 int falto = 0;
                 for (int i = 0; i < total; i++)
                 {
                     DiaDeAsistencia dia = leida.Dias[i];
                     DataGridViewCell celda = fila.Cells["d" + i];
-                    if (alumno.Presente.Contains(dia.Fecha))
+                    AsistenciaDada dada;
+                    alumno.Dadas.TryGetValue(dia.Fecha, out dada);
+                    // Hoy, mientras dura un bloque: lo que deja la base (db/17 quitar y devolver, db/22 dar y anular).
+                    bool cambiable = dia.EnCurso && PuedeCambiar;
+                    if (alumno.Presente.Contains(dia.Fecha) && alumno.SinBitacora.Contains(dia.Fecha))
+                    {
+                        // Se la dio el profesor y no hay bitacora que cuente: la A verde. La fila no se pinta.
+                        vino++;
+                        asistieron[i]++;
+                        dadas[i]++;
+                        Formato(celda, "A", DadaFondo, DadaTexto);
+                        celda.ToolTipText = (dada == null ? "Le diste la asistencia." : QueLeDiste(dada)) + " No registró su bitácora."
+                            + (cambiable && leida.ConDadas ? " Pulsa aquí para quitársela." : "");
+                    }
+                    else if (alumno.Presente.Contains(dia.Fecha))
                     {
                         vino++;
                         asistieron[i]++;
                         celda.Value = "A";
-                        celda.ToolTipText = "Registró su bitácora" + (dia.EnCurso && leida.ConRetiro && PuedeQuitar ? ". Si no está en el salón, pulsa aquí para quitarle la asistencia." : ".");
+                        celda.ToolTipText = (dada == null ? "Registró su bitácora."
+                                : "Registró su bitácora; también le diste la asistencia a las " + Hora(dada.DadaEn) + " (cuenta una sola vez).")
+                            + (cambiable && leida.ConRetiro ? " Si no está en el salón, pulsa aquí para quitarle la asistencia." : "");
                     }
                     else if (alumno.Retiradas.Contains(dia.Fecha))
                     {
                         falto++;
                         Formato(celda, "F", RetiradaFondo, RetiradaTexto);
                         celda.ToolTipText = "Registró su bitácora pero no estaba en el salón: se le quitó la asistencia."
-                            + (dia.EnCurso && leida.ConRetiro && PuedeQuitar ? " Pulsa aquí para devolvérsela." : "");
+                            + (cambiable && leida.ConRetiro ? " Pulsa aquí para devolvérsela." : "");
                     }
                     else if (dia.EnCurso)
                     {
                         // Pendiente: aun no se sabe; no cuenta como falta ni en el % mientras la clase dure.
                         Formato(celda, "P", HoyFondo, HoyTexto);
-                        celda.ToolTipText = "Pendiente: aún no registra su bitácora y la clase sigue. Si termina sin registrar, será falta.";
+                        celda.ToolTipText = "Pendiente: aún no registra su bitácora y la clase sigue. Si termina sin registrar, será falta."
+                            + (cambiable && leida.ConDadas ? " Si está en el salón y su equipo no pudo registrar su bitácora, pulsa aquí para darle la asistencia." : "");
                     }
                     else
                     {
@@ -630,7 +773,7 @@ namespace DigBit
                 for (int i = 0; i < total; i++)
                 {
                     fila.Cells["d" + i].Value = asistieron[i];
-                    fila.Cells["d" + i].ToolTipText = asistieron[i] + " de " + leida.Alumnos.Count + " registraron su bitácora.";
+                    fila.Cells["d" + i].ToolTipText = AyudaAsistieron(asistieron[i], dadas[i], leida.Alumnos.Count);
                 }
 
                 fila.Cells["asist"].Value = asistenciasDelGrupo;
@@ -648,6 +791,16 @@ namespace DigBit
             // ponerla lleva la hoja hasta ella, y lo que se veia es lo que manda.
             grid.CurrentCell = null;
             grid.ClearSelection();
+            if (misma && activa.Y >= 0)
+            {
+                activa.Y = activaEnTotales ? grid.Rows.Count - 1 : FilaDe(idActiva, activa.Y);
+            }
+
+            if (misma && primeraFila >= 0)
+            {
+                primeraFila = FilaDe(idArriba, primeraFila);
+            }
+
             if (misma && activa.X >= 0 && activa.Y >= 0 && activa.Y < grid.Rows.Count && activa.X < grid.Columns.Count)
             {
                 grid.CurrentCell = grid[activa.X, activa.Y];
@@ -671,14 +824,18 @@ namespace DigBit
 
         /// <summary>
         /// La simbologia, con solo lo que aplica a esta lista (sin alumnos, el aviso en
-        /// su lugar), y la ayuda para quitar, con la condicion de siempre.
+        /// su lugar); la ayuda para cambiar la asistencia de hoy, segun lo que deja la
+        /// base (db/17 quitar, db/22 dar); y, con db/22 y mientras dura la clase, el
+        /// enlace para dar la asistencia a quien aun no esta en la lista.
         /// </summary>
         private void PonerSimbologia(AsistenciaDeClase leida)
         {
             bool conAlumnos = leida.Alumnos.Count > 0;
-            // P, solo mientras sigue la clase; la naranja, si alguien la tiene o si hoy se puede quitar.
+            // P, solo mientras sigue la clase; la naranja, si alguien la tiene o si hoy se puede quitar;
+            // la verde, si alguien la tiene o si hoy se puede dar.
             muestraPendiente.Visible = hoy != null;
             muestraRetirada.Visible = leida.Alumnos.Any(a => a.Retiradas.Count > 0) || (hoy != null && leida.ConRetiro);
+            muestraDada.Visible = leida.Alumnos.Any(a => a.SinBitacora.Count > 0) || (hoy != null && leida.ConDadas);
             verSimbologia = conAlumnos;
             simbologia.Visible = conAlumnos;
             // Como pasarla a Excel va y viene con la simbologia: con alumnos, hay que copiar.
@@ -686,10 +843,45 @@ namespace DigBit
             lblComoCopiar.Visible = conAlumnos && !Kiosco.Activo;
             verAviso = !conAlumnos;
             lblSinAlumnos.ForeColor = TextoGris;
-            lblSinAlumnos.Text = TextoSinAlumnos;
+            lblSinAlumnos.Text = leida.ConDadas ? TextoSinAlumnosConDadas : TextoSinAlumnos;
             lblSinAlumnos.Visible = !conAlumnos;
-            verAyuda = hoy != null && leida.ConRetiro && PuedeQuitar && conAlumnos;
+            verAyuda = hoy != null && (leida.ConRetiro || leida.ConDadas) && PuedeCambiar && conAlumnos;
+            lblComoQuitar.Text = leida.ConRetiro && leida.ConDadas ? AyudaQuitarYDar : leida.ConDadas ? AyudaDar : AyudaQuitar;
             lblComoQuitar.Visible = verAyuda;
+            // Haya o no estudiantes: sin lista, es la primera clase y no hay casilla que pulsar.
+            verEnlace = hoy != null && leida.ConDadas && PuedeCambiar;
+            lnkDarSinLista.Visible = verEnlace;
+        }
+
+        /// <summary>"Le diste la asistencia a las 10:42: su equipo no tenia internet (PC-07)." (con "otro", el detalle).</summary>
+        private static string QueLeDiste(AsistenciaDada dada)
+        {
+            string equipo = AsistenciasDadas.ConEquipo(dada.Motivo) && !string.IsNullOrWhiteSpace(dada.Equipo) ? " (" + dada.Equipo.Trim() + ")" : "";
+            return "Le diste la asistencia a las " + Hora(dada.DadaEn) + ": " + AsistenciasDadas.EnFrase(dada) + equipo + ".";
+        }
+
+        /// <summary>"10:42": la hora del servidor en que se dio.</summary>
+        private static string Hora(DateTime cuando)
+        {
+            return cuando.ToString("HH:mm", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// La ayuda de la fila Asistieron de un dia: "18 de 24 registraron su
+        /// bitacora."; con asistencias dadas ese dia, "18 de 24 tienen asistencia: 16
+        /// registraron su bitacora y a 2 les diste la asistencia.".
+        /// </summary>
+        private static string AyudaAsistieron(int asistieron, int dadas, int enLista)
+        {
+            if (dadas <= 0)
+            {
+                return asistieron + " de " + enLista + " registraron su bitácora.";
+            }
+
+            int registraron = Math.Max(0, asistieron - dadas);
+            return asistieron + " de " + enLista + (asistieron == 1 ? " tiene" : " tienen") + " asistencia: "
+                + (registraron == 0 ? "nadie registró su bitácora" : registraron == 1 ? "1 registró su bitácora" : registraron + " registraron su bitácora")
+                + " y " + (dadas == 1 ? "a 1 le diste la asistencia." : "a " + dadas + " les diste la asistencia.");
         }
 
         /// <summary>
@@ -789,9 +981,11 @@ namespace DigBit
         /// <summary>
         /// El membrete en (0, 0); la cuadricula 8 px debajo, del tamano de su
         /// contenido sin pasarse del alto que queda; y pegadas a ella, 8 px debajo, la
-        /// simbologia y 4 px despues cada ayuda: la de quitar (mientras dura la
-        /// clase) y la de pasarla a Excel (o, sin alumnos, el aviso). Mientras se
-        /// lee otra lista, la cuadricula conserva su caja.
+        /// simbologia y 4 px despues cada ayuda: la de cambiar la asistencia
+        /// (mientras dura la clase), el enlace para darla a quien no esta en la lista
+        /// (db/22, mientras dura la clase) y la de pasarla a Excel; sin alumnos, el
+        /// aviso y, debajo, el enlace. Mientras se lee otra lista, la cuadricula
+        /// conserva su caja.
         /// </summary>
         private void Acomodar()
         {
@@ -818,7 +1012,7 @@ namespace DigBit
                 int y = tamMembrete.Height + AntesDeLaCuadricula;
 
                 // Lo de abajo se mide antes: lo que mide es lo que no le queda a la cuadricula.
-                foreach (Control abajo in new Control[] { simbologia, lblComoQuitar, lblComoCopiar, lblSinAlumnos })
+                foreach (Control abajo in new Control[] { simbologia, lblComoQuitar, lnkDarSinLista, lblComoCopiar, lblSinAlumnos })
                 {
                     if (abajo.MaximumSize.Width != ancho)
                     {
@@ -828,13 +1022,15 @@ namespace DigBit
 
                 Size tamSimbologia = simbologia.PreferredSize;
                 Size tamAyuda = lblComoQuitar.PreferredSize;
+                Size tamEnlace = lnkDarSinLista.PreferredSize;
                 Size tamCopiar = lblComoCopiar.PreferredSize;
                 Size tamAviso = lblSinAlumnos.PreferredSize;
-                // La de pasarla a Excel va con la simbologia (hay alumnos), despues de la de quitar;
-                // en kiosco no va (PonerSimbologia).
+                // La de pasarla a Excel va con la simbologia (hay alumnos), despues de la de quitar
+                // y del enlace; en kiosco no va (PonerSimbologia).
                 bool verCopiar = verSimbologia && !Kiosco.Activo;
                 int pie = (verSimbologia ? AntesDeLaSimbologia + tamSimbologia.Height : 0)
                     + (verAyuda ? (verSimbologia ? AntesDeLaAyuda : AntesDeLaSimbologia) + tamAyuda.Height : 0)
+                    + (verEnlace ? AntesDeLaAyuda + tamEnlace.Height : 0)
                     + (verCopiar ? AntesDeLaAyuda + tamCopiar.Height : 0)
                     + (verAviso ? AntesDeLaSimbologia + tamAviso.Height : 0);
                 int maxAlto = Math.Max(60, alto - y - pie);
@@ -879,6 +1075,15 @@ namespace DigBit
                     siguiente += tamAyuda.Height;
                 }
 
+                // Con alumnos, el enlace va debajo de la ayuda y antes de lo de Excel; sin ellos, debajo del aviso.
+                int xEnlace = -SangriaEnlace();
+                if (verEnlace && !verAviso)
+                {
+                    siguiente += AntesDeLaAyuda;
+                    lnkDarSinLista.SetBounds(xEnlace, siguiente, tamEnlace.Width, tamEnlace.Height);
+                    siguiente += tamEnlace.Height;
+                }
+
                 if (verCopiar)
                 {
                     siguiente += AntesDeLaAyuda;
@@ -890,12 +1095,39 @@ namespace DigBit
                 {
                     siguiente += AntesDeLaSimbologia;
                     lblSinAlumnos.SetBounds(0, siguiente, tamAviso.Width, tamAviso.Height);
+                    siguiente += tamAviso.Height;
+                    if (verEnlace)
+                    {
+                        siguiente += AntesDeLaAyuda;
+                        lnkDarSinLista.SetBounds(xEnlace, siguiente, tamEnlace.Width, tamEnlace.Height);
+                    }
                 }
             }
             finally
             {
                 ResumeLayout(false);
             }
+        }
+
+        /// <summary>
+        /// El relleno que GDI pone a la izquierda del texto del enlace: la mitad de lo
+        /// que mide de mas sin NoPadding (siempre con un Graphics, como Texto). Con el
+        /// dibujo de GDI+ (UseCompatibleTextRendering) no hay ese relleno: 0.
+        /// </summary>
+        private int SangriaEnlace()
+        {
+            if (sangriaEnlace < 0)
+            {
+                using (Graphics g = Graphics.FromHwnd(IntPtr.Zero))
+                {
+                    const TextFormatFlags Linea = TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
+                    int conRelleno = TextRenderer.MeasureText(g, lnkDarSinLista.Text, lnkDarSinLista.Font, Size.Empty, Linea).Width;
+                    int sinRelleno = TextRenderer.MeasureText(g, lnkDarSinLista.Text, lnkDarSinLista.Font, Size.Empty, Linea | TextFormatFlags.NoPadding).Width;
+                    sangriaEnlace = lnkDarSinLista.UseCompatibleTextRendering ? 0 : Math.Max(0, (conRelleno - sinRelleno) / 2);
+                }
+            }
+
+            return sangriaEnlace;
         }
 
         /// <summary>
@@ -1081,6 +1313,14 @@ namespace DigBit
                 return Copia.SinAlumnos;
             }
 
+            // En el kiosco la hoja no se copia (ClipboardCopyMode.Disable): sin esto,
+            // GetClipboardContent lanzaria NotSupportedException.
+            if (grid.ClipboardCopyMode == DataGridViewClipboardCopyMode.Disable)
+            {
+                detalle = "En los equipos del laboratorio la lista no se copia: cópiala desde tu propio equipo.";
+                return Copia.Fallo;
+            }
+
             DataObject datos;
             List<DataGridViewCell> elegidas = grid.SelectedCells.Cast<DataGridViewCell>().ToList();
             int arriba = grid.FirstDisplayedScrollingRowIndex;
@@ -1199,16 +1439,54 @@ namespace DigBit
                 renglon(columnas.Select(c => Convert.ToString(fila.Cells[c.Index].Value, CultureInfo.CurrentCulture)));
             }
 
+            // Las asistencias que dio el profesor (db/22) en los dias de la lista: en la casilla
+            // van como "A" (las cuentas y las formulas no cambian) y al final, cuales fueron.
+            HashSet<DateTime> diasDeLaLista = new HashSet<DateTime>(asistencia.Dias.Select(d => d.Fecha.Date));
+            List<Tuple<AlumnoDeAsistencia, AsistenciaDada>> dadas = asistencia.Alumnos
+                .SelectMany(a => a.Dadas.Values.Where(d => diasDeLaLista.Contains(d.Fecha.Date)).Select(d => Tuple.Create(a, d)))
+                .ToList();
+
             csv.Append("\r\n");
-            renglon(new[] { "Simbología:", "A: registró su bitácora. F: falta (también si registró sin estar en el salón y se le quitó la asistencia)."
+            renglon(new[] { "Simbología:", (dadas.Count > 0
+                    ? "A: asistencia (registró su bitácora o, si su equipo no pudo registrarla, se la dio su docente: abajo, cuáles)."
+                    : "A: registró su bitácora.")
+                + " F: falta (también si registró sin estar en el salón y se le quitó la asistencia)."
                 + (hoy != null ? " P: pendiente, aún no registra y la clase de hoy sigue (no cuenta como falta)." : "") });
             renglon(new[] { "Derecho a evaluación:", "con " + MinimoDeAsistencia + " % o más de asistencia." });
+            if (dadas.Count > 0)
+            {
+                csv.Append("\r\n");
+                renglon(new[] { "Asistencias que dio el docente sin bitácora:" });
+                renglon(new[] { "Fecha", "Matrícula", "Nombre completo", "Se la dio a las", "Motivo", "Equipo", "Detalle" });
+                // Por dia y, dentro de cada dia, en el orden de la lista.
+                List<AlumnoDeAsistencia> orden = asistencia.Alumnos;
+                foreach (Tuple<AlumnoDeAsistencia, AsistenciaDada> par in dadas
+                    .OrderBy(p => p.Item2.Fecha).ThenBy(p => orden.IndexOf(p.Item1)).ThenBy(p => p.Item2.DadaEn))
+                {
+                    AlumnoDeAsistencia alumno = par.Item1;
+                    AsistenciaDada dada = par.Item2;
+                    DateTime fecha = dada.Fecha.Date;
+                    // Si ese dia tambien cuenta su bitacora (llego despues, de la cola sin conexion), se dice.
+                    bool llegoSuBitacora = !alumno.SinBitacora.Contains(fecha) && alumno.BitacorasDelDia.ContainsKey(fecha);
+                    renglon(new[]
+                    {
+                        fecha.ToString("ddd", Espanol).Replace(".", "") + " " + fecha.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),
+                        alumno.Matricula,
+                        alumno.Nombre,
+                        Hora(dada.DadaEn),
+                        AsistenciasDadas.NombreDeMotivo(dada.Motivo) + (llegoSuBitacora ? " (después llegó su bitácora)" : ""),
+                        AsistenciasDadas.ConEquipo(dada.Motivo) ? (dada.Equipo ?? "").Trim() : "",
+                        (dada.Comentario ?? "").Trim()
+                    });
+                }
+            }
+
             resultado = Copia.Hecha;
             return csv.ToString();
         }
 
         /// <summary>El separador de listas de Windows (con el que Excel abre un CSV en este equipo); "," si no hay uno util.</summary>
-        private static string SeparadorDeListas()
+        internal static string SeparadorDeListas()
         {
             string separador = CultureInfo.CurrentCulture.TextInfo.ListSeparator;
             return string.IsNullOrEmpty(separador) || separador.Length > 3 || separador.Any(c => char.IsLetterOrDigit(c) || c == '"' || c == '\r' || c == '\n')
@@ -1395,12 +1673,19 @@ namespace DigBit
         }
 
         // =====================================================================
-        // Quitar o devolver la asistencia de hoy
+        // Cambiar la asistencia de hoy: quitar, devolver, dar o anular la que dio
         // =====================================================================
 
+        /// <summary>
+        /// El menu de la casilla de hoy (clic izquierdo en ella o derecho en
+        /// cualquiera de su fila), mientras dura un bloque de la clase y si la base
+        /// deja cambiar algo (db/17 o db/22). Primero, apagado, de quien es; despues,
+        /// lo que se puede hacer segun su casilla de hoy; con db/22, al final, dar la
+        /// asistencia a alguien que no esta en la lista.
+        /// </summary>
         private void CasillaPulsada(object sender, DataGridViewCellMouseEventArgs e)
         {
-            if (e.RowIndex < 0 || e.ColumnIndex < 0 || asistencia == null || hoy == null || !asistencia.ConRetiro || !PuedeQuitar)
+            if (e.RowIndex < 0 || e.ColumnIndex < 0 || asistencia == null || hoy == null || !(asistencia.ConRetiro || asistencia.ConDadas) || !PuedeCambiar)
             {
                 return;
             }
@@ -1413,32 +1698,88 @@ namespace DigBit
                 return;
             }
 
+            ArmarMenu(alumno);
+            Rectangle casilla = grid.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, false);
+            menu.Show(grid, new Point(casilla.Left + e.X, casilla.Top + e.Y));
+        }
+
+        /// <summary>Las opciones del menu de ese alumno, segun su casilla de hoy (ver CasillaPulsada).</summary>
+        private void ArmarMenu(AlumnoDeAsistencia alumno)
+        {
             alumnoDelMenu = alumno;
+            DateTime fecha = hoy.Fecha;
+            // Las opciones del menu anterior se liberan (Clear solo las quita).
+            foreach (ToolStripItem vieja in menu.Items.Cast<ToolStripItem>().ToList())
+            {
+                vieja.Dispose();
+            }
+
             menu.Items.Clear();
             menu.Items.Add(new ToolStripMenuItem(alumno.Nombre + ", hoy") { Enabled = false, Font = fuenteMenuNegrita });
-            if (alumno.Presente.Contains(hoy.Fecha))
+            if (alumno.Presente.Contains(fecha) && alumno.SinBitacora.Contains(fecha))
             {
-                menu.Items.Add("Quitarle la asistencia: registró su bitácora pero no está en el salón", null,
-                    (s, a) => Pedir(alumnoDelMenu, true));
+                // La A verde: se la dio el profesor sin bitacora.
+                AsistenciaDada dada;
+                alumno.Dadas.TryGetValue(fecha, out dada);
+                if (dada != null)
+                {
+                    string frase = AsistenciasDadas.EnFrase(dada);
+                    if (frase.Length > DetalleEnMenu)
+                    {
+                        frase = frase.Substring(0, DetalleEnMenu).TrimEnd() + "...";
+                    }
+
+                    menu.Items.Add(new ToolStripMenuItem("Se la diste a las " + Hora(dada.DadaEn) + ": " + frase) { Enabled = false });
+                }
+
+                menu.Items.Add("Quitarle la asistencia que le diste: no está en el salón", null,
+                    (s, a) => Pedir(alumnoDelMenu, AccionAsistencia.QuitarLaQueDiste));
             }
-            else if (alumno.Retiradas.Contains(hoy.Fecha))
+            else if (alumno.Presente.Contains(fecha))
             {
-                menu.Items.Add("Devolverle la asistencia: sí está en el salón", null, (s, a) => Pedir(alumnoDelMenu, false));
+                // La A de siempre: registro su bitacora (si tambien se la dio, quitar anula las dos).
+                if (asistencia.ConRetiro)
+                {
+                    menu.Items.Add("Quitarle la asistencia: registró su bitácora pero no está en el salón", null,
+                        (s, a) => Pedir(alumnoDelMenu, AccionAsistencia.Quitar));
+                }
+                else
+                {
+                    menu.Items.Add(new ToolStripMenuItem("Registró su bitácora hoy: ya tiene asistencia") { Enabled = false });
+                }
+            }
+            else if (alumno.Retiradas.Contains(fecha))
+            {
+                menu.Items.Add("Devolverle la asistencia: sí está en el salón", null, (s, a) => Pedir(alumnoDelMenu, AccionAsistencia.Devolver));
+            }
+            else if (asistencia.ConDadas)
+            {
+                menu.Items.Add("Darle la asistencia: está en el salón, pero su equipo no pudo registrar su bitácora...", null,
+                    (s, a) => Pedir(alumnoDelMenu, AccionAsistencia.Dar));
             }
             else
             {
                 menu.Items.Add(new ToolStripMenuItem("Aún no registra su bitácora hoy: no hay asistencia que quitar") { Enabled = false });
             }
 
-            Rectangle casilla = grid.GetCellDisplayRectangle(e.ColumnIndex, e.RowIndex, false);
-            menu.Show(grid, new Point(casilla.Left + e.X, casilla.Top + e.Y));
+            if (asistencia.ConDadas)
+            {
+                menu.Items.Add(new ToolStripSeparator());
+                menu.Items.Add(TextoDarSinLista, null, (s, a) =>
+                {
+                    if (DarSinLista != null)
+                    {
+                        DarSinLista();
+                    }
+                });
+            }
         }
 
-        private void Pedir(AlumnoDeAsistencia alumno, bool quitar)
+        private void Pedir(AlumnoDeAsistencia alumno, AccionAsistencia accion)
         {
             if (alumno != null && hoy != null && CambiarAsistencia != null)
             {
-                CambiarAsistencia(alumno, hoy.Fecha, quitar);
+                CambiarAsistencia(alumno, hoy.Fecha, accion);
             }
         }
 

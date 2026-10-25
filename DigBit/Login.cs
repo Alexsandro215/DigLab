@@ -153,7 +153,7 @@ namespace DigBit
             }
 
             const int margen = 24;
-            int franja = (lblSinConexion != null && lblSinConexion.Visible) ? lblSinConexion.Height : 0;
+            int franja = AltoFranja();
             int altoApagar = (btnApagar != null) ? btnApagar.Height + 10 : 0;
             btnEmergencia.Location = new Point(
                 ClientSize.Width - btnEmergencia.Width - margen,
@@ -187,10 +187,21 @@ namespace DigBit
             }
 
             const int margen = 24;
-            int franja = (lblSinConexion != null && lblSinConexion.Visible) ? lblSinConexion.Height : 0;
+            int franja = AltoFranja();
             btnApagar.Location = new Point(
                 ClientSize.Width - btnApagar.Width - margen,
                 ClientSize.Height - btnApagar.Height - margen - franja);
+        }
+
+        /// <summary>
+        /// Lo que ocupa abajo la franja de sin conexion. Se mira su texto y no
+        /// Visible: antes de mostrarse el login, Visible de la franja es false aunque
+        /// ya se le haya puesto true (su ventana aun no se ve), y los botones del
+        /// kiosco se colocaban tapandola hasta el primer tic del reloj de 5 s.
+        /// </summary>
+        private int AltoFranja()
+        {
+            return (lblSinConexion != null && lblSinConexion.Text.Length > 0) ? lblSinConexion.Height : 0;
         }
 
         private void ConfirmarApagado()
@@ -360,7 +371,9 @@ namespace DigBit
                     if (!SinConexion.IntentarActivar(ex.Message))
                     {
                         MostrarEntrando(false);
-                        MessageBox.Show("No hay conexión con el servidor y este equipo no tiene una copia del horario. Avisa a la persona responsable del laboratorio.", "Sin conexión", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBox.Show("No hay conexión con el servidor y este equipo no tiene una copia del horario. Avisa a la persona responsable del laboratorio."
+                            + ParaElEstudiante(AppContexto.AvisoAlEstudiante),
+                            "Sin conexión", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         return false;
                     }
 
@@ -374,7 +387,10 @@ namespace DigBit
                 if (alumno == null)
                 {
                     MostrarEntrando(false);
-                    MessageBox.Show("Sin conexión solo pueden entrar estudiantes, y esa matrícula no está en la copia local de este equipo.", "Sin conexión", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show("Sin conexión solo pueden entrar estudiantes, y esa matrícula no está en la copia local de este equipo."
+                        + ParaElEstudiante("Revisa que esté bien escrita. Si lo está y vienes a una clase, avísale ahora a tu docente "
+                            + "para que te dé la asistencia."),
+                        "Sin conexión", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return false;
                 }
 
@@ -392,6 +408,17 @@ namespace DigBit
             // login se queda a la vista. El administrador es un usuario mas de la
             // base desde la fase 6; antes eran credenciales escritas aqui.
             return consultas.RealizarInicioSesion(numeroIdentificadorIngresado, contraseñaIngresada);
+        }
+
+        /// <summary>
+        /// Un parrafo mas para el estudiante cuando este equipo no llega al servidor
+        /// (que le avise a su docente, que solo puede darle la asistencia mientras
+        /// dura la clase). Solo en el kiosco (los equipos del laboratorio): en el del
+        /// docente o el de la administracion, quien lee no es un estudiante.
+        /// </summary>
+        private static string ParaElEstudiante(string texto)
+        {
+            return Kiosco.Activo ? Environment.NewLine + Environment.NewLine + texto : "";
         }
 
         /// <summary>
@@ -461,8 +488,14 @@ namespace DigBit
 
             if (!hayServidor)
             {
+                // Sin cuenta su docente no puede darle la asistencia. En un equipo libre
+                // con conexion la crea y ahi mismo registra su bitacora; si no hay
+                // ninguno, que lo sepa su docente (sin prometer lo que no puede hacer).
                 MessageBox.Show("Para crear tu cuenta hace falta conexión con el servidor, y ahora no la hay. "
-                    + "Inténtalo más tarde o avisa a la persona responsable del laboratorio.", "Sin conexión", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    + "Inténtalo más tarde o avisa a la persona responsable del laboratorio."
+                    + ParaElEstudiante("Si vienes a una clase, créala en otro equipo que sí tenga conexión y registra ahí tu bitácora. "
+                        + "Si no hay ninguno libre, avísale a tu docente."),
+                    "Sin conexión", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 

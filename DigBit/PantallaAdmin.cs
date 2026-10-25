@@ -51,6 +51,9 @@ namespace DigBit
             MaximizeBox = true;
             MinimizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
+            // El icono de DigBit en la barra de todas (Estadisticas, Alertas, Bitacoras,
+            // Estudiantes...): el del panel del administrador, como Mi horario y Mis grupos.
+            Icon = (Icon)new System.ComponentModel.ComponentResourceManager(typeof(PrincipalAdministrador)).GetObject("$this.Icon");
             // Solo la barra de titulo ("Alumnos (solo consulta)"); el titulo grande no cambia.
             Text = titulo + (Permisos.SoloConsulta ? " (solo consulta)" : "");
 

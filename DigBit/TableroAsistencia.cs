@@ -20,7 +20,9 @@ namespace DigBit
     /// hoy (antes de empezar, en curso, en la pausa entre dos bloques o ya
     /// terminada) o, si hoy no hay, la ultima. Todo sale del resumen de la lista
     /// (ResumenAsistencia) con las reglas de la hoja: lo pendiente de hoy (P) no
-    /// cuenta ni como asistencia ni como falta y una asistencia quitada es falta.
+    /// cuenta ni como asistencia ni como falta, una asistencia quitada es falta y
+    /// una que dio el profesor sin bitacora (db/22) es asistencia (las ayudas
+    /// dicen cuantas fueron).
     ///
     /// Las tarjetas con alumnos que atender se pulsan (raton, Enter o Espacio;
     /// las flechas pasan de una a otra) y la ventana los marca en la hoja
@@ -562,7 +564,7 @@ namespace DigBit
             }
             else if (resumen.Alumnos.Count == 0)
             {
-                lista.Add(ArmarSinAlumnos(Rectangle.FromLTRB(Hueco(0).Left, 0, Hueco(2).Right, Height)));
+                lista.Add(ArmarSinAlumnos(Rectangle.FromLTRB(Hueco(0).Left, 0, Hueco(2).Right, Height), resumen.Lista != null && resumen.Lista.ConDadas));
                 lista.Add(ArmarHoy(Hueco(3)));
             }
             else
@@ -594,8 +596,8 @@ namespace DigBit
             };
         }
 
-        /// <summary>Con 0 alumnos, T1, T2 y T3 juntas: la lista aun no se arma.</summary>
-        private static Tarjeta ArmarSinAlumnos(Rectangle rect)
+        /// <summary>Con 0 alumnos, T1, T2 y T3 juntas: la lista aun no se arma (con db/22, tambien con las asistencias que de el profesor).</summary>
+        private static Tarjeta ArmarSinAlumnos(Rectangle rect, bool conDadas)
         {
             Tarjeta t = new Tarjeta(1, rect)
             {
@@ -603,10 +605,15 @@ namespace DigBit
                 Cifra = "Aún sin estudiantes",
                 CifraChica = true,
                 ColorCifra = GrisSinAlumnos,
-                Pie1 = "Se arma sola con la primera clase en que registren su bitácora; quien llegue después entra con falta en las clases anteriores.",
+                // Con db/22, mas corto en el pie para que quepa a 1366 (747 px de unos 765); entero en la ayuda.
+                Pie1 = conDadas
+                    ? "Se arma sola cuando registren su bitácora o les des la asistencia; quien llegue después entra con falta en las clases anteriores."
+                    : "Se arma sola con la primera clase en que registren su bitácora; quien llegue después entra con falta en las clases anteriores.",
                 Accesible = "Lista de asistencia: aún sin estudiantes"
             };
-            t.Ayuda = t.Pie1;
+            t.Ayuda = conDadas
+                ? "Se arma sola con la primera clase en que registren su bitácora o les des la asistencia; quien llegue después entra con falta en las clases anteriores."
+                : t.Pie1;
             return t;
         }
 
@@ -642,6 +649,8 @@ namespace DigBit
             int cuentan = asistencias + r.Alumnos.Sum(a => a.Faltas);
             int pendientes = r.Hoy == null ? 0 : Math.Max(0, r.Hoy.Pendientes);
             int quitadas = r.Alumnos.Sum(a => a.Retiradas);
+            // Las que dio el profesor sin bitacora (db/22): ya estan en el %, como asistencias.
+            int dadas = r.Alumnos.Sum(a => a.Dadas);
             List<string> renglones = new List<string>
             {
                 Cuenta(asistencias, "asistencia", "asistencias") + " de " + cuentan + (cuentan == 1 ? " que cuenta" : " que cuentan")
@@ -652,6 +661,11 @@ namespace DigBit
             if (quitadas > 0)
             {
                 renglones.Add("Asistencias quitadas en el periodo: " + quitadas + ".");
+            }
+
+            if (dadas > 0)
+            {
+                renglones.Add("Asistencias que diste sin bitácora en el periodo: " + dadas + ".");
             }
 
             // Compacto: el segundo renglon del pie pasa a la ayuda.
@@ -844,6 +858,12 @@ namespace DigBit
                 }
 
                 ayudas.Add(cuentas);
+                // Con db/22 y un bloque en curso, el profesor puede darla (la hoja lo ofrece igual: PuedeCambiar).
+                if (enBloque != null && r.Lista != null && r.Lista.ConDadas && hoy.Pendientes > 0)
+                {
+                    ayudas.Add("Si alguno está en el salón y su equipo no pudo registrar, pulsa su casilla de hoy para darle la asistencia.");
+                }
+
                 if (t.SePulsa)
                 {
                     t.AyudaPulsar = "Pulsa la tarjeta para marcar en la lista a " + (t.Ids.Count == 1 ? "quien aún no registra" : "quienes aún no registran")
@@ -910,7 +930,9 @@ namespace DigBit
                 AsistenciaDelDia dia = hoy ?? (ultima != null && ultima.Dia.Fecha == r.Lista.AhoraServidor.Date ? ultima : null);
                 ayudas.Add(horario);
                 // Una columna de hoy en la que nadie registro desaparece en la relectura
-                // (AsistenciaDatos solo la deja si alguien registro): es "Nadie registro".
+                // (AsistenciaDatos solo la deja si alguien registro o si el profesor dio
+                // alguna asistencia, db/22): es "Nadie registro". Con solo asistencias
+                // dadas, Asistieron > 0: cuenta como clase con asistencia.
                 if (dia != null && dia.EnLista > 0 && dia.Asistieron + dia.Retiradas > 0)
                 {
                     t.Rotulo = "Asistencia de hoy";
@@ -987,7 +1009,8 @@ namespace DigBit
             t.Ids = resumen.Alumnos.Where(a => a.PendienteHoy).Select(a => a.Alumno.Id).ToList();
             t.SePulsa = t.Ids.Count > 0;
             return "Con asistencia: " + hoy.Asistieron + ". Aún no registran (P): " + pendientes + "."
-                + (hoy.Retiradas > 0 ? " Registraron sin estar en el salón: " + hoy.Retiradas + ", se les quitó la asistencia." : "");
+                + (hoy.Retiradas > 0 ? " Registraron sin estar en el salón: " + hoy.Retiradas + ", se les quitó la asistencia." : "")
+                + (hoy.Dadas > 0 ? (hoy.Dadas == 1 ? " A 1 le diste la asistencia (sin bitácora)." : " A " + hoy.Dadas + " les diste la asistencia (sin bitácora).") : "");
         }
 
         /// <summary>Una clase que ya termino (la de hoy o la ultima): cuantos asistieron, faltaron y no estaban en el salon.</summary>
@@ -1023,7 +1046,8 @@ namespace DigBit
             }
 
             return "Con asistencia: " + dia.Asistieron + ". Faltaron: " + faltaron + "."
-                + (dia.Retiradas > 0 ? " Registraron sin estar en el salón: " + dia.Retiradas + ", se les quitó la asistencia." : "");
+                + (dia.Retiradas > 0 ? " Registraron sin estar en el salón: " + dia.Retiradas + ", se les quitó la asistencia." : "")
+                + (dia.Dadas > 0 ? " Le diste la asistencia a " + dia.Dadas + " (sin bitácora)." : "");
         }
 
         private static void PonerPastilla(Tarjeta t, string texto, Color fondo, Color letra)
@@ -1943,7 +1967,7 @@ namespace DigBit
         // Cuentas y textos
         // =====================================================================
 
-        /// <summary>Los que entraron a la lista despues de la primera clase (su primera bitacora es de despues).</summary>
+        /// <summary>Los que entraron a la lista despues de la primera clase (su primera bitacora o asistencia dada es de despues).</summary>
         private static int Tarde(ResumenAsistencia r)
         {
             if (r.Lista.Dias.Count == 0)
@@ -1952,7 +1976,7 @@ namespace DigBit
             }
 
             DateTime primera = r.Lista.Dias.Min(d => d.Fecha);
-            return r.Lista.Alumnos.Count(a => a.BitacorasDelDia.Count > 0 && a.BitacorasDelDia.Keys.Min() > primera);
+            return r.Lista.Alumnos.Count(a => a.Entro != DateTime.MaxValue && a.Entro > primera);
         }
 
         private static string NombreDe(AlumnoResumido a)

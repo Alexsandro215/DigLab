@@ -39,20 +39,46 @@ namespace DigBit.Infraestructura
             get { return EsEncargado; }
         }
 
-        /// <summary>Los codigos generados cada semana: solo el administrador (regla de db/11).</summary>
+        public static bool EsDocente
+        {
+            get { return Datos_User.TipoUsuario == TiposUsuario.Profesor; }
+        }
+
+        /// <summary>
+        /// Los codigos generados cada semana: solo el administrador (regla de
+        /// db/11). Con "Los docentes no ven los codigos" (CodigosSoloResponsables),
+        /// tambien el encargado de laboratorio, y el profesor ya no.
+        /// </summary>
         public static bool VeCodigosGenerados
         {
-            get { return !EsEncargado; }
+            get { return VeCodigos; }
         }
 
         /// <summary>
         /// El codigo unico de cada profesor y el de cada sesion: es lo que teclean
         /// los alumnos para que su bitacora cuente, y los de servicio social son
-        /// alumnos. Solo el administrador.
+        /// alumnos. El administrador y el profesor (el suyo); con "Los docentes no
+        /// ven los codigos" (CodigosSoloResponsables), el administrador y el
+        /// encargado de laboratorio, y el profesor no.
         /// </summary>
         public static bool VeCodigosDeProfesor
         {
-            get { return !EsEncargado; }
+            get { return VeCodigos; }
+        }
+
+        /// <summary>
+        /// El profesor con "Los docentes no ven los codigos": donde iba su codigo,
+        /// que se lo pida a la persona responsable del laboratorio
+        /// (CodigosSoloResponsables.PideElCodigo).
+        /// </summary>
+        public static bool DocenteSinCodigos
+        {
+            get { return EsDocente && CodigosSoloResponsables.Activa; }
+        }
+
+        private static bool VeCodigos
+        {
+            get { return CodigosSoloResponsables.Activa ? !EsDocente : !EsEncargado; }
         }
 
         /// <summary>Capa de datos: primera linea de cada metodo que escribe.</summary>

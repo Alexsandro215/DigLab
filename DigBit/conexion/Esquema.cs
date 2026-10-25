@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using DigBit.Infraestructura;
 using MySql.Data.MySqlClient;
 
@@ -13,6 +14,16 @@ namespace DigBit.conexion
     /// </summary>
     internal static class Esquema
     {
+        /// <summary>
+        /// Cuanto se da por bueno que a una cuenta le falta una migracion sin volver a
+        /// preguntar (en ticks de Stopwatch: un minuto). Lo que si esta no se deshace
+        /// y se recuerda siempre; lo que falta, solo este rato. Asi los paneles no
+        /// preguntan a information_schema en cada refresco (en la escuela, sin las
+        /// 14 a 22, eran unas 6 preguntas por lectura de Estadisticas) y una migracion
+        /// aplicada con DigBit abierto se nota en un minuto como mucho.
+        /// </summary>
+        private static readonly long VidaDelNo = Stopwatch.Frequency * 60;
+
         private static readonly Columna Bajas = new Columna("usuarios", "activo",
             "La base no tiene usuarios.activo: falta db/08_migracion_bajas.sql. "
             + "Hasta aplicarla no se puede dar de baja a nadie y todos pueden entrar.");
@@ -128,16 +139,48 @@ namespace DigBit.conexion
             return TablaAsistenciasRetiradas.Existe(conexion, transaccion);
         }
 
-        // La ultima tabla que crea la migracion. Solo el administrador la usa: los
-        // equipos (digbit_equipo, db/07) no tienen permiso sobre estas tablas.
-        private static readonly Columna TablasCicloPreliminar = new Columna("ciclo_recortes", "hasta_antes",
-            "La base no tiene las tablas del proximo ciclo: falta db/16_ciclo_preliminar.sql. "
-            + "Hasta aplicarla, la pestana Proximo ciclo solo lo explica.");
+        // Solo la ve quien tiene permiso sobre ella (db/22 se lo da a digbit_equipo y a
+        // digbit_consulta): sin el, el profesor no puede dar asistencias y las listas
+        // se cuentan como antes, solo con las bitacoras.
+        private static readonly Columna TablaAsistenciasDadas = new Columna("asistencias_dadas", "anulada_por",
+            "La base no tiene la tabla asistencias_dadas (o este usuario no puede leerla): falta db/22_asistencia_dada.sql. "
+            + "Hasta aplicarla el profesor no puede dar la asistencia a quien no pudo registrar su bitacora.");
 
-        /// <summary>True si se puede preparar el horario del proximo ciclo (db/16_ciclo_preliminar.sql).</summary>
+        /// <summary>
+        /// True si el profesor puede dar la asistencia, durante su clase, a quien no
+        /// pudo registrar su bitacora, y las listas la cuentan (db/22_asistencia_dada.sql).
+        /// </summary>
+        public static bool AsistenciaDada(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablaAsistenciasDadas.Existe(conexion, transaccion);
+        }
+
+        // La ultima tabla que crea la migracion. Solo el administrador la usa: los
+        // equipos (digbit_equipo, db/07) no tienen permiso sobre estas tablas, y la
+        // persona responsable (digbit_consulta) solo las lee con db/23 o la 18 nueva.
+        private static readonly Columna TablasCicloPreliminar = new Columna("ciclo_recortes", "hasta_antes",
+            "La base no tiene las tablas de las configuraciones de horario (o este usuario no puede leerlas): falta db/16_ciclo_preliminar.sql. "
+            + "Hasta aplicarla, las pestanas Configuraciones y Aplicacion solo lo explican.");
+
+        /// <summary>True si estan las tablas de las configuraciones de horario (db/16_ciclo_preliminar.sql).</summary>
         public static bool CicloPreliminar(MySqlConnection conexion, MySqlTransaction transaccion = null)
         {
             return TablasCicloPreliminar.Existe(conexion, transaccion);
+        }
+
+        // La ultima columna que anade la migracion. Con digbit_consulta sin el
+        // permiso de db/23 tampoco se ve, y las pestanas lo explican.
+        private static readonly Columna TablaGuardados = new Columna("ciclo_cargas", "carga_origen",
+            "La base no tiene lo de las configuraciones de horario: falta db/23_horarios_guardados.sql. "
+            + "Hasta aplicarla, las pestanas Configuraciones y Aplicacion solo lo explican.");
+
+        /// <summary>
+        /// True si se pueden guardar varias configuraciones de horario con nombre,
+        /// prepararlas y aplicarlas (db/23_horarios_guardados.sql, sobre la 16).
+        /// </summary>
+        public static bool HorariosGuardados(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablaGuardados.Existe(conexion, transaccion);
         }
 
         // Solo la ve quien tiene permiso sobre ella (db/19 se lo da a digbit_equipo y no
@@ -182,19 +225,27 @@ namespace DigBit.conexion
 
         private static bool usoLibre;
         private static bool avisadoUsoLibre;
+        private static readonly NoReciente sinUsoLibre = new NoReciente();
 
         /// <summary>
         /// True si codigos_accesos admite sesiones sin clase, sin profesor, materia
         /// ni grupo (db/14_registro_sin_clase.sql): las del uso libre de un
-        /// laboratorio sin codigos. Una vez visto, no se vuelve a preguntar.
+        /// laboratorio sin codigos. Una vez visto, no se vuelve a preguntar; si
+        /// falta, no se pregunta otra vez con esa cuenta hasta pasado un minuto.
         /// </summary>
         public static bool UsoLibre(MySqlConnection conexion, MySqlTransaction transaccion = null)
         {
+            string cuenta = CuentaDe(conexion);
             lock (candadoTipo)
             {
                 if (usoLibre)
                 {
                     return true;
+                }
+
+                if (sinUsoLibre.Vigente(cuenta))
+                {
+                    return false;
                 }
             }
 
@@ -211,6 +262,11 @@ namespace DigBit.conexion
             lock (candadoTipo)
             {
                 usoLibre = admite;
+                if (!admite)
+                {
+                    sinUsoLibre.Anotar(cuenta);
+                }
+
                 if (!admite && !avisadoUsoLibre)
                 {
                     avisadoUsoLibre = true;
@@ -223,20 +279,28 @@ namespace DigBit.conexion
         }
 
         private static bool sesionesUnicas;
+        private static readonly NoReciente sinSesionesUnicas = new NoReciente();
 
         /// <summary>
         /// True si codigos_accesos tiene UNA sesion por franja y dia y UNA por
         /// sesion extra (los UNIQUE de db/04, buscados por columnas). Es lo que
         /// garantiza un solo codigo por clase en el modo renovable aunque la
-        /// abran a la vez dos paneles y un equipo. Solo recuerda el si.
+        /// abran a la vez dos paneles y un equipo. El si lo recuerda siempre; el
+        /// no, un minuto con esa cuenta.
         /// </summary>
         public static bool SesionesUnicas(MySqlConnection conexion)
         {
+            string cuenta = CuentaDe(conexion);
             lock (candadoTipo)
             {
                 if (sesionesUnicas)
                 {
                     return true;
+                }
+
+                if (sinSesionesUnicas.Vigente(cuenta))
+                {
+                    return false;
                 }
             }
 
@@ -252,6 +316,10 @@ namespace DigBit.conexion
             lock (candadoTipo)
             {
                 sesionesUnicas = unicos == 2;
+                if (!sesionesUnicas)
+                {
+                    sinSesionesUnicas.Anotar(cuenta);
+                }
             }
 
             return unicos == 2;
@@ -259,20 +327,28 @@ namespace DigBit.conexion
 
         private static readonly object candadoTipo = new object();
         private static bool alumnoPorDefecto;
+        private static readonly NoReciente sinAlumnoPorDefecto = new NoReciente();
 
         /// <summary>
         /// True si usuarios.fk_tipo_usuario vale 1 (alumno) por defecto
         /// (db/10_red_y_autoregistro.sql). Entonces el alta desde el laboratorio
         /// no nombra esa columna, que es lo unico que permite el usuario de MySQL
-        /// de los equipos (db/07). Una vez visto, no se vuelve a preguntar.
+        /// de los equipos (db/07). Una vez visto, no se vuelve a preguntar; si
+        /// falta, no se pregunta otra vez con esa cuenta hasta pasado un minuto.
         /// </summary>
         public static bool AlumnoPorDefecto(MySqlConnection conexion, MySqlTransaction transaccion = null)
         {
+            string cuenta = CuentaDe(conexion);
             lock (candadoTipo)
             {
                 if (alumnoPorDefecto)
                 {
                     return true;
+                }
+
+                if (sinAlumnoPorDefecto.Vigente(cuenta))
+                {
+                    return false;
                 }
             }
 
@@ -289,6 +365,10 @@ namespace DigBit.conexion
             lock (candadoTipo)
             {
                 alumnoPorDefecto = es1;
+                if (!es1)
+                {
+                    sinAlumnoPorDefecto.Anotar(cuenta);
+                }
             }
 
             return es1;
@@ -296,21 +376,29 @@ namespace DigBit.conexion
 
         private static bool carreraSinGrupo;
         private static bool avisadoCarrera;
+        private static readonly NoReciente sinCarreraSinGrupo = new NoReciente();
 
         /// <summary>
         /// True si carrera_grupo_semestre admite un alumno sin grupo ni semestre
         /// (db/10_red_y_autoregistro.sql; la 01 ya la crea asi). En la base de la
         /// escuela los dos eran obligatorios, y como el alumno ya no declara
         /// grupo, sin la migracion no se puede guardar la carrera de un alumno
-        /// nuevo. Una vez visto, no se vuelve a preguntar.
+        /// nuevo. Una vez visto, no se vuelve a preguntar; si falta, no se pregunta
+        /// otra vez con esa cuenta hasta pasado un minuto.
         /// </summary>
         public static bool CarreraSinGrupo(MySqlConnection conexion, MySqlTransaction transaccion = null)
         {
+            string cuenta = CuentaDe(conexion);
             lock (candadoTipo)
             {
                 if (carreraSinGrupo)
                 {
                     return true;
+                }
+
+                if (sinCarreraSinGrupo.Vigente(cuenta))
+                {
+                    return false;
                 }
             }
 
@@ -327,6 +415,11 @@ namespace DigBit.conexion
             lock (candadoTipo)
             {
                 carreraSinGrupo = admite;
+                if (!admite)
+                {
+                    sinCarreraSinGrupo.Anotar(cuenta);
+                }
+
                 if (!admite && !avisadoCarrera)
                 {
                     avisadoCarrera = true;
@@ -340,20 +433,28 @@ namespace DigBit.conexion
 
         private static bool tipoEncargado;
         private static bool avisadoEncargado;
+        private static readonly NoReciente sinTipoEncargado = new NoReciente();
 
         /// <summary>
         /// True si se pueden dar de alta encargados de laboratorio (tipo 4): la base
         /// no tiene catalogo de tipos (las de 01_schema) o ya tiene el 4 (db/18).
         /// En la del TESCHI, tipo_usuarios tiene clave foranea desde usuarios. Una
-        /// vez visto, no se vuelve a preguntar.
+        /// vez visto, no se vuelve a preguntar; si falta, no se pregunta otra vez
+        /// con esa cuenta hasta pasado un minuto.
         /// </summary>
         public static bool TipoEncargado(MySqlConnection conexion, MySqlTransaction transaccion = null)
         {
+            string cuenta = CuentaDe(conexion);
             lock (candadoTipo)
             {
                 if (tipoEncargado)
                 {
                     return true;
+                }
+
+                if (sinTipoEncargado.Vigente(cuenta))
+                {
+                    return false;
                 }
             }
 
@@ -376,6 +477,11 @@ namespace DigBit.conexion
             lock (candadoTipo)
             {
                 tipoEncargado = listo;
+                if (!listo)
+                {
+                    sinTipoEncargado.Anotar(cuenta);
+                }
+
                 if (!listo && !avisadoEncargado)
                 {
                     avisadoEncargado = true;
@@ -407,11 +513,34 @@ namespace DigBit.conexion
         }
 
         /// <summary>
+        /// Las cuentas a las que les falto algo hace menos de VidaDelNo, medido con el
+        /// contador del sistema (el reloj de Windows se puede cambiar). No se protege
+        /// sola: quien la usa la guarda con su candado.
+        /// </summary>
+        private sealed class NoReciente
+        {
+            private readonly Dictionary<string, long> faltoEn = new Dictionary<string, long>();
+
+            /// <summary>True si a esa cuenta le falto hace menos de VidaDelNo.</summary>
+            public bool Vigente(string cuenta)
+            {
+                long cuando;
+                return faltoEn.TryGetValue(cuenta, out cuando) && Stopwatch.GetTimestamp() - cuando < VidaDelNo;
+            }
+
+            public void Anotar(string cuenta)
+            {
+                faltoEn[cuenta] = Stopwatch.GetTimestamp();
+            }
+        }
+
+        /// <summary>
         /// Una columna que llega con una migracion. Una vez vista, no se vuelve a
-        /// preguntar; mientras falte, se pregunta en cada llamada, para notar la
-        /// migracion sin reiniciar. Lo visto vale para la cuenta con la que se vio:
-        /// la de solo consulta no lee todas las tablas que lee la del equipo, y al
-        /// reves.
+        /// preguntar; si falta, no se pregunta otra vez hasta pasado un minuto
+        /// (VidaDelNo): asi se nota la migracion sin reiniciar y sin preguntar en
+        /// cada llamada. Lo visto y lo que falto valen para la cuenta con la que se
+        /// vio: la de solo consulta no lee todas las tablas que lee la del equipo,
+        /// y al reves.
         /// </summary>
         private class Columna
         {
@@ -420,6 +549,7 @@ namespace DigBit.conexion
             private readonly string aviso;
             private readonly object candado = new object();
             private readonly HashSet<string> cuentasQueLaVen = new HashSet<string>();
+            private readonly NoReciente cuentasQueNoLaVen = new NoReciente();
             private bool avisado;
 
             public Columna(string tabla, string nombre, string aviso)
@@ -437,6 +567,11 @@ namespace DigBit.conexion
                     if (cuentasQueLaVen.Contains(cuenta))
                     {
                         return true;
+                    }
+
+                    if (cuentasQueNoLaVen.Vigente(cuenta))
+                    {
+                        return false;
                     }
                 }
 
@@ -456,10 +591,14 @@ namespace DigBit.conexion
                     {
                         cuentasQueLaVen.Add(cuenta);
                     }
-                    else if (!avisado)
+                    else
                     {
-                        avisado = true;
-                        Log.Aviso(aviso);
+                        cuentasQueNoLaVen.Anotar(cuenta);
+                        if (!avisado)
+                        {
+                            avisado = true;
+                            Log.Aviso(aviso);
+                        }
                     }
                 }
 

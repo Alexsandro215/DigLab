@@ -13,14 +13,14 @@ namespace DigBit.conexion
         SeQuita
     }
 
-    /// <summary>Como queda una materia del borrador frente a la clase de la que se copio.</summary>
+    /// <summary>Como queda una clase de la configuracion frente a lo que se copio (o se guardo por ultima vez).</summary>
     public class ComoQueda
     {
         public TipoComoQueda Tipo;
         public string Texto = "";
     }
 
-    /// <summary>Un aviso de una materia. Los que bloquean no dejan publicar (en rojo); los demas, en ambar.</summary>
+    /// <summary>Un aviso de una clase. Los que bloquean no dejan aplicar (en rojo); los demas, en ambar.</summary>
     public class AvisoDeCarga
     {
         public string Texto = "";
@@ -30,7 +30,7 @@ namespace DigBit.conexion
     /// <summary>
     /// Dos horas que se cruzan el mismo dia en el mismo laboratorio, con el
     /// mismo profesor o con el mismo grupo (la regla de HorariosDatos.ValidarFranja).
-    /// A siempre es del borrador; B, del borrador o una clase que ya esta en Clases.
+    /// A siempre es de la configuracion; B, de la configuracion o una clase que ya esta en Clases.
     /// </summary>
     public class ChoqueCiclo
     {
@@ -110,21 +110,49 @@ namespace DigBit.conexion
         }
     }
 
-    /// <summary>Lo que se calcula de un borrador leido (RevisionCiclo.Revisar).</summary>
+    /// <summary>
+    /// Que clases ensena la lista Clases de una configuracion (las pastillas de
+    /// resumen y el enlace "Verlas" de Aplicacion): RevisionCiclo.EntraEnFiltro.
+    /// </summary>
+    public enum FiltroClases
+    {
+        Ninguno,
+        SinDocente,
+        /// <summary>De docentes de baja (con db/08).</summary>
+        DeBaja,
+        /// <summary>Con horas en un laboratorio desactivado (con db/08).</summary>
+        LaboratorioDesactivado,
+        Choques,
+        /// <summary>El mismo docente con la misma materia y grupo dos veces.</summary>
+        Repetidas,
+        SinHorario,
+        /// <summary>La misma materia con el mismo grupo con dos personas docentes (o dos veces sin docente).</summary>
+        DosDocentes
+    }
+
+    /// <summary>Lo que se calcula de una configuracion leida (RevisionCiclo.Revisar).</summary>
     public class RevisionDelCiclo
     {
         public List<ChoqueCiclo> Choques = new List<ChoqueCiclo>();
         public Dictionary<int, ComoQueda> ComoQueda = new Dictionary<int, ComoQueda>();
         public Dictionary<int, List<AvisoDeCarga>> Avisos = new Dictionary<int, List<AvisoDeCarga>>();
-        public int Revisados;
+        /// <summary>Personas docentes distintas con clases.</summary>
         public int TotalProfesores;
-        /// <summary>Materias sin quitar y sin profesor.</summary>
+        /// <summary>Clases sin quitar y sin docente.</summary>
         public int SinProfesor;
-        /// <summary>Materias sin quitar y sin horas en ningun laboratorio.</summary>
+        /// <summary>Clases sin quitar y sin horas en ningun laboratorio.</summary>
         public int SinHorario;
-        /// <summary>Materias que no quedan igual (nuevas, con cambios o que se quitan).</summary>
+        /// <summary>Clases de docentes de baja (con db/08) y sus nombres cortos, sin repetir.</summary>
+        public int DeBaja;
+        public List<string> DocentesDeBaja = new List<string>();
+        /// <summary>Clases con horas en un laboratorio desactivado (con db/08) y esos laboratorios, sin repetir.</summary>
+        public int EnLaboratorioDesactivado;
+        public List<string> LaboratoriosDesactivados = new List<string>();
+        /// <summary>Las clases repetidas (mismo docente, grupo y materia), cada una una vez.</summary>
+        public List<CargaCiclo> Repetidas = new List<CargaCiclo>();
+        /// <summary>Clases que no quedan igual (nuevas, con cambios o que se quitan).</summary>
         public int ConCambios;
-        /// <summary>Materias con algun aviso que no deja publicar.</summary>
+        /// <summary>Clases con algun aviso que no deja aplicar.</summary>
         public int Bloqueadas;
 
         public List<AvisoDeCarga> AvisosDe(CargaCiclo carga)
@@ -152,9 +180,10 @@ namespace DigBit.conexion
     }
 
     /// <summary>
-    /// Las reglas del horario preliminar (Horarios > Proximo ciclo), en memoria:
-    /// como queda cada materia frente a la clase de la que se copio, sus avisos,
-    /// los choques y las cuentas. La usan la pantalla y Publicar.
+    /// Las reglas de una configuracion de horario (Horarios > Configuraciones y
+    /// Aplicacion), en memoria: como queda cada clase frente a lo que se copio,
+    /// sus avisos, los choques y las cuentas. La usan las pantallas, la revision
+    /// de Aplicacion (RevisionAplicacion) y Aplicar.
     /// </summary>
     internal static class RevisionCiclo
     {
@@ -210,6 +239,37 @@ namespace DigBit.conexion
             return materias == 1 ? "1 materia" : materias + " materias";
         }
 
+        /// <summary>"1 clase", "23 clases".</summary>
+        public static string TextoClases(int clases)
+        {
+            return clases == 1 ? "1 clase" : clases + " clases";
+        }
+
+        /// <summary>"1 docente", "10 docentes".</summary>
+        public static string TextoDocentes(int docentes)
+        {
+            return docentes == 1 ? "1 docente" : docentes + " docentes";
+        }
+
+        /// <summary>"1 horario", "60 horarios" (franjas).</summary>
+        public static string TextoHorarios(int horarios)
+        {
+            return horarios == 1 ? "1 horario" : horarios + " horarios";
+        }
+
+        /// <summary>"1 laboratorio", "4 laboratorios".</summary>
+        public static string TextoLaboratorios(int laboratorios)
+        {
+            return laboratorios == 1 ? "1 laboratorio" : laboratorios + " laboratorios";
+        }
+
+        /// <summary>"23 clases de 10 docentes, 60 horas en 4 laboratorios" (sin punto): el resumen de una configuracion.</summary>
+        public static string Resumen(CicloPreliminar ciclo)
+        {
+            return TextoClases(ciclo.Clases) + " de " + TextoDocentes(ciclo.Docentes) + ", " + TextoHoras(ciclo.Horas)
+                + " en " + TextoLaboratorios(ciclo.Laboratorios);
+        }
+
         /// <summary>"a", "a y b", "a, b y c".</summary>
         public static string Enumerar(IList<string> partes)
         {
@@ -221,7 +281,7 @@ namespace DigBit.conexion
             return partes.Count == 1 ? partes[0] : string.Join(", ", partes.Take(partes.Count - 1)) + " y " + partes[partes.Count - 1];
         }
 
-        /// <summary>Como queda una materia: "Igual", "Nueva", "Se quita" o lo que cambio ("Viene de Jorge Salinas, Cambió el horario").</summary>
+        /// <summary>Como queda una materia: "Igual", "Nueva", "Se quita" o lo que cambio ("Viene de Jorge Salinas, Cambio el horario").</summary>
         public static ComoQueda ComoQuedaDe(CargaCiclo carga)
         {
             if (carga.Quitada)
@@ -262,12 +322,14 @@ namespace DigBit.conexion
                 : new ComoQueda { Tipo = TipoComoQueda.Cambios, Texto = string.Join(", ", partes) };
         }
 
-        /// <summary>Todo lo que se calcula del borrador: como queda, avisos, choques y cuentas.</summary>
+        /// <summary>Todo lo que se calcula de una configuracion: como queda, avisos, choques y cuentas.</summary>
         public static RevisionDelCiclo Revisar(CicloLeido leido)
         {
             RevisionDelCiclo revision = new RevisionDelCiclo();
             List<CargaCiclo> vivas = leido.Cargas.Where(c => !c.Quitada).ToList();
             revision.Choques = Choques(vivas, leido.YaProgramadas);
+            HashSet<string> deBaja = new HashSet<string>();
+            HashSet<string> desactivados = new HashSet<string>();
 
             foreach (CargaCiclo carga in leido.Cargas)
             {
@@ -290,13 +352,28 @@ namespace DigBit.conexion
                 else if (leido.ConBajas && !carga.ProfesorActivo)
                 {
                     avisos.Add(Rojo(carga.ProfesorCorto + " está de baja: pásala a otra persona docente."));
+                    revision.DeBaja++;
+                    if (deBaja.Add(carga.ProfesorCorto))
+                    {
+                        revision.DocentesDeBaja.Add(carga.ProfesorCorto);
+                    }
                 }
 
                 if (leido.ConLaboratoriosDesactivables)
                 {
-                    foreach (string laboratorio in carga.Franjas.Where(f => !f.LaboratorioActivo).Select(f => f.Laboratorio).Distinct())
+                    List<string> apagados = carga.Franjas.Where(f => !f.LaboratorioActivo).Select(f => f.Laboratorio).Distinct().ToList();
+                    foreach (string laboratorio in apagados)
                     {
                         avisos.Add(Rojo("El " + EstiloHorarios.NombreLaboratorio(laboratorio) + " está desactivado: cámbiale el horario."));
+                        if (desactivados.Add(laboratorio))
+                        {
+                            revision.LaboratoriosDesactivados.Add(EstiloHorarios.NombreLaboratorio(laboratorio));
+                        }
+                    }
+
+                    if (apagados.Count > 0)
+                    {
+                        revision.EnLaboratorioDesactivado++;
                     }
                 }
 
@@ -305,10 +382,10 @@ namespace DigBit.conexion
                     avisos.Add(Rojo(choque.DescribirPara(carga)));
                 }
 
-                if (carga.ProfesorId.HasValue && vivas.Any(o => o != carga && o.ProfesorId == carga.ProfesorId
-                    && o.GrupoId == carga.GrupoId && o.MateriaId == carga.MateriaId))
+                if (EsRepetida(vivas, carga))
                 {
                     avisos.Add(Rojo("Repetida: " + carga.ProfesorCorto + " tiene dos veces " + carga.Nombre + "."));
+                    revision.Repetidas.Add(carga);
                 }
 
                 if (carga.Franjas.Count == 0)
@@ -337,8 +414,66 @@ namespace DigBit.conexion
             }
 
             revision.TotalProfesores = leido.Profesores.Count;
-            revision.Revisados = leido.Profesores.Count(p => p.Estado != EstadoProfesorCiclo.PorRevisar);
             return revision;
+        }
+
+        /// <summary>Con docente, y el mismo docente tiene otra vez la misma materia con el mismo grupo.</summary>
+        private static bool EsRepetida(List<CargaCiclo> vivas, CargaCiclo carga)
+        {
+            return carga.ProfesorId.HasValue && vivas.Any(o => o != carga && o.ProfesorId == carga.ProfesorId
+                && o.GrupoId == carga.GrupoId && o.MateriaId == carga.MateriaId);
+        }
+
+        /// <summary>
+        /// Si la clase entra en el filtro de la lista Clases (las pastillas de
+        /// resumen y "Verlas"). La revision es la de RevisionCiclo.Revisar del mismo leido.
+        /// </summary>
+        public static bool EntraEnFiltro(CicloLeido leido, RevisionDelCiclo revision, CargaCiclo carga, FiltroClases filtro)
+        {
+            switch (filtro)
+            {
+                case FiltroClases.SinDocente:
+                    return !carga.ProfesorId.HasValue;
+                case FiltroClases.DeBaja:
+                    return leido.ConBajas && carga.ProfesorId.HasValue && !carga.ProfesorActivo;
+                case FiltroClases.LaboratorioDesactivado:
+                    return leido.ConLaboratoriosDesactivables && carga.Franjas.Any(f => !f.LaboratorioActivo);
+                case FiltroClases.Choques:
+                    return revision.Choques.Any(c => c.Toca(carga));
+                case FiltroClases.Repetidas:
+                    return EsRepetida(leido.Cargas.Where(c => !c.Quitada).ToList(), carga);
+                case FiltroClases.SinHorario:
+                    return carga.Franjas.Count == 0;
+                case FiltroClases.DosDocentes:
+                    return leido.Cargas.Any(o => o != carga && !o.Quitada && o.GrupoId == carga.GrupoId && o.MateriaId == carga.MateriaId
+                        && (o.ProfesorId != carga.ProfesorId || !o.ProfesorId.HasValue));
+                default:
+                    return true;
+            }
+        }
+
+        /// <summary>El texto de la ficha de un filtro ("Con choque", "Sin horario"...); vacio en Ninguno.</summary>
+        public static string TextoFiltro(FiltroClases filtro)
+        {
+            switch (filtro)
+            {
+                case FiltroClases.SinDocente:
+                    return "Sin docente";
+                case FiltroClases.DeBaja:
+                    return "De docentes de baja";
+                case FiltroClases.LaboratorioDesactivado:
+                    return "En un laboratorio desactivado";
+                case FiltroClases.Choques:
+                    return "Con choque";
+                case FiltroClases.Repetidas:
+                    return "Repetidas";
+                case FiltroClases.SinHorario:
+                    return "Sin horario";
+                case FiltroClases.DosDocentes:
+                    return "Con dos docentes";
+                default:
+                    return "";
+            }
         }
 
         private static AvisoDeCarga Rojo(string texto)
@@ -416,9 +551,11 @@ namespace DigBit.conexion
         /// <summary>
         /// Para los dialogos, antes de guardar: con que chocarian esas horas si la
         /// materia fuera de ese profesor y ese grupo. Las de las materias de
-        /// "excluir" (la misma que se cambia) no cuentan.
+        /// "excluir" (la misma que se cambia) no cuentan, ni las franjas de
+        /// "sinFranjas" (las que se estan cambiando, en "Cambiar horas").
         /// </summary>
-        public static List<string> ChoquesSi(CicloLeido leido, int? profesor, int grupo, IEnumerable<FranjaCiclo> franjas, ICollection<int> excluir)
+        public static List<string> ChoquesSi(CicloLeido leido, int? profesor, int grupo, IEnumerable<FranjaCiclo> franjas, ICollection<int> excluir,
+            ICollection<int> sinFranjas = null)
         {
             CargaCiclo supuesta = new CargaCiclo { Id = -1, ProfesorId = profesor, GrupoId = grupo };
             supuesta.Franjas.AddRange(franjas.Select(f => new FranjaCiclo
@@ -430,7 +567,7 @@ namespace DigBit.conexion
                 Inicio = f.Inicio,
                 Fin = f.Fin
             }));
-            List<CargaCiclo> otras = leido.Cargas.Where(c => !c.Quitada && !excluir.Contains(c.Id)).ToList();
+            List<CargaCiclo> otras = leido.Cargas.Where(c => !c.Quitada && !excluir.Contains(c.Id)).Select(c => SinEsas(c, sinFranjas)).ToList();
             List<string> textos = new List<string>();
             foreach (ChoqueCiclo choque in Choques(new[] { supuesta }.Concat(otras).ToList(), leido.YaProgramadas).Where(c => c.Toca(supuesta)))
             {
@@ -447,31 +584,29 @@ namespace DigBit.conexion
             return textos.Distinct().ToList();
         }
 
-        /// <summary>
-        /// "Por revisar", "No sigue" o, ya revisado: "Igual" (todo como estaba),
-        /// "Se incorpora" (no daba clases en el ciclo copiado) o "Con cambios".
-        /// </summary>
-        public static string EstadoDe(ProfesorDelCiclo profesor, CicloLeido leido, RevisionDelCiclo revision)
+        /// <summary>La clase tal cual o, si tiene alguna de esas franjas, una copia sin ellas (para ChoquesSi).</summary>
+        private static CargaCiclo SinEsas(CargaCiclo carga, ICollection<int> sinFranjas)
         {
-            if (profesor.Estado == EstadoProfesorCiclo.NoSigue)
+            if (sinFranjas == null || sinFranjas.Count == 0 || !carga.Franjas.Any(f => sinFranjas.Contains(f.Id)))
             {
-                return "No sigue";
+                return carga;
             }
 
-            if (profesor.Estado == EstadoProfesorCiclo.PorRevisar)
+            CargaCiclo copia = new CargaCiclo
             {
-                return "Por revisar";
-            }
-
-            List<CargaCiclo> eran = leido.Cargas.Where(c => c.ProfesorOrigenId == profesor.Id).ToList();
-            if (eran.Count == 0)
-            {
-                return "Se incorpora";
-            }
-
-            bool igual = eran.All(c => c.ProfesorId == profesor.Id && !c.Quitada)
-                && leido.Cargas.Where(c => c.ProfesorId == profesor.Id && !c.Quitada).All(c => revision.De(c).Tipo == TipoComoQueda.Igual);
-            return igual ? "Igual" : "Con cambios";
+                Id = carga.Id,
+                ProfesorId = carga.ProfesorId,
+                Profesor = carga.Profesor,
+                ProfesorCorto = carga.ProfesorCorto,
+                ProfesorActivo = carga.ProfesorActivo,
+                GrupoId = carga.GrupoId,
+                Grupo = carga.Grupo,
+                GrupoCarreraId = carga.GrupoCarreraId,
+                MateriaId = carga.MateriaId,
+                Materia = carga.Materia
+            };
+            copia.Franjas.AddRange(carga.Franjas.Where(f => !sinFranjas.Contains(f.Id)));
+            return copia;
         }
     }
 }

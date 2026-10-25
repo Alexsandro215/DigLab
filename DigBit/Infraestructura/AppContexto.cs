@@ -82,7 +82,7 @@ namespace DigBit.Infraestructura
 
                 DialogResult respuesta = PantallaError.Mostrar(
                     titulo,
-                    problema,
+                    ConAvisoAlEstudiante(problema),
                     "Reintentar",
                     !Kiosco.Activo,
                     Kiosco.Activo ? 30 : 0);
@@ -460,6 +460,60 @@ namespace DigBit.Infraestructura
                 return Kiosco.Activo
                     ? MensajeDeFallo.Explicar("No se pudo comprobar el laboratorio de este equipo", ex, MensajeDeFallo.AvisaAlLaboratorio)
                     : null;
+            }
+        }
+
+        /// <summary>
+        /// Lo que se le dice al estudiante cuando este equipo del laboratorio no le
+        /// sirve para registrar su bitacora (las pantallas de arranque y el login sin
+        /// copia del horario): que le avise a su docente, que solo puede darle la
+        /// asistencia mientras dura la clase ("ahora"). Pide, no promete: sin la db/22
+        /// el docente aun no la puede dar en DigBit.
+        /// </summary>
+        internal const string AvisoAlEstudiante = "Si vienes a una clase, avísale ahora a tu docente para que te dé la asistencia.";
+
+        // La caja del mensaje de PantallaError (lblMensaje): 580 x 170, Century Gothic 11.
+        private const int AnchoMensajeDeError = 580;
+        private const int AltoMensajeDeError = 170;
+
+        /// <summary>
+        /// En el kiosco, el problema con el aviso al estudiante debajo: cualquier
+        /// pantalla de arranque deja este equipo sin servir para registrar (sin
+        /// servidor, sin connections.config o danado, con la cuenta de la base
+        /// rechazada o sin laboratorio), y quien la ve suele ser un estudiante que
+        /// viene a una clase. Solo en pantalla: el log y el modo sin conexion llevan
+        /// el problema solo. En el equipo del docente o de la administracion no va.
+        /// No se repite si ya esta. Si no cabe en la caja, va pegado (un salto en vez
+        /// de dos) y, si ni asi, no va: mejor el problema entero que cortado.
+        /// </summary>
+        private static string ConAvisoAlEstudiante(string problema)
+        {
+            if (!Kiosco.Activo || problema.Contains(AvisoAlEstudiante))
+            {
+                return problema;
+            }
+
+            foreach (string separacion in new[] { Environment.NewLine + Environment.NewLine, Environment.NewLine })
+            {
+                string texto = problema + separacion + AvisoAlEstudiante;
+                if (CabeEnLaPantallaDeError(texto))
+                {
+                    return texto;
+                }
+            }
+
+            Log.Aviso("El aviso al estudiante no cabe en la pantalla de arranque con este problema; se muestra sin el.");
+            return problema;
+        }
+
+        /// <summary>Si el texto cabe en la caja del mensaje de PantallaError, medido como lo pinta su Label.</summary>
+        private static bool CabeEnLaPantallaDeError(string texto)
+        {
+            using (System.Drawing.Font fuente = new System.Drawing.Font("Century Gothic", 11F))
+            {
+                System.Drawing.Size medida = TextRenderer.MeasureText(texto, fuente,
+                    new System.Drawing.Size(AnchoMensajeDeError, int.MaxValue), TextFormatFlags.WordBreak);
+                return medida.Height <= AltoMensajeDeError;
             }
         }
 

@@ -411,7 +411,9 @@ namespace DigBit.conexion
         /// pasan a ser "Persona" y "ANON-id", sin apellido materno ni correo; su
         /// matricula o numero de empleado, "ANON-id"; su contrasena deja de servir y
         /// sus codigos de recuperacion pendientes tambien. Sus bitacoras, sesiones
-        /// y clases se quedan, enlazadas por su id, sin su nombre. No se deshace
+        /// y clases se quedan, enlazadas por su id, sin su nombre; las asistencias
+        /// que le dio su profesor sin bitacora (db/22), tambien, pero sin el detalle
+        /// que escribio el profesor (puede llevar su nombre). No se deshace
         /// (tampoco se reactiva ni se edita despues): la pantalla pide antes la
         /// contrasena de quien lo hace. Con db/21 queda en el historial, en la
         /// misma transaccion; siempre, en el log, sin sus datos. Lo que no se
@@ -422,6 +424,8 @@ namespace DigBit.conexion
             Permisos.Exigir("Anonimizar la cuenta del usuario id " + id);
             ExigirTipoAnonimizable();
             string anonimo = IdentificadorAnonimo(id);
+            // Cuantos detalles de asistencias dadas se vaciaron (solo para el log).
+            int detallesVaciados = 0;
             using (MySqlConnection conexion = mconexion.GetConexion())
             using (MySqlTransaction transaccion = conexion.BeginTransaction())
             {
@@ -441,6 +445,19 @@ namespace DigBit.conexion
                         comando.Parameters.AddWithValue("@Id", id);
                         comando.Parameters.AddWithValue("@Tipo", TipoUsuario);
                         comando.ExecuteNonQuery();
+                    }
+
+                    // Las asistencias que le dio su profesor sin bitacora (db/22): el detalle lo
+                    // escribio el profesor y puede llevar su nombre, asi que se vacia. La fila se
+                    // queda (es su asistencia, enlazada por su id), igual que sus bitacoras.
+                    if (TipoUsuario == TiposUsuario.Alumno && Esquema.AsistenciaDada(conexion, transaccion))
+                    {
+                        using (MySqlCommand comando = new MySqlCommand(
+                            "UPDATE asistencias_dadas SET comentario = NULL WHERE fk_alumno = @Id AND comentario IS NOT NULL", conexion, transaccion))
+                        {
+                            comando.Parameters.AddWithValue("@Id", id);
+                            detallesVaciados = comando.ExecuteNonQuery();
+                        }
                     }
 
                     AnonimizarRecuperacion(conexion, transaccion, id, anonimo);
@@ -477,7 +494,8 @@ namespace DigBit.conexion
                 }
             }
 
-            Log.Info("Cuenta del usuario id " + id + " (tipo " + TipoUsuario + ") anonimizada como " + anonimo + " por " + Quien() + ".");
+            Log.Info("Cuenta del usuario id " + id + " (tipo " + TipoUsuario + ") anonimizada como " + anonimo + " por " + Quien()
+                + (detallesVaciados > 0 ? "; se vacio el detalle de " + detallesVaciados + " asistencias dadas" : "") + ".");
         }
 
         /// <summary>

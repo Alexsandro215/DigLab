@@ -162,6 +162,18 @@ SET @sql := IF(@hay > 0, CONCAT('GRANT SELECT, INSERT, DELETE ON teschi_otru.asi
                          'SELECT ''asistencias_retiradas aun no existe: el permiso lo da db/17 al aplicarla'' AS resultado');
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 
+-- Asistencias que da el profesor a quien no pudo registrar su bitacora
+-- (db/22): leer, dar (insertar) y anular, y para anular SOLO las columnas
+-- activa, anulada_en y anulada_por. Nunca borrar ni reescribir lo dado. Solo
+-- si la tabla ya esta; si no, el permiso lo da la 22 al aplicarse.
+SET @hay := (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'teschi_otru' AND TABLE_NAME = 'asistencias_dadas');
+SET @sql := IF(@hay > 0, CONCAT('GRANT SELECT, INSERT ON teschi_otru.asistencias_dadas TO ''digbit_equipo''@''', @desde, ''''),
+                         'SELECT ''asistencias_dadas aun no existe: el permiso lo da db/22 al aplicarla'' AS resultado');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+SET @sql := IF(@hay > 0, CONCAT('GRANT UPDATE (activa, anulada_en, anulada_por) ON teschi_otru.asistencias_dadas TO ''digbit_equipo''@''', @desde, ''''),
+                         'SELECT 1 FROM DUAL WHERE 1 = 0');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+
 -- Lo que cada profesor elige para sus clases (db/19): imagen, color y nombre
 -- corto. Leer, guardar, cambiar y quitar. Solo si la tabla ya esta; si no, el
 -- permiso lo da la 19 al aplicarse.
@@ -294,3 +306,13 @@ SELECT 'Maquina del administrador (DigBit\\connections.config)',
 -- se acepta arriba (puede cambiar la contrasena de un profesor). Cada guardado
 -- desde DigBit queda en el log con el numero de empleado, y el profesor lo
 -- deshace con Restablecer.
+--
+-- Y puede dar y anular asistencias (db/22) en cualquier sesion y a nombre de
+-- cualquier profesor: la base no comprueba la hora ni quien es (eso lo hace
+-- DigBit). Con el permiso de anular (activa, anulada_en, anulada_por) tambien
+-- podria volver a poner en 1 una anulada o cambiar cuando se anulo; el UNIQUE
+-- sigue sin dejar dos que cuenten el mismo dia. Sin DELETE ni UPDATE del resto
+-- de las columnas, lo dado no se borra ni se reescribe. Es del mismo tipo que
+-- meter bitacoras falsas o quitar asistencias (db/17). Si los equipos entran
+-- con un usuario que puede todo en la base (como hoy en la escuela), ese
+-- usuario si puede borrarlas o reescribirlas: ahi solo valida DigBit.

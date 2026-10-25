@@ -23,6 +23,9 @@ namespace DigBit
     /// DictadoCodigo) y tres cifras de como va: bitacoras registradas, fallas
     /// reportadas y equipos sin internet. Mientras la clase esta abierta el
     /// borde late en verde (Resplandor, como en el panel del administrador).
+    /// Si los docentes no ven los codigos (PanoramaProfesor.CodigosOcultos), en
+    /// el sitio del codigo dice que lo pida a la persona responsable del
+    /// laboratorio, sin deletreo ni "Escuchar el codigo".
     /// </summary>
     internal class TarjetaCodigo : Control
     {
@@ -114,6 +117,9 @@ namespace DigBit
         private bool encimaLista;
         private readonly ToolTip ayudaLista = new ToolTip { InitialDelay = 300, ReshowDelay = 100, AutoPopDelay = 15000 };
         private const string AyudaDeLaLista = "Pulsa para ver en Asistencia quién falta.";
+        // La de la cifra que se pinto (Registro): con db/22 y la clase en curso,
+        // tambien que ahi se da la asistencia, y cuantas diste hoy.
+        private string ayudaDeLaListaPintada = AyudaDeLaLista;
 
         /// <summary>"Reportar una falla" de la clase en curso (solo mientras dura).</summary>
         public event Action<SesionAgenda> ReportarFalla;
@@ -530,7 +536,8 @@ namespace DigBit
             if (panorama.AhoraServidor.Date != (ahora == DateTime.MinValue ? panorama.AhoraServidor : ahora).Date)
             {
                 Texto(g, "Cargando tus clases de hoy... Si tarda, revisa la conexión.", fuenteTexto, Color.Gray, interior, ref y, true);
-                if (panorama.CodigoPorProfesor && !string.IsNullOrEmpty(panorama.Codigo) && panorama.ModoComun == ModoCodigo.Fijo)
+                // Sin el si los docentes no ven los codigos (CodigosSoloResponsables).
+                if (panorama.CodigoPorProfesor && !string.IsNullOrEmpty(panorama.Codigo) && panorama.ModoComun == ModoCodigo.Fijo && !panorama.CodigosOcultos)
                 {
                     DibujarCodigoConRegistro(g, interior, y + 10, "Tu código de clase", panorama.Codigo, null, null, hora,
                         Nota("Tu código sigue valiendo aunque aún no se carguen tus clases de hoy.", nota));
@@ -591,6 +598,21 @@ namespace DigBit
                 return;
             }
 
+            // Los docentes no ven los codigos (CodigosSoloResponsables): en el sitio
+            // del codigo, que se lo pida a la persona responsable del laboratorio, y
+            // debajo como va su clase, como siempre. Sin "Escuchar el codigo" ni
+            // ninguna nota que diga un codigo; con el codigo unico y con la
+            // generacion de codigos, y tambien sin la 09 o sin codigo asignado.
+            if (panorama.CodigosOcultos)
+            {
+                DibujarCodigoConRegistro(g, interior, y, titulo, null, relevante,
+                    modo == ModoCodigo.Fijo ? AnteriorConCodigoFijo(relevante, abiertas, hora) : null, hora,
+                    Nota(modo == ModoCodigo.Renovable ? panorama.AvisoApertura : null, Color.FromArgb(190, 85, 0)),
+                    Nota(OtraClaseSigue(otraClase), nota),
+                    Nota("Solo la administración de DigBit y la persona responsable del laboratorio ven los códigos.", nota));
+                return;
+            }
+
             if (modo == ModoCodigo.Renovable)
             {
                 DibujarRenovable(g, interior, y, titulo, abiertas.Where(s => panorama.ModoDe(s.LaboratorioId) == ModoCodigo.Renovable).ToList(),
@@ -618,14 +640,7 @@ namespace DigBit
                 return;
             }
 
-            // Con otra clase suya ya empezada en el mismo laboratorio, hasta que
-            // empiece la de la tarjeta su codigo abre esa (gana la que ya empezo,
-            // ReglasCodigo): los que llegan antes quedan alli.
-            SesionAgenda anterior = relevante == null || hora >= relevante.Inicio ? null
-                : abiertas.Where(a => a != relevante && !a.Cancelada && a.LaboratorioId == relevante.LaboratorioId && a.Inicio <= hora
-                        && panorama.ModoDe(a.LaboratorioId) == ModoCodigo.Fijo)
-                    .OrderByDescending(a => a.Inicio)
-                    .FirstOrDefault();
+            SesionAgenda anterior = AnteriorConCodigoFijo(relevante, abiertas, hora);
 
             // Las notas, de la que importa en este momento a la fija: si no caben,
             // se quitan desde la ultima. La otra clase solo puede ser una sin codigo
@@ -634,6 +649,20 @@ namespace DigBit
                 Nota(otraClase == null ? null
                     : "La de las " + HorariosDatos.Hora(otraClase.Inicio) + " en " + panorama.Laboratorio(otraClase.LaboratorioId) + " no necesita código.", nota),
                 Nota("Díctalo al empezar. Es el mismo en todas tus clases y solo vale en su laboratorio y horario.", nota));
+        }
+
+        /// <summary>
+        /// Con el codigo fijo, otra clase suya ya empezada en el mismo laboratorio:
+        /// hasta que empiece la de la tarjeta, su codigo abre esa (gana la que ya
+        /// empezo, ReglasCodigo) y los que llegan antes quedan alli. Null sin ella.
+        /// </summary>
+        private SesionAgenda AnteriorConCodigoFijo(SesionAgenda relevante, List<SesionAgenda> abiertas, TimeSpan hora)
+        {
+            return relevante == null || hora >= relevante.Inicio ? null
+                : abiertas.Where(a => a != relevante && !a.Cancelada && a.LaboratorioId == relevante.LaboratorioId && a.Inicio <= hora
+                        && panorama.ModoDe(a.LaboratorioId) == ModoCodigo.Fijo)
+                    .OrderByDescending(a => a.Inicio)
+                    .FirstOrDefault();
         }
 
         private static KeyValuePair<string, Color> Nota(string texto, Color color)
@@ -647,7 +676,10 @@ namespace DigBit
         /// cifras) y las notas que no esten vacias. Lo que sobra de alto se reparte
         /// 45 % arriba y 55 % abajo, asi la nota queda junto al codigo del que
         /// habla. Si no cabe todo: las cifras en su forma compacta y, luego, sin
-        /// las notas desde la ultima (la fija va al final).
+        /// las notas desde la ultima (la fija va al final). Con codigo null (los
+        /// docentes no ven los codigos: CodigosSoloResponsables), en su sitio que
+        /// lo pida a la persona responsable del laboratorio, sin el deletreo ni
+        /// "Escuchar el codigo".
         /// </summary>
         private void DibujarCodigoConRegistro(Graphics g, Rectangle interior, int y, string titulo, string codigo, SesionAgenda clase, SesionAgenda anterior,
             TimeSpan hora, params KeyValuePair<string, Color>[] notas)
@@ -655,14 +687,15 @@ namespace DigBit
             const int AlCodigo = 6;
             const int AlDeletreo = 4;
             const int MinimoCodigo = 48;
+            bool oculto = codigo == null;
             // Siempre en mayusculas, como lo pide la caja del alumno (no las distingue nadie).
             codigo = Mayusculas(codigo);
             List<KeyValuePair<string, Color>> pie = notas.Where(n => !string.IsNullOrEmpty(n.Key)).ToList();
             int libre = interior.Bottom - y;
             int altoTitulo = AltoDe(g, titulo, fuenteTitulo, interior.Width);
-            string deletreo = Deletrear(codigo);
+            string deletreo = oculto ? "" : Deletrear(codigo);
             // Como se deletrea y, a su derecha, "Escuchar el codigo": la fila mide lo mas alto de los dos.
-            FilaDeletreo fila = MedirFilaDeletreo(g, deletreo, interior.Width);
+            FilaDeletreo fila = oculto ? new FilaDeletreo() : MedirFilaDeletreo(g, deletreo, interior.Width);
             int altoDeletreo = fila.Alto;
             bool compacto = false;
             int altoRegistro = Registro(g, interior, 0, clase, anterior, hora, false, false);
@@ -670,7 +703,7 @@ namespace DigBit
             // que hablar): con ellas, las notas se quitan antes (el codigo no baja de
             // 80 px), porque las opciones se quedan siempre.
             bool conOpciones = clase != null && altoRegistro > 0;
-            Func<int> sinElCodigo = () => altoTitulo + AlCodigo + AlDeletreo + altoDeletreo
+            Func<int> sinElCodigo = () => altoTitulo + AlCodigo + (oculto ? 0 : AlDeletreo + altoDeletreo)
                 + (altoRegistro > 0 ? (compacto ? 10 : 16) + altoRegistro : 0)
                 + (conOpciones ? AltoDeOpciones(compacto) : 0)
                 + (pie.Count > 0 ? 12 + pie.Sum(n => AltoDe(g, n.Key, fuenteNota, interior.Width)) + 4 * (pie.Count - 1) : 0);
@@ -685,15 +718,29 @@ namespace DigBit
                 pie.RemoveAt(pie.Count - 1);
             }
 
-            MedidaCodigo medida = MedirCodigo(g, codigo, interior.Width, Math.Max(MinimoCodigo, libre - sinElCodigo()));
-            int alto = sinElCodigo() + medida.Alto - medida.Recorte;
-            y += Math.Max(0, libre - alto) * 45 / 100;
-            Centrado(g, titulo, fuenteTitulo, Color.DarkGreen, interior, ref y);
-            y += AlCodigo;
-            DibujarCodigo(g, codigo, medida, new Point(interior.Left + (interior.Width - medida.Ancho) / 2, y));
-            y += medida.Alto - medida.Recorte + AlDeletreo;
-            PintarFilaDeletreo(g, fila, deletreo, codigo, interior, y);
-            y += fila.Alto;
+            if (oculto)
+            {
+                // Lo que se pide, lo mas grande que quepa donde iria el codigo.
+                DrawingFont letra = LetraDelAviso(g, interior.Width, Math.Max(MinimoCodigo, libre - sinElCodigo()));
+                int altoAviso = AltoDe(g, CodigosSoloResponsables.PideElCodigo, letra, interior.Width);
+                y += Math.Max(0, libre - sinElCodigo() - altoAviso) * 45 / 100;
+                Centrado(g, titulo, fuenteTitulo, Color.DarkGreen, interior, ref y);
+                y += AlCodigo;
+                Centrado(g, CodigosSoloResponsables.PideElCodigo, letra, Color.DarkGreen, interior, ref y);
+            }
+            else
+            {
+                MedidaCodigo medida = MedirCodigo(g, codigo, interior.Width, Math.Max(MinimoCodigo, libre - sinElCodigo()));
+                int alto = sinElCodigo() + medida.Alto - medida.Recorte;
+                y += Math.Max(0, libre - alto) * 45 / 100;
+                Centrado(g, titulo, fuenteTitulo, Color.DarkGreen, interior, ref y);
+                y += AlCodigo;
+                DibujarCodigo(g, codigo, medida, new Point(interior.Left + (interior.Width - medida.Ancho) / 2, y));
+                y += medida.Alto - medida.Recorte + AlDeletreo;
+                PintarFilaDeletreo(g, fila, deletreo, codigo, interior, y);
+                y += fila.Alto;
+            }
+
             if (altoRegistro > 0)
             {
                 y += compacto ? 10 : 16;
@@ -719,6 +766,24 @@ namespace DigBit
                     y += 4;
                 }
             }
+        }
+
+        /// <summary>
+        /// La letra de "Pidele el codigo..." en el sitio del codigo: la mayor de
+        /// las de la tarjeta (24, 16 y 13 pt, en negritas) con la que cabe en ese
+        /// alto; si ni la menor cabe, la menor.
+        /// </summary>
+        private DrawingFont LetraDelAviso(Graphics g, int ancho, int alto)
+        {
+            foreach (DrawingFont letra in new[] { fuenteSinCodigo, fuenteMateria, fuenteTitulo })
+            {
+                if (AltoDe(g, CodigosSoloResponsables.PideElCodigo, letra, ancho) <= alto)
+                {
+                    return letra;
+                }
+            }
+
+            return fuenteTitulo;
         }
 
         private static int AltoDe(Graphics g, string texto, DrawingFont fuente, int ancho)
@@ -1240,6 +1305,12 @@ namespace DigBit
             if (enLista > 0)
             {
                 bitacoras = presentes;
+                if (pintar)
+                {
+                    ListaDeClase lista;
+                    int dadasHoy = listas != null && listas.TryGetValue(s.ClaseId, out lista) ? lista.DadasHoy : 0;
+                    ayudaDeLaListaPintada = AyudaDeLaListaDe(panorama != null && panorama.ConDadas && s.Inicio <= hora && hora < s.Fin, dadasHoy);
+                }
             }
 
             int faltan = enLista - bitacoras;
@@ -1397,6 +1468,17 @@ namespace DigBit
             return lista.Alumnos;
         }
 
+        /// <summary>
+        /// La ayuda de la cifra de la lista. puedeDar: la base tiene db/22 y la
+        /// clase esta en curso (en Asistencia se da a quien no pudo registrar);
+        /// dadasHoy: las que ya dio hoy, que la cifra incluye. Sin las dos, la de siempre.
+        /// </summary>
+        private static string AyudaDeLaListaDe(bool puedeDar, int dadasHoy)
+        {
+            return (puedeDar ? "Pulsa para ver en Asistencia quién falta y darle la asistencia a quien no pudo registrar." : AyudaDeLaLista)
+                + (dadasHoy > 0 ? "\nIncluye " + (dadasHoy == 1 ? "1 asistencia" : dadasHoy + " asistencias") + " que diste sin bitácora." : "");
+        }
+
         /// <summary>El raton sobre la cifra de la lista: la mano, su ayuda y el recuadro resaltado.</summary>
         private void PonerEncimaLista(bool encima)
         {
@@ -1407,7 +1489,7 @@ namespace DigBit
 
             encimaLista = encima;
             Cursor = encima ? Cursors.Hand : Cursors.Default;
-            ayudaLista.SetToolTip(this, encima ? AyudaDeLaLista : null);
+            ayudaLista.SetToolTip(this, encima ? ayudaDeLaListaPintada : null);
             if (!zonaLista.IsEmpty)
             {
                 Invalidate(Rectangle.Inflate(zonaLista, 3, 3));
@@ -1621,13 +1703,18 @@ namespace DigBit
             }
         }
 
-        /// <summary>Con que sigue la que termina en un laboratorio con otro modo (sin codigo o con el fijo). Null sin ella.</summary>
+        /// <summary>
+        /// Con que sigue la que termina en un laboratorio con otro modo (sin codigo
+        /// o con el fijo). Null sin ella. Si los docentes no ven los codigos
+        /// (CodigosSoloResponsables), sin decir cual.
+        /// </summary>
         private string OtraClaseSigue(SesionAgenda otraClase)
         {
             return otraClase == null ? null
                 : "La de las " + HorariosDatos.Hora(otraClase.Inicio) + " en " + panorama.Laboratorio(otraClase.LaboratorioId)
                     + (panorama.ModoDe(otraClase.LaboratorioId) == ModoCodigo.SinCodigo
                         ? " no necesita código."
+                        : panorama.CodigosOcultos ? " sigue hasta las " + HorariosDatos.Hora(otraClase.Fin) + "."
                         : " sigue con tu código " + Mayusculas(otraClase.Codigo) + " hasta las " + HorariosDatos.Hora(otraClase.Fin) + ".");
         }
 
@@ -1871,7 +1958,10 @@ namespace DigBit
 
         // NoCuenta: ya paso sin bitacoras, pero Faltas no la juzga (el laboratorio
         // aun no registraba con DigBit, o una extra anotada despues de su hora).
-        private enum Estado { ConBitacoras, SinBitacoras, NoCuenta, EnCurso, Pronto, PorVenir, Cancelada }
+        // SinBitacorasConAsistencia: ya paso sin bitacoras, pero el profesor dio la
+        // asistencia a quien no pudo registrar (db/22): se dio, en gris y no en rojo
+        // (en Faltas, ambar).
+        private enum Estado { ConBitacoras, SinBitacoras, NoCuenta, EnCurso, Pronto, PorVenir, Cancelada, SinBitacorasConAsistencia }
 
         /// <summary>Donde va cada cosa con el tamano y los datos de ahora (lo comparten el pintado y la barra).</summary>
         private sealed class Geometria
@@ -2246,8 +2336,10 @@ namespace DigBit
             if (fecha < hoy || (fecha == hoy && s.Fin <= hora))
             {
                 // Como Faltas: con las que quedaron en otra sesion (un recorte, los
-                // que llegaron antes) y sin juzgar lo que alli no cuenta.
-                return s.BitacorasDeLaClase > 0 ? Estado.ConBitacoras : s.NoContaba ? Estado.NoCuenta : Estado.SinBitacoras;
+                // que llegaron antes), sin juzgar lo que alli no cuenta y, con
+                // asistencias que dio el profesor (db/22), sin rojo: la clase se dio.
+                return s.BitacorasDeLaClase > 0 ? Estado.ConBitacoras : s.NoContaba ? Estado.NoCuenta
+                    : s.SesionId.HasValue && s.AsistenciasDadas > 0 ? Estado.SinBitacorasConAsistencia : Estado.SinBitacoras;
             }
 
             if (fecha == hoy && s.Inicio <= hora)
@@ -2493,7 +2585,7 @@ namespace DigBit
             Estado estado = EstadoDe(s, fecha, hoy, hora);
             // Una cancelada se abre si alguien alcanzo a registrar antes de cancelarla.
             bool abre = estado == Estado.ConBitacoras || estado == Estado.SinBitacoras || estado == Estado.EnCurso || estado == Estado.Pronto
-                || (estado == Estado.Cancelada && s.Alumnos > 0);
+                || estado == Estado.SinBitacorasConAsistencia || (estado == Estado.Cancelada && s.Alumnos > 0);
 
             // Lo que eligio para esta clase (db/19): un lomo de su color y, si hay
             // sitio, su circulo. Sin eso (null), el bloque como siempre. Con lomo
@@ -2528,6 +2620,12 @@ namespace DigBit
                 case Estado.SinBitacoras:
                     fondo = FondoSinBitacoras;
                     borde = BordeSinBitacoras;
+                    etiqueta = "Sin bitácoras";
+                    break;
+                case Estado.SinBitacorasConAsistencia:
+                    // Gris como lo que no se juzga: se dio, con las asistencias que diste (en la ultima linea).
+                    fondo = FondoCancelada;
+                    borde = BordeCancelada;
                     etiqueta = "Sin bitácoras";
                     break;
                 case Estado.EnCurso:
@@ -2781,6 +2879,10 @@ namespace DigBit
                 case Estado.SinBitacoras:
                     color = BordeSinBitacoras;
                     return "Nadie registró su bitácora";
+                case Estado.SinBitacorasConAsistencia:
+                    // Corta, como "Nadie registro su bitacora": a 1366 la columna deja unos
+                    // 205 px (173 con "12 asistencias"); el porque, en la ayuda del raton.
+                    return "Diste " + (s.AsistenciasDadas == 1 ? "1 asistencia" : s.AsistenciasDadas + " asistencias") + " sin bitácora";
                 case Estado.NoCuenta:
                     color = TextoApagado;
                     return s.EsExtra && s.CreadaEn.HasValue && s.CreadaEn.Value >= fecha + s.Fin
@@ -2817,6 +2919,10 @@ namespace DigBit
                     break;
                 case Estado.SinBitacoras:
                     como = "Nadie registró su bitácora";
+                    break;
+                case Estado.SinBitacorasConAsistencia:
+                    como = "Nadie registró su bitácora, pero diste " + (s.AsistenciasDadas == 1 ? "1 asistencia" : s.AsistenciasDadas + " asistencias")
+                        + " a quien no pudo registrar: la clase sí se dio";
                     break;
                 case Estado.NoCuenta:
                     como = s.EsExtra && s.CreadaEn.HasValue && s.CreadaEn.Value >= fecha + s.Fin

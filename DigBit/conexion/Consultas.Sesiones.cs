@@ -225,6 +225,13 @@ namespace DigBit.conexion
         }
 
         /// <summary>
+        /// Condicion SQL: la bitacora rb es de alguien que trajo su propio equipo
+        /// (la bandera 16 de Estadisticas). Una sola definicion: la de
+        /// AsistenciaDatos (paquete 1 de Estadisticas), que ya la usa en E6.
+        /// </summary>
+        internal const string CondicionEquipoPropio = AsistenciaDatos.CondicionEquipoPropio;
+
+        /// <summary>
         /// Alumnos registrados en una sesion, para la tabla y el PDF. Incluye
         /// con_falla: 1 si esa bitacora reporta alguna falla o comentario, para
         /// resaltarla frente a las que no reportaron nada; hora_registro ("HH:mm"
@@ -734,6 +741,16 @@ namespace DigBit.conexion
         private static readonly Regex NombreDeWindows = new Regex(@"^(DESKTOP|LAPTOP|WIN)-", RegexOptions.IgnoreCase);
 
         /// <summary>
+        /// El nombre que pone Windows si nadie fijo el numero de la maquina
+        /// (DESKTOP-..., LAPTOP-..., WIN-...): no dice que equipo es. Lo usan la
+        /// lista del paso 3 (LimpiarEquiposRegistrados) y Estadisticas (Equipos).
+        /// </summary>
+        internal static bool EsNombreDeWindows(string equipo)
+        {
+            return NombreDeWindows.IsMatch((equipo ?? "").Trim());
+        }
+
+        /// <summary>
         /// Los equipos que registraron bitacoras en este laboratorio en los ultimos
         /// DiasEquiposRegistrados dias, ya limpios (LimpiarEquiposRegistrados).
         /// Solo las del DigBit nuevo (registrado_en): el sistema anterior guardaba
@@ -785,7 +802,7 @@ namespace DigBit.conexion
             List<string> quedan = new List<string>();
             foreach (KeyValuePair<string, long> leido in leidos
                 .Select(l => new KeyValuePair<string, long>((l.Key ?? "").Trim(), l.Value))
-                .Where(l => NombreDeEquipoRegistrado.IsMatch(l.Key) && !NombreDeWindows.IsMatch(l.Key))
+                .Where(l => NombreDeEquipoRegistrado.IsMatch(l.Key) && !EsNombreDeWindows(l.Key))
                 .OrderByDescending(l => l.Value)
                 .ThenBy(l => l.Key, StringComparer.Ordinal))
             {

@@ -13,10 +13,10 @@
       1. Respalda la base entera con mysqldump y comprueba que el respaldo sirve.
       2. Pasa db/00_revision_previa.sql, que no cambia nada, y SE DETIENE si
          alguna comprobacion dice BLOQUEA.
-      3. Aplica 03, 04, 05, 06 y de la 08 a la 21 en orden, parando en el primer error.
+      3. Aplica 03, 04, 05, 06 y de la 08 a la 23 en orden, parando en el primer error.
       4. Vuelve a pasar la revision para enseñar como quedo.
 
-    Las dieciocho migraciones son repetibles: si una ya estaba aplicada lo dice y
+    Las veinte migraciones son repetibles: si una ya estaba aplicada lo dice y
     sigue. Se pueden volver a pasar sin romper nada.
 
     La 18 (encargados de laboratorio) crea ademas la cuenta de MySQL de solo
@@ -30,6 +30,16 @@
     La 21 (historial de cambios) crea una tabla nueva y no toca nada mas. Con
     root deja ademas que digbit_consulta la lea (los encargados ven las alertas
     de cambios de horario); con otro usuario, lo dice con un AVISO.
+
+    La 22 (asistencias que da el docente) crea una tabla nueva y no toca nada
+    mas. Antes hay que actualizar TODOS los equipos. Con root da permiso a
+    digbit_equipo y digbit_consulta; con otro usuario, lo dice con un AVISO.
+
+    La 23 (configuraciones de horario) solo cambia las tablas de la 16, que
+    solo usa el DigBit de la administracion: no hace falta actualizar los
+    equipos. Con root deja ademas que digbit_consulta las lea (la persona
+    responsable del laboratorio ve las guardadas y las aplicadas); con otro
+    usuario, lo dice con un AVISO.
 
 .EXAMPLE
     .\migrar_bd.ps1 -Servidor 127.0.0.1 -Usuario root -ContrasenaAdmin "LaDelAdministrador"
@@ -89,7 +99,9 @@ $migraciones = @(
     "18_encargados.sql",
     "19_personalizacion_clases.sql",
     "20_vigencia_franjas.sql",
-    "21_historial_cambios.sql"
+    "21_historial_cambios.sql",
+    "22_asistencia_dada.sql",
+    "23_horarios_guardados.sql"
 ) | ForEach-Object { Join-Path $carpetaDb $_ }
 
 # Repone la clave foranea que la 04 quita un momento, si una migracion se

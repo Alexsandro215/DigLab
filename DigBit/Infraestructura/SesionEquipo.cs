@@ -51,6 +51,9 @@ namespace DigBit.Infraestructura
         // de fin de sesion sale antes que el globo (liberado con menos de 5
         // minutos), ese aviso confirma tambien el registro.
         private static bool recienRegistrada;
+        // La bitacora recien registrada quedo en este equipo y es de una clase: su
+        // docente aun no la ve. El globo (o el aviso que lo sustituye) se lo recuerda.
+        private static bool recordarAlDocente;
 
         /// <summary>Como empieza la sesion liberada: lo dice el globo de bienvenida.</summary>
         private enum Comienzo
@@ -79,13 +82,20 @@ namespace DigBit.Infraestructura
         /// Llamado por la pantalla del alumno cuando la bitacora quedo guardada o,
         /// con reanudada, cuando quien ya registro vuelve a usar el equipo.
         /// </summary>
-        public static void Liberar(VentanaCodigo ventana, string usuario, string codigo, bool reanudada = false)
+        /// <param name="enEsteEquipoEnClase">
+        /// La bitacora quedo en este equipo (sin conexion) y es de una clase: el globo
+        /// de bienvenida le recuerda avisar a su docente, que aun no la ve.
+        /// </param>
+        public static void Liberar(VentanaCodigo ventana, string usuario, string codigo, bool reanudada = false, bool enEsteEquipoEnClase = false)
         {
             if (sesion != null)
             {
                 Log.Aviso("Liberar: ya habia una sesion liberada (" + sesion.Usuario + "); se sustituye.");
                 Limpiar();
             }
+
+            // Despues de Limpiar, que lo borra; antes de Iniciar, que escribe el globo.
+            recordarAlDocente = enEsteEquipoEnClase && !reanudada;
 
             DateTime ahora = DateTime.Now;
             sesion = new SesionActiva
@@ -235,8 +245,21 @@ namespace DigBit.Infraestructura
                 case Comienzo.Relanzada:
                     return "Tu sesión en este equipo sigue " + hasta + aviso;
                 default:
-                    return "Tu bitácora quedó registrada. Puedes usar este equipo " + hasta + aviso;
+                    return Registrada() + " Puedes usar este equipo " + hasta + aviso;
             }
+        }
+
+        /// <summary>
+        /// Lo primero del globo de bienvenida (o del aviso de fin que lo sustituye).
+        /// Si la bitacora quedo en este equipo en una clase, se lo recuerda: la
+        /// pantalla del "listo" ya se lo dijo, pero se esconde al abrir el escritorio.
+        /// Cabe en el globo (Windows corta su texto en 255 caracteres).
+        /// </summary>
+        private static string Registrada()
+        {
+            return recordarAlDocente
+                ? "Tu bitácora quedó guardada en este equipo: recuerda avisarle a tu docente para que te dé la asistencia."
+                : "Tu bitácora quedó registrada.";
         }
 
         /// <summary>"hasta las 09:00", o "hasta el final del dia" en el uso libre sin mas clases.</summary>
@@ -379,6 +402,7 @@ namespace DigBit.Infraestructura
             itemHasta = null;
             globoPendiente = null;
             recienRegistrada = false;
+            recordarAlDocente = false;
             sesion = null;
         }
 
@@ -894,7 +918,7 @@ namespace DigBit.Infraestructura
             int minutos = Math.Max(1, (int)Math.Ceiling(restante.TotalMinutes));
             // Antes que el globo (que ya no saldra): este aviso es lo primero que se lee.
             bool confirmar = recienRegistrada && globoPendiente != null;
-            string mensaje = (confirmar ? "Tu bitácora quedó registrada. " : "")
+            string mensaje = (confirmar ? Registrada() + " " : "")
                 + "Tu sesión en este equipo termina " + ALas(sesion.FinLocal) + " (en " + minutos + " min). "
                 + (ultimo ? "Guarda tu trabajo ahora: al llegar la hora, la sesión se cierra sola."
                     : "Guarda tu trabajo y cierra tus programas.");

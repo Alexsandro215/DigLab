@@ -8,12 +8,17 @@ using DrawingFont = System.Drawing.Font;
 namespace DigBit
 {
     /// <summary>
-    /// Vuelve a pedir la contrasena del administrador que inicio sesion antes de
-    /// un cambio delicado (los codigos de las clases y anonimizar una cuenta): si dejo la
-    /// sesion abierta y no esta, otra persona no puede hacerlo. Con tres
-    /// equivocadas en la sesion (aunque cierre el dialogo y lo vuelva a abrir) la
-    /// sesion se cierra sola. Queda en el log quien lo confirmo o fallo, nunca la
-    /// contrasena ni los datos de la persona de la que se trata (accionParaElLog).
+    /// Vuelve a pedir la contrasena de quien inicio sesion antes de un cambio
+    /// delicado: el administrador (los codigos de las clases y anonimizar una
+    /// cuenta) o el profesor en un equipo del laboratorio (kiosco), antes de
+    /// cambiar una asistencia en Mis grupos. Si dejo la sesion abierta y no esta,
+    /// otra persona no puede hacerlo. Con tres equivocadas en la sesion (aunque
+    /// cierre el dialogo y lo vuelva a abrir) la sesion se cierra sola. Queda en
+    /// el log quien lo confirmo o fallo, nunca la contrasena ni los datos de la
+    /// persona de la que se trata (accionParaElLog). El encargado de laboratorio
+    /// (tipo 4) nunca confirma: solo consulta. El tipo de cuenta que vale lo dice
+    /// quien pregunta (por omision, el administrador), no la sesion: asi un
+    /// cambio de la administracion nunca se confirma con la cuenta de un profesor.
     /// </summary>
     internal class DialogoContrasenaAdmin : Form
     {
@@ -21,6 +26,8 @@ namespace DigBit
         private const int Intentos = 3;
 
         private readonly string usuario;
+        // El tipo de cuenta que se comprueba (administrador o profesor): lo dice quien pregunta.
+        private readonly int tipoEsperado;
         // Lo que se anota en el log: la pregunta, o el texto sin datos personales que se dio.
         private readonly string accionParaElLog;
         private readonly TextBox txtContrasena;
@@ -34,7 +41,12 @@ namespace DigBit
         /// Lo que se anota en el log en lugar de la pregunta, en ASCII, cuando la
         /// pregunta nombra a una persona: el log no se borra nunca. Sin el, la pregunta.
         /// </param>
-        public static bool Confirmar(IWin32Window dueno, string accion, string detalle, string textoBoton, string accionParaElLog = null)
+        /// <param name="tipoEsperado">
+        /// La cuenta que vale: el administrador (por omision) o el profesor (Mis grupos
+        /// en kiosco). Cualquier otro tipo nunca confirma.
+        /// </param>
+        public static bool Confirmar(IWin32Window dueno, string accion, string detalle, string textoBoton, string accionParaElLog = null,
+            int tipoEsperado = TiposUsuario.Administrador)
         {
             // Tras el tercer fallo ya no se pregunta ni se comprueba nada: la sesion
             // se esta cerrando, y una tecla que ya estaba en cola podria volver a
@@ -61,16 +73,25 @@ namespace DigBit
                 return false;
             }
 
-            using (DialogoContrasenaAdmin dialogo = new DialogoContrasenaAdmin(usuario, accion, detalle, textoBoton, accionParaElLog ?? accion))
+            // Solo el administrador o el profesor confirman (Consultas.ConfirmarContrasena tambien lo exige).
+            if (tipoEsperado != TiposUsuario.Administrador && tipoEsperado != TiposUsuario.Profesor)
+            {
+                Log.Aviso("Confirmar la contrasena: tipo de cuenta no valido (" + tipoEsperado + ") para '" + (accionParaElLog ?? accion ?? "") + "'.");
+                return false;
+            }
+
+            using (DialogoContrasenaAdmin dialogo = new DialogoContrasenaAdmin(usuario, accion, detalle, textoBoton, accionParaElLog ?? accion, tipoEsperado))
             {
                 return dialogo.ShowDialog(dueno) == DialogResult.OK;
             }
         }
 
-        private DialogoContrasenaAdmin(string usuario, string accion, string detalle, string textoBoton, string accionParaElLog)
+        private DialogoContrasenaAdmin(string usuario, string accion, string detalle, string textoBoton, string accionParaElLog, int tipoEsperado)
         {
             this.usuario = usuario;
             this.accionParaElLog = accionParaElLog;
+            // La cuenta que vale la dice quien pregunta, no la sesion (ver Confirmar).
+            this.tipoEsperado = tipoEsperado;
             DrawingFont fuenteDetalle = new DrawingFont("Century Gothic", 10F);
             int altoDetalle = Math.Min(160, TextRenderer.MeasureText(detalle ?? "", fuenteDetalle, new Size(Ancho - 48, int.MaxValue),
                 TextFormatFlags.WordBreak).Height + 4);
@@ -131,15 +152,19 @@ namespace DigBit
 
             bool correcta;
             Cursor = Cursors.WaitCursor;
+            bool deProfesor = tipoEsperado == TiposUsuario.Profesor;
             try
             {
-                correcta = new Consultas().ConfirmarContrasenaAdministrador(usuario, txtContrasena.Text);
+                correcta = new Consultas().ConfirmarContrasena(usuario, txtContrasena.Text, tipoEsperado);
             }
             catch (Exception ex)
             {
                 // No cuenta como intento fallido: no se llego a comparar.
-                Log.Error("Confirmar la contrasena del administrador", ex);
-                lblError.Text = AvisoDeFalloAdmin.Texto("No se pudo comprobar la contraseña", ex);
+                Log.Error(deProfesor ? "Confirmar la contrasena del profesor" : "Confirmar la contrasena del administrador", ex);
+                // La causa y que hacer, con lo que le toca a quien tiene la sesion.
+                lblError.Text = deProfesor
+                    ? MensajeDeFallo.Explicar("No se pudo comprobar la contraseña", ex, AvisoDeFalloDocente.SiSigue)
+                    : AvisoDeFalloAdmin.Texto("No se pudo comprobar la contraseña", ex);
                 return;
             }
             finally
@@ -150,7 +175,7 @@ namespace DigBit
             if (correcta)
             {
                 Datos_User.ConfirmacionesFallidas = 0;
-                Log.Info("El administrador " + usuario + " confirmo su contrasena para: " + accionParaElLog);
+                Log.Info((deProfesor ? "El usuario " : "El administrador ") + usuario + " confirmo su contrasena para: " + accionParaElLog);
                 DialogResult = DialogResult.OK;
                 return;
             }

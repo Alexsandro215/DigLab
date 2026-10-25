@@ -229,6 +229,13 @@ namespace DigBit
                 texto = Consultas.DescribirSinInternet(sesion.SinInternet, false) + "." + Environment.NewLine + texto;
             }
 
+            // Las que dio su docente a quien no pudo registrar (db/22); en la tarjeta, solo si nadie registro.
+            if (sesion != null && sesion.AsistenciasDadas > 0)
+            {
+                texto = "Su docente dio " + Asistencias(sesion.AsistenciasDadas) + " sin bitácora (a quien estaba en el salón y no pudo registrar)."
+                    + Environment.NewLine + texto;
+            }
+
             if (sesion != null && !sesion.Utilizable)
             {
                 texto = "No se puede usar: la clase está desactivada o fuera de su periodo, o la cuenta de su docente está de baja."
@@ -692,7 +699,13 @@ namespace DigBit
                 fuenteNormal, sesion.Cancelada ? TextoApagado : TextoSecundario, celda, ancho, ref y);
             y += 3;
 
-            foreach (Tuple<string, Color> estado in Estado(sesion, fila, hora, panorama.ModoDe(sesion.LaboratorioId)))
+            Func<string, bool> cabe = linea => TextRenderer.MeasureText(g, linea, fuenteEstado).Width <= ancho;
+            int renglones = Math.Max(0, (celda.Bottom - 14 - y) / TextRenderer.MeasureText(g, "Ág", fuenteEstado).Height);
+            // Si los docentes no ven los codigos (CodigosSoloResponsables), el de la
+            // clase para darselo al grupo; si no, como siempre.
+            string codigo = panorama.CodigosSoloResponsables && !string.IsNullOrEmpty(sesion.CodigoParaDar)
+                ? TarjetaCodigo.Mayusculas(sesion.CodigoParaDar) : null;
+            foreach (Tuple<string, Color> estado in Estado(sesion, fila, hora, panorama.ModoDe(sesion.LaboratorioId), cabe, renglones, codigo))
             {
                 Linea(g, estado.Item1, fuenteEstado, estado.Item2, celda, ancho, ref y);
             }
@@ -714,9 +727,14 @@ namespace DigBit
         /// <summary>
         /// Lineas de estado de una clase. Dependen de si ya termino, esta en curso
         /// o no ha empezado; una clase en curso de dos horas sale en dos filas y
-        /// solo la de ahora lleva el detalle, para no repetirlo.
+        /// solo la de ahora lleva el detalle, para no repetirlo. cabe: si un texto
+        /// cabe en una linea de la tarjeta; renglones: cuantas lineas de estado
+        /// caben en ella. codigo: si los docentes no ven los codigos
+        /// (CodigosSoloResponsables), el de la clase, que va ("Codigo: 48213") en la
+        /// que aun no empieza y en la que esta en curso; null, como siempre.
         /// </summary>
-        private static IEnumerable<Tuple<string, Color>> Estado(SesionAgenda sesion, int fila, TimeSpan hora, ModoCodigo modo)
+        private static IEnumerable<Tuple<string, Color>> Estado(SesionAgenda sesion, int fila, TimeSpan hora, ModoCodigo modo, Func<string, bool> cabe, int renglones,
+            string codigo)
         {
             if (sesion.Cancelada)
             {
@@ -737,7 +755,11 @@ namespace DigBit
             {
                 TimeSpan falta = sesion.Inicio - hora;
                 yield return Tuple.Create("Empieza en " + Duracion(falta), Verde);
-                if (falta <= TimeSpan.FromMinutes(HorariosDatos.MargenAntesDelInicioMinutos))
+                if (codigo != null)
+                {
+                    yield return Tuple.Create(ConElCodigo(codigo, cabe), TextoPrincipal);
+                }
+                else if (falta <= TimeSpan.FromMinutes(HorariosDatos.MargenAntesDelInicioMinutos))
                 {
                     yield return modo == ModoCodigo.Renovable ? CodigoDeLaClase(sesion)
                         : Tuple.Create(modo == ModoCodigo.SinCodigo ? "Ya pueden registrar" : "Ya se acepta el código", TextoSecundario);
@@ -762,10 +784,44 @@ namespace DigBit
             if (enCurso)
             {
                 yield return Tuple.Create("Quedan " + Duracion(sesion.Fin - hora), Verde);
-                if (modo == ModoCodigo.Renovable)
+                if (codigo != null)
+                {
+                    yield return Tuple.Create(ConElCodigo(codigo, cabe), TextoPrincipal);
+                }
+                else if (modo == ModoCodigo.Renovable)
                 {
                     yield return CodigoDeLaClase(sesion);
                 }
+            }
+
+            if (sesion.Alumnos == 0 && sesion.AsistenciasDadas > 0)
+            {
+                // Nadie registro, pero su docente dio la asistencia a quien no pudo
+                // (db/22; quiza sin internet): la clase se dio, no es de revisar. En
+                // una linea si cabe; si no, en dos si hay sitio; si tampoco, una corta
+                // (la ayuda del raton lo dice entero). Antes van "Quedan..." y, con la
+                // generacion de codigos, el codigo.
+                string nadie = enCurso ? "Aún sin bitácoras" : "Nadie registró bitácora";
+                int n = sesion.AsistenciasDadas;
+                string dio = "su docente dio " + Asistencias(n);
+                string dadas = n == 1 ? " dada" : " dadas";
+                int libres = renglones - (enCurso ? (modo == ModoCodigo.Renovable || codigo != null ? 2 : 1) : 0);
+                if (cabe(nadie + "; " + dio))
+                {
+                    yield return Tuple.Create(nadie + "; " + dio, TextoSecundario);
+                }
+                else if (libres >= 2)
+                {
+                    yield return Tuple.Create(nadie, TextoSecundario);
+                    yield return Tuple.Create(cabe("Su docente dio " + Asistencias(n)) ? "Su docente dio " + Asistencias(n) : Asistencias(n) + dadas, TextoSecundario);
+                }
+                else
+                {
+                    yield return Tuple.Create(cabe("Sin bitácoras; " + Asistencias(n) + dadas) ? "Sin bitácoras; " + Asistencias(n) + dadas
+                        : "Sin bitácoras; " + n + dadas, TextoSecundario);
+                }
+
+                yield break;
             }
 
             if (sesion.Alumnos == 0)
@@ -805,6 +861,18 @@ namespace DigBit
                 : !sesion.Utilizable ? Tuple.Create("No se puede usar hoy", Naranja)
                 // Corto: en una tarjeta estrecha "Sin codigo: el profesor no la ha..." se cortaba.
                 : Tuple.Create("Su docente aún no la abre", Naranja);
+        }
+
+        /// <summary>"Código: 48213"; en una tarjeta en la que asi no cabe, solo el codigo (acortado, no se leeria).</summary>
+        private static string ConElCodigo(string codigo, Func<string, bool> cabe)
+        {
+            return cabe("Código: " + codigo) ? "Código: " + codigo : codigo;
+        }
+
+        /// <summary>"1 asistencia", "3 asistencias".</summary>
+        private static string Asistencias(int cuantas)
+        {
+            return cuantas == 1 ? "1 asistencia" : cuantas + " asistencias";
         }
 
         /// <summary>"25 min", "2 h", "1 h 10 min"; los minutos se redondean hacia arriba.</summary>
@@ -998,15 +1066,24 @@ namespace DigBit
         }
     }
 
-    /// <summary>Boton grande del panel del administrador: titulo y una linea de lo que hay dentro.</summary>
+    /// <summary>
+    /// Boton grande del panel del administrador: titulo y una linea de lo que hay
+    /// dentro. Con DescripcionCorta, la corta se pinta cuando la descripcion no
+    /// cabe en el alto que le queda (con seis tarjetas, a 1280 y en el minimo del panel).
+    /// </summary>
     internal class TarjetaOpcion : Control
     {
         private static readonly Color FondoEncima = Color.FromArgb(236, 246, 236);
+
+        // Las de la descripcion en OnPaint; con las mismas se mide si cabe.
+        private const TextFormatFlags BanderasDescripcion = TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak
+            | TextFormatFlags.EndEllipsis;
 
         private readonly DrawingFont fuenteTitulo = new DrawingFont("Century Gothic", 14F, FontStyle.Bold);
         private readonly DrawingFont fuenteDescripcion = new DrawingFont("Century Gothic", 9F);
         private bool encima;
         private string descripcion;
+        private string descripcionCorta;
 
         public TarjetaOpcion(string titulo, string descripcion)
         {
@@ -1038,6 +1115,29 @@ namespace DigBit
                 }
 
                 descripcion = value;
+                Invalidate();
+            }
+        }
+
+        /// <summary>
+        /// Opcional: la que se pinta si Descripcion pide mas renglones de los que
+        /// caben (DescripcionQueCabe). Sin ella, siempre la larga.
+        /// </summary>
+        public string DescripcionCorta
+        {
+            get
+            {
+                return descripcionCorta;
+            }
+
+            set
+            {
+                if (value == descripcionCorta)
+                {
+                    return;
+                }
+
+                descripcionCorta = value;
                 Invalidate();
             }
         }
@@ -1126,9 +1226,27 @@ namespace DigBit
                 TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
 
             int yDescripcion = texto.Top + altoTitulo + 4;
-            TextRenderer.DrawText(g, Descripcion, fuenteDescripcion,
-                new Rectangle(texto.Left, yDescripcion, texto.Width, texto.Bottom - yDescripcion), Color.FromArgb(80, 80, 80),
-                TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
+            Rectangle sitio = new Rectangle(texto.Left, yDescripcion, texto.Width, texto.Bottom - yDescripcion);
+            TextRenderer.DrawText(g, DescripcionQueCabe(g, sitio), fuenteDescripcion, sitio, Color.FromArgb(80, 80, 80), BanderasDescripcion);
+        }
+
+        /// <summary>
+        /// La descripcion si cabe entera en el sitio; si no y hay corta, la corta.
+        /// Un renglon cuenta como entero aunque pierda su ultima fila de pixeles,
+        /// que en Century Gothic 9 va vacia: en los 50 px que deja la fila de
+        /// tarjetas caben 3 de 17.
+        /// </summary>
+        private string DescripcionQueCabe(Graphics g, Rectangle sitio)
+        {
+            if (string.IsNullOrEmpty(descripcionCorta) || string.IsNullOrEmpty(descripcion) || sitio.Width <= 0)
+            {
+                return descripcion;
+            }
+
+            int renglon = TextRenderer.MeasureText(g, "Ág", fuenteDescripcion).Height;
+            int caben = Math.Max(1, (sitio.Height + 1) / Math.Max(1, renglon));
+            int pide = TextRenderer.MeasureText(g, descripcion, fuenteDescripcion, new Size(sitio.Width, int.MaxValue), BanderasDescripcion).Height;
+            return pide <= caben * renglon ? descripcion : descripcionCorta;
         }
     }
 }

@@ -379,7 +379,8 @@ VALUES ('TSTPROFC','Carla','Modos','Prueba','x',2,'TSTCC');
     $cVieja = [int](Uno "SELECT MAX(idclases) FROM clases WHERE codigo = 'TSTCB'")
     $null = Sql "INSERT INTO horario_excepciones (tipo, fecha, clases_idclases, laboratorios_idlaboratorios, hora_inicio, hora_fin, motivo, creada_en) VALUES ('extra', CURDATE(), $cVieja, $X, SUBTIME(CURTIME(), '00:05:00'), ADDTIME(CURTIME(), '00:40:00'), 'TST extra vieja', NOW())"
     $xVieja = [int](Uno "SELECT MAX(idhorario_excepciones) FROM horario_excepciones WHERE clases_idclases = $cVieja")
-    $dia = (M 'PanoramaDelDia').Invoke($hd, @($null))
+    # PanoramaDelDia(fecha, codigosParaDar): por reflexion van los dos (hoy y sin los codigos del panel).
+    $dia = (M 'PanoramaDelDia').Invoke($hd, @($null, $false))
     $enPanel = $dia.Agenda | Where-Object { $_.ExcepcionId -eq $xVieja } | Select-Object -First 1
     $p = (M 'PanoramaDeProfesor').Invoke($hd, @('TSTPROFB'))
     $enProfesor = @($p.Hoy | Where-Object { $_.ExcepcionId -eq $xVieja }).Count

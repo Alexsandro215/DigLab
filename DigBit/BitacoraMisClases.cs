@@ -38,6 +38,8 @@ namespace DigBit
         private readonly bool soloVer;
         // Laboratorios que no entran con el codigo fijo (db/11).
         private HashSet<int> sinCodigoFijo = new HashSet<int>();
+        // Laboratorios sin codigos (db/11): sin nada que pedir a la persona responsable.
+        private HashSet<int> sinCodigos = new HashSet<int>();
         // El horario se leyo bien antes de abrirse: al abrir, la ventana se ajusta
         // a el (solo entonces; despues manda el tamano que le de quien la usa).
         private bool leidoAlAbrir;
@@ -81,6 +83,8 @@ namespace DigBit
             // El circulo de cada clase la personaliza; lo que se guarde (aqui o en
             // otra ventana) se ve al momento. Antes de CargarHorario, que lo lee.
             personal = Datos_User.TipoUsuario == TiposUsuario.Profesor;
+            // Si los docentes no ven los codigos (lo ultimo que se supo; CargarHorario lo vuelve a leer).
+            cuadricula.SinCodigos = !Permisos.VeCodigosDeProfesor;
             if (personal)
             {
                 cuadricula.CirculoClic += id => PersonalizacionClases.Abrir(this, id);
@@ -260,7 +264,7 @@ namespace DigBit
             }
 
             int izquierda = selectorSemana.Left + selectorSemana.PreferredSize.Width + 14;
-            int derecha = cuadroCodigo.ConCodigo ? cuadroCodigo.Left - 12 : ClientSize.Width - 30;
+            int derecha = cuadroCodigo.ConContenido ? cuadroCodigo.Left - 12 : ClientSize.Width - 30;
             int alto = lblAyuda.Font.Height + 4;
             lblAyuda.Bounds = new System.Drawing.Rectangle(izquierda, selectorSemana.Top + (selectorSemana.PreferredSize.Height - alto) / 2,
                 Math.Max(40, derecha - izquierda), alto);
@@ -367,7 +371,13 @@ namespace DigBit
                 Dictionary<int, ModoCodigo> modos = datos.LeerModos();
                 sinCodigoFijo = modos == null ? new HashSet<int>()
                     : new HashSet<int>(modos.Where(m => m.Value != ModoCodigo.Fijo).Select(m => m.Key));
+                sinCodigos = modos == null ? new HashSet<int>()
+                    : new HashSet<int>(modos.Where(m => m.Value == ModoCodigo.SinCodigo).Select(m => m.Key));
                 cuadricula.LaboratoriosSinCodigoFijo = sinCodigoFijo;
+                // Quien no ve los codigos, con lo que LeerModos acaba de leer: el
+                // encargado de laboratorio y, si los docentes no ven los codigos
+                // (CodigosSoloResponsables), el profesor en su Mi horario.
+                cuadricula.SinCodigos = !Permisos.VeCodigosDeProfesor;
 
                 if (personal)
                 {
@@ -464,7 +474,12 @@ namespace DigBit
                 : (semana.Count > 0 ? semana : franjasDeClase.Values.SelectMany(l => l))
                     .Where(f => !sinCodigoFijo.Contains(f.LaboratorioId) && !string.IsNullOrEmpty(f.Codigo))
                     .Select(f => f.Codigo).Distinct().ToList();
-            cuadroCodigo.Mostrar(soloVer ? "Su código de clase" : "Tu código de clase", codigos.Count == 1 ? codigos[0] : null);
+            // Si los docentes no ven los codigos (CodigosSoloResponsables), en su
+            // lugar que lo pida, siempre que tenga clases en laboratorios con codigo.
+            bool pedirCodigo = !soloVer && Permisos.DocenteSinCodigos
+                && (semana.Count > 0 ? semana : franjasDeClase.Values.SelectMany(l => l)).Any(f => !sinCodigos.Contains(f.LaboratorioId));
+            cuadroCodigo.Mostrar(soloVer ? "Su código de clase" : "Tu código de clase", codigos.Count == 1 ? codigos[0] : null,
+                pedirCodigo ? CodigosSoloResponsables.PideElCodigo : null);
             // Grande, pero sin bajar de y = 104: la cuadricula empieza en 110.
             cuadroCodigo.Top = Math.Max(0, Math.Min(10, contenedorSemana.Top - 6 - cuadroCodigo.Height));
             lblSubtitulo.Text = subtituloBase + (codigos.Count <= 1 ? ""
@@ -741,7 +756,7 @@ namespace DigBit
         private int AnchoSinTaparse()
         {
             int abajo = leyenda.Right + 24 + (ClientSize.Width - btnActualizar.Left);
-            return cuadroCodigo.ConCodigo ? Math.Max(abajo, DerechaDeLosTextos() + 40 + cuadroCodigo.Width + 30) : abajo;
+            return cuadroCodigo.ConContenido ? Math.Max(abajo, DerechaDeLosTextos() + 40 + cuadroCodigo.Width + 30) : abajo;
         }
 
         // =====================================================================
@@ -832,20 +847,26 @@ namespace DigBit
     /// mayusculas y en la letra del panel del profesor, que no confunde la O con
     /// el 0 ni la I con el 1; deletreado al pasar el raton. A su derecha,
     /// "Escuchar el codigo" compacto (la bocina): lo lee en voz alta
-    /// (DictadoCodigo; nunca en el kiosco).
+    /// (DictadoCodigo; nunca en el kiosco). Si los docentes no ven los codigos
+    /// (CodigosSoloResponsables), en lugar del codigo un aviso: que lo pida a la
+    /// persona responsable del laboratorio.
     /// </summary>
     internal sealed class CuadroCodigo : Control
     {
         private const int Aire = 4;
         // Entre el codigo y la bocina.
         private const int AntesDeEscuchar = 14;
+        // El aviso en dos lineas: cabe en los 104 px que hay sobre la cuadricula.
+        private const int AnchoAviso = 250;
         private static readonly Color Fondo = Color.FromArgb(240, 248, 240);
         private readonly DrawingFont fuenteTitulo = new DrawingFont("Century Gothic", 9F, FontStyle.Bold);
         private readonly DrawingFont fuenteCodigo = new DrawingFont("Consolas", 36F, FontStyle.Bold);
+        private readonly DrawingFont fuenteAviso = new DrawingFont("Century Gothic", 10F, FontStyle.Bold);
         private readonly ToolTip ayuda = new ToolTip();
         private readonly BotonEscuchar btnEscuchar = new BotonEscuchar { Compacto = true, FondoDetras = Fondo, Visible = false };
         private string titulo = "";
         private string codigo = "";
+        private string aviso = "";
         private string textoAyuda;
 
         public CuadroCodigo()
@@ -862,17 +883,27 @@ namespace DigBit
             get { return codigo.Length > 0; }
         }
 
+        /// <summary>Si se ve: con codigo, o con el aviso en su lugar.</summary>
+        public bool ConContenido
+        {
+            get { return ConCodigo || aviso.Length > 0; }
+        }
+
         /// <summary>Con la bocina: con codigo y fuera del kiosco.</summary>
         private bool ConEscuchar
         {
             get { return ConCodigo && DictadoCodigo.Permitido; }
         }
 
-        /// <summary>Pone el codigo, en mayusculas (sin el, se oculta), y se ajusta a el sin despegarse del borde derecho.</summary>
-        public void Mostrar(string titulo, string codigo)
+        /// <summary>
+        /// Pone el codigo, en mayusculas (sin el, se oculta), y se ajusta a el sin
+        /// despegarse del borde derecho. Sin codigo y con aviso, el aviso en su lugar.
+        /// </summary>
+        public void Mostrar(string titulo, string codigo, string aviso = null)
         {
             this.titulo = titulo ?? "";
             this.codigo = TarjetaCodigo.Mayusculas(codigo);
+            this.aviso = this.codigo.Length == 0 ? (aviso ?? "") : "";
             int derecha = Right;
             Size medidaTitulo;
             Size medidaCodigo;
@@ -881,12 +912,13 @@ namespace DigBit
             using (Graphics g = Graphics.FromHwnd(IntPtr.Zero))
             {
                 medidaTitulo = TextRenderer.MeasureText(g, this.titulo, fuenteTitulo);
-                medidaCodigo = MedirCodigo(g);
+                medidaCodigo = this.aviso.Length > 0 ? MedirAviso(g) : MedirCodigo(g);
             }
 
-            Size = new Size(Math.Max(medidaTitulo.Width, AnchoGrupo(medidaCodigo.Width)) + 32, 6 + medidaTitulo.Height + 2 + medidaCodigo.Height + 6);
+            Size = new Size(Math.Max(medidaTitulo.Width, this.aviso.Length > 0 ? medidaCodigo.Width : AnchoGrupo(medidaCodigo.Width)) + 32,
+                6 + medidaTitulo.Height + 2 + medidaCodigo.Height + 6);
             Left = derecha - Width;
-            Visible = ConCodigo;
+            Visible = ConContenido;
             textoAyuda = ConCodigo ? TarjetaCodigo.Deletrear(this.codigo) : null;
             ayuda.SetToolTip(this, textoAyuda);
 
@@ -920,6 +952,13 @@ namespace DigBit
             }
         }
 
+        private const TextFormatFlags FormatoAviso = TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix;
+
+        private Size MedirAviso(Graphics g)
+        {
+            return TextRenderer.MeasureText(g, aviso, fuenteAviso, new Size(AnchoAviso, int.MaxValue), FormatoAviso);
+        }
+
         private Size MedirCodigo(Graphics g)
         {
             int ancho = 0;
@@ -949,6 +988,11 @@ namespace DigBit
             int altoTitulo = TextRenderer.MeasureText(g, titulo, fuenteTitulo).Height;
             TextRenderer.DrawText(g, titulo, fuenteTitulo, new Rectangle(0, 6, Width, altoTitulo), Color.DarkGreen,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+            if (aviso.Length > 0)
+            {
+                TextRenderer.DrawText(g, aviso, fuenteAviso, new Rectangle(16, 6 + altoTitulo + 2, Width - 32, Height - 6 - altoTitulo - 2), Color.DarkGreen, FormatoAviso);
+                return;
+            }
 
             // Letra por letra, con aire entre ellas, como en el panel; con la bocina a su derecha, los dos centrados.
             int x = (Width - AnchoGrupo(MedirCodigo(g).Width)) / 2;
@@ -966,6 +1010,7 @@ namespace DigBit
                 ayuda.Dispose();
                 fuenteTitulo.Dispose();
                 fuenteCodigo.Dispose();
+                fuenteAviso.Dispose();
             }
 
             base.Dispose(disposing);

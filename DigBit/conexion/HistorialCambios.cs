@@ -19,14 +19,19 @@ namespace DigBit.conexion
         public const string FormaDeEntrar = "forma_de_entrar";
         /// <summary>Una cuenta de estudiante o docente (por ahora, solo anonimizarla: derechos ARCO).</summary>
         public const string Cuenta = "cuenta";
+        /// <summary>
+        /// Un horario entero que se aplico (o cuya aplicacion se deshizo) desde
+        /// Horarios > Aplicacion: un solo renglon para todas sus clases, no uno por clase.
+        /// </summary>
+        public const string Horario = "horario";
 
         /// <summary>Todos, en el orden del filtro Tipo del historial.</summary>
-        public static readonly string[] Todos = { Franja, Clase, Cancelacion, Extra, Bitacora, Laboratorio, FormaDeEntrar, Cuenta };
+        public static readonly string[] Todos = { Franja, Clase, Cancelacion, Extra, Horario, Bitacora, Laboratorio, FormaDeEntrar, Cuenta };
 
-        /// <summary>Los que avisan como alerta "Cambio de horario": el horario de las clases.</summary>
+        /// <summary>Los que avisan como alerta "Cambio de horario": el horario de las clases (tambien uno entero que se aplico).</summary>
         public static bool EsDeHorario(string tipo)
         {
-            return tipo == Franja || tipo == Clase || tipo == Cancelacion || tipo == Extra;
+            return tipo == Franja || tipo == Clase || tipo == Cancelacion || tipo == Extra || tipo == Horario;
         }
 
         /// <summary>Para el filtro Tipo del historial: "Franjas", "Cancelaciones"...</summary>
@@ -42,6 +47,8 @@ namespace DigBit.conexion
                     return "Cancelaciones";
                 case Extra:
                     return "Sesiones extra";
+                case Horario:
+                    return "Horarios aplicados";
                 case Bitacora:
                     return "Bitácoras corregidas";
                 case Laboratorio:
@@ -70,6 +77,17 @@ namespace DigBit.conexion
         public const string Desactivar = "desactivar";
         /// <summary>Una cuenta dada de baja pierde sus datos personales; sus bitacoras quedan (derechos ARCO).</summary>
         public const string Anonimizar = "anonimizar";
+        /// <summary>Un horario entero queda aplicado: sus clases nuevas y el fin de las de antes (TipoDeCambio.Horario).</summary>
+        public const string Aplicar = "aplicar";
+        /// <summary>Se deshizo la aplicacion de un horario que todavia no empezaba.</summary>
+        public const string Deshacer = "deshacer";
+        /// <summary>
+        /// "No tomar en cuenta" (Faltas): las clases sin bitacoras de unas fechas
+        /// se cancelan en lote y dejan de contar. Un solo renglon (TipoDeCambio.Cancelacion).
+        /// </summary>
+        public const string NoContar = "no_contar";
+        /// <summary>"Volver a contar": se quitan las cancelaciones de un "No tomar en cuenta".</summary>
+        public const string VolverAContar = "volver_a_contar";
     }
 
     /// <summary>Un cambio por anotar (HistorialCambios.Anotar), en la misma transaccion que el cambio.</summary>
@@ -241,7 +259,8 @@ namespace DigBit.conexion
 
         /// <summary>
         /// Para las alertas: los cambios del horario de las clases (franjas,
-        /// clases, cancelaciones y sesiones extra) desde ese dia, sin los que hizo
+        /// clases, cancelaciones, sesiones extra y horarios enteros que se
+        /// aplicaron o se deshicieron) desde ese dia, sin los que hizo
         /// sinLosDe (quien tiene la sesion abierta). Sin db/21, ninguno.
         /// </summary>
         public static List<CambioRegistrado> DeHorario(MySqlConnection conexion, DateTime desde, string sinLosDe)
@@ -254,7 +273,7 @@ namespace DigBit.conexion
             bool sinLosSuyos = !string.IsNullOrWhiteSpace(sinLosDe);
             return LeerEn(conexion,
                 "hc.cuando >= @Desde AND hc.tipo IN ('" + TipoDeCambio.Franja + "', '" + TipoDeCambio.Clase + "', '"
-                + TipoDeCambio.Cancelacion + "', '" + TipoDeCambio.Extra + "')"
+                + TipoDeCambio.Cancelacion + "', '" + TipoDeCambio.Extra + "', '" + TipoDeCambio.Horario + "')"
                 + (sinLosSuyos ? " AND (hc.usuario IS NULL OR hc.usuario <> @Yo)" : ""), comando =>
                 {
                     comando.Parameters.AddWithValue("@Desde", desde.Date);
@@ -352,9 +371,23 @@ namespace DigBit.conexion
                     }
 
                 case TipoDeCambio.Cancelacion:
-                    return accion == AccionDeCambio.Quitar ? "Cancelación quitada" : accion == AccionDeCambio.Recorte ? "Clase recortada" : "Clase cancelada";
+                    switch (accion)
+                    {
+                        case AccionDeCambio.Quitar:
+                            return "Cancelación quitada";
+                        case AccionDeCambio.Recorte:
+                            return "Clase recortada";
+                        case AccionDeCambio.NoContar:
+                            return "Faltas sin tomar en cuenta";
+                        case AccionDeCambio.VolverAContar:
+                            return "Faltas que vuelven a contar";
+                        default:
+                            return "Clase cancelada";
+                    }
                 case TipoDeCambio.Extra:
                     return accion == AccionDeCambio.Quitar ? "Sesión extra quitada" : accion == AccionDeCambio.Cambio ? "Sesión extra recortada" : "Sesión extra nueva";
+                case TipoDeCambio.Horario:
+                    return accion == AccionDeCambio.Deshacer ? "Aplicación deshecha" : "Horario aplicado";
                 case TipoDeCambio.Bitacora:
                     return "Bitácora corregida";
                 case TipoDeCambio.Laboratorio:

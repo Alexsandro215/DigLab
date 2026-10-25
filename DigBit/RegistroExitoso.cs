@@ -37,19 +37,21 @@ namespace DigBit
         // codigo fijo seria el del profesor, que no debe salir en pantalla).
         private readonly string clase;
         private readonly bool enEsteEquipo;
+        private readonly bool usoLibre;
 
         private int segundosRestantes = SegundosParaVolver;
         private Opcion eleccion = Opcion.Login;
         private Timer temporizador;
         private Label lblCuentaAtras;
 
-        private RegistroExitoso(string alumno, string matricula, string laboratorio, string clase, bool enEsteEquipo)
+        private RegistroExitoso(string alumno, string matricula, string laboratorio, string clase, bool enEsteEquipo, bool usoLibre)
         {
             this.alumno = alumno;
             this.matricula = matricula;
             this.laboratorio = laboratorio;
             this.clase = clase;
             this.enEsteEquipo = enEsteEquipo;
+            this.usoLibre = usoLibre;
             InicializarComponentes();
         }
 
@@ -59,9 +61,10 @@ namespace DigBit
         /// </summary>
         /// <param name="enEsteEquipo">La bitacora quedo en la cola de este equipo (sin conexion): se envia sola si se deja encendido.</param>
         /// <param name="clase">"Materia, Grupo".</param>
-        public static Opcion Mostrar(string alumno, string matricula, string laboratorio, string clase, bool enEsteEquipo)
+        /// <param name="usoLibre">Uso libre del laboratorio (db/14): no hay docente a quien avisar.</param>
+        public static Opcion Mostrar(string alumno, string matricula, string laboratorio, string clase, bool enEsteEquipo, bool usoLibre)
         {
-            using (RegistroExitoso pantalla = new RegistroExitoso(alumno, matricula, laboratorio, clase, enEsteEquipo))
+            using (RegistroExitoso pantalla = new RegistroExitoso(alumno, matricula, laboratorio, clase, enEsteEquipo, usoLibre))
             {
                 pantalla.ShowDialog();
                 return pantalla.eleccion;
@@ -130,8 +133,13 @@ namespace DigBit
                 Location = new Point(60, 240),
                 Size = new Size(580, 60),
                 // Si la bitacora quedo en la cola, apagar es lo unico que puede
-                // perderla: se pide dejarlo encendido.
-                Text = enEsteEquipo
+                // perderla: se pide dejarlo encendido. Y, en una clase, su docente no
+                // la ve hasta que se envie: que le avise ya (la asistencia solo se la
+                // puede dar mientras dura la clase).
+                Text = enEsteEquipo && !usoLibre
+                    ? "Sin conexión con el servidor: tu bitácora quedó guardada en este equipo, pero tu docente aún no la ve: "
+                      + "avísale ahora para que te dé la asistencia. Si puedes, deja este equipo encendido en la pantalla de inicio para que la envíe."
+                    : enEsteEquipo
                     ? "Sin conexión con el servidor: tu bitácora quedó guardada en este equipo y se enviará sola. "
                       + "Si puedes, déjalo encendido en la pantalla de inicio para que la envíe."
                     : "Registraste tu asistencia con tu propia computadora, así que no necesitas "

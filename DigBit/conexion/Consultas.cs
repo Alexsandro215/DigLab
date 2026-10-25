@@ -150,6 +150,24 @@ namespace DigBit.conexion
         /// </summary>
         public bool ConfirmarContrasenaAdministrador(string numeroIdentificador, string contrasena)
         {
+            return ConfirmarContrasena(numeroIdentificador, contrasena, TiposUsuario.Administrador);
+        }
+
+        /// <summary>
+        /// Si esa es la contrasena de quien inicio sesion, con su cuenta activa y del
+        /// tipo esperado: el administrador (3) antes de un cambio delicado, o el
+        /// profesor (2) antes de cambiar una asistencia desde un equipo del
+        /// laboratorio (kiosco). Cualquier otro tipo esperado da false: el alumno y
+        /// el encargado de laboratorio (4) nunca confirman cambios. Solo comprueba:
+        /// no migra el hash ni muestra nada.
+        /// </summary>
+        public bool ConfirmarContrasena(string numeroIdentificador, string contrasena, int tipoEsperado)
+        {
+            if (tipoEsperado != TiposUsuario.Administrador && tipoEsperado != TiposUsuario.Profesor)
+            {
+                return false;
+            }
+
             using (MySqlConnection conexion = mconexion.GetConexion())
             {
                 string columnaActivo = Esquema.TieneBajas(conexion) ? "activo" : "1 AS activo";
@@ -168,8 +186,8 @@ namespace DigBit.conexion
                         string almacenada = lector["password"] == DBNull.Value ? null : lector["password"].ToString();
                         bool activo = Convert.ToInt32(lector["activo"]) == 1;
                         bool necesitaRehash;
-                        // Solo el administrador: el encargado de laboratorio (4) nunca confirma cambios.
-                        return tipo == TiposUsuario.Administrador && activo && almacenada != null
+                        // Solo el tipo esperado (2 o 3): el encargado de laboratorio (4) nunca confirma cambios.
+                        return tipo == tipoEsperado && activo && almacenada != null
                             && Contrasenas.Verificar(contrasena ?? "", almacenada, out necesitaRehash);
                     }
                 }

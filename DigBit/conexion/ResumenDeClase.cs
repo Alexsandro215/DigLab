@@ -7,18 +7,24 @@ namespace DigBit.conexion
     /// <summary>La lista de una clase tal como la cuenta su tarjeta del panel (ResumenDeClase.Leer).</summary>
     public sealed class ListaDeClase
     {
-        /// <summary>Alumnos de la lista: los de Mis grupos (quienes han registrado alguna vez en la clase).</summary>
+        /// <summary>Alumnos de la lista: los de Mis grupos (quienes han registrado alguna vez en la clase o recibido de su profesor la asistencia).</summary>
         public int Alumnos;
 
-        /// <summary>De ellos, los que hoy ya cuentan como presentes (registraron y no se les quito la asistencia).</summary>
+        /// <summary>
+        /// De ellos, los que hoy ya cuentan como presentes (registraron y no se les
+        /// quito la asistencia, o se la dio su profesor, db/22).
+        /// </summary>
         public int Hoy;
 
         /// <summary>
-        /// De ellos, los que registraron antes de hoy. Con cero, hoy es el primer
-        /// dia de la lista (se forma con quienes registran): todavia no dice
-        /// cuantos faltan.
+        /// De ellos, los que estaban en la lista antes de hoy (registraron o se les dio
+        /// la asistencia). Con cero, hoy es el primer dia de la lista (se forma con
+        /// quienes registran): todavia no dice cuantos faltan.
         /// </summary>
         public int AntesDeHoy;
+
+        /// <summary>De los de Hoy, a cuantos se la dio su profesor sin bitacora (db/22).</summary>
+        public int DadasHoy;
     }
 
     /// <summary>
@@ -40,8 +46,9 @@ namespace DigBit.conexion
         private static readonly TimeSpan Adelanto = TimeSpan.FromMinutes(1);
 
         // Lo que cambia sin una bitacora nueva (una asistencia que el profesor
-        // quita en Mis grupos, el grupo de un alumno) se ve a mas tardar en este
-        // tiempo; al cerrar Mis grupos, enseguida (Olvidar).
+        // quita o da en Mis grupos, el grupo de un alumno) se ve a mas tardar en
+        // este tiempo; al cerrar Mis grupos o al cambiar una asistencia, enseguida
+        // (Olvidar).
         private static readonly TimeSpan Vigencia = TimeSpan.FromMinutes(3);
 
         // La ultima cuenta de cada clase (por idclases). La lectura va en segundo plano: con candado.
@@ -105,7 +112,8 @@ namespace DigBit.conexion
                 {
                     Alumnos = asistencia.Alumnos.Count,
                     Hoy = asistencia.Alumnos.Count(a => a.Presente.Contains(hoy)),
-                    AntesDeHoy = asistencia.Alumnos.Count(a => a.BitacorasDelDia.Keys.Any(d => d < hoy))
+                    AntesDeHoy = asistencia.Alumnos.Count(a => a.DiasEnLista.Any(d => d < hoy)),
+                    DadasHoy = asistencia.Alumnos.Count(a => a.SinBitacora.Contains(hoy))
                 };
                 listas[clase.Key] = lista;
                 lock (cuentas)

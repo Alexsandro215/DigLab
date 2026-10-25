@@ -20,7 +20,9 @@ namespace DigBit
     /// cualquier parte del nombre: con muchos laboratorios iguales la lista queda
     /// corta (antes habia una fila por laboratorio). Uno suelto tambien se cambia
     /// desde Laboratorios (DialogoCodigosLaboratorio). La forma general se guarda
-    /// (ModosDeAcceso.LeerGeneral) y es la de los laboratorios nuevos.
+    /// (ModosDeAcceso.LeerGeneral) y es la de los laboratorios nuevos. Debajo de
+    /// las tres formas, con db/13, la casilla "Los docentes no ven los codigos"
+    /// (CodigosSoloResponsables), tambien para toda la escuela.
     ///
     /// Se abre desde el encabezado del panel del administrador, el enlace sobre
     /// "Los laboratorios ahora" y Ajustes. Solo lo puede guardar el usuario de
@@ -48,9 +50,14 @@ namespace DigBit
         private readonly Label lblNinguno;
         private readonly Button btnAgregar;
         private readonly Label lblError;
+        // "Los docentes no ven los codigos" (CodigosSoloResponsables); null sin db/13: no se ofrece.
+        private readonly CheckBox chkDocentes;
 
         /// <summary>El titulo de la ventana y de los sitios que la abren.</summary>
         public const string Titulo = "Códigos de las clases";
+
+        /// <summary>La casilla de toda la escuela, debajo de las tres formas (las pruebas la buscan por su texto).</summary>
+        public const string TextoDocentes = "Los docentes no ven los códigos: solo la administración y los responsables de laboratorio";
 
         /// <summary>Un laboratorio de la lista "con otra forma".</summary>
         private sealed class FilaOtraForma
@@ -94,6 +101,22 @@ namespace DigBit
             Controls.Add(pnlGeneral);
 
             int y = pnlGeneral.Bottom + 8;
+            if (datos.DocentesSinCodigos.HasValue)
+            {
+                // Para toda la escuela, debajo de las tres formas: quien ve los codigos.
+                // Se guarda con lo demas (Guardar), en configuracion (db/13).
+                chkDocentes = CasillaDocentes(new Point(24, pnlGeneral.Bottom - 2), Ancho - 48);
+                chkDocentes.Checked = datos.DocentesSinCodigos.Value;
+                chkDocentes.CheckedChanged += (s, e) => lblError.Text = "";
+                Controls.Add(chkDocentes);
+                Label lblDocentes = PiezasDeModos.Nota("Cada docente le pide el código de su clase a la persona responsable del laboratorio. "
+                    + "No aplica a «" + ModosDeAcceso.Nombre(ModoCodigo.SinCodigo) + "».", new Point(44, chkDocentes.Bottom + 1), Ancho - 68);
+                // Un clic en la explicacion tambien la marca o desmarca.
+                lblDocentes.Click += (s, e) => { if (chkDocentes.Enabled) chkDocentes.Checked = !chkDocentes.Checked; };
+                Controls.Add(lblDocentes);
+                y = lblDocentes.Bottom + 8;
+            }
+
             lblOtros = PiezasDeModos.Seccion("Laboratorios con otra forma", new Point(24, y));
             Controls.Add(lblOtros);
             btnAgregar = EstiloHorarios.CrearBoton("Agregar laboratorios...", new Point(Ancho - 24 - 210, y - 6), new Size(210, 34));
@@ -137,7 +160,21 @@ namespace DigBit
             // Tres lineas: un error de conexion o de la base dice la causa y que hacer.
             lblError = EstiloAdmin.LineaError(new Point(24, lblNota.Bottom + 4), Ancho - 48, 54);
             Controls.Add(lblError);
-            ClientSize = new Size(Ancho, lblError.Bottom + 8 + 56);
+            int alto = lblError.Bottom + 8 + 56;
+            // Que quepa en la pantalla: a 1366x768 la barra de tareas deja unos 720 de
+            // alto y, con la casilla de los docentes, la lista de abajo ensena una
+            // fila menos (las demas, con su barra).
+            int filas = FilasQueCaben(SizeFromClientSize(new Size(Ancho, alto)).Height, Screen.PrimaryScreen.WorkingArea.Height);
+            if (filas < FilasVisibles)
+            {
+                int menos = (FilasVisibles - filas) * AltoFila;
+                pnlFilas.Height -= menos;
+                lblNota.Top -= menos;
+                lblError.Top -= menos;
+                alto -= menos;
+            }
+
+            ClientSize = new Size(Ancho, alto);
             Button guardar = EstiloAdmin.BotonesDialogo(this, "Guardar", Guardar);
             Acomodar();
             if (!datos.ModosDisponibles)
@@ -151,6 +188,11 @@ namespace DigBit
 
                 btnAgregar.Enabled = false;
                 guardar.Enabled = false;
+                if (chkDocentes != null)
+                {
+                    chkDocentes.Enabled = false;
+                }
+
                 lblError.Text = "Para cambiarlo falta aplicar db/11_modo_de_acceso.sql en la base: hasta entonces todos los laboratorios van con «Código único».";
             }
             Shown += (s, e) =>
@@ -171,6 +213,42 @@ namespace DigBit
                 KeyValuePair<ModoCodigo, RadioButton> marcada = opciones.FirstOrDefault(o => o.Value.Checked);
                 return marcada.Value != null ? marcada.Key : generalAntes;
             }
+        }
+
+        /// <summary>
+        /// Las filas de "Laboratorios con otra forma" que se ensenan: FilasVisibles o,
+        /// si con ellas el dialogo (de altoDelDialogo) no cabe en el alto util de la
+        /// pantalla, las que hagan falta menos (nunca menos de dos).
+        /// </summary>
+        internal static int FilasQueCaben(int altoDelDialogo, int altoUtil)
+        {
+            int sobra = altoDelDialogo - altoUtil;
+            return sobra <= 0 ? FilasVisibles : Math.Max(2, FilasVisibles - (sobra + AltoFila - 1) / AltoFila);
+        }
+
+        /// <summary>
+        /// La casilla de los docentes, en una linea: en negritas como las formas de
+        /// arriba, en letra un poco menor si asi no cabe en ese ancho.
+        /// </summary>
+        private static CheckBox CasillaDocentes(Point posicion, int ancho)
+        {
+            CheckBox casilla = new CheckBox
+            {
+                AutoSize = true,
+                ForeColor = Color.DarkGreen,
+                Location = posicion,
+                Text = TextoDocentes
+            };
+            foreach (float tamano in new[] { 10F, 9.5F, 9F })
+            {
+                casilla.Font = new DrawingFont("Century Gothic", tamano, FontStyle.Bold);
+                if (casilla.GetPreferredSize(Size.Empty).Width <= ancho)
+                {
+                    break;
+                }
+            }
+
+            return casilla;
         }
 
         private void AgregarFila(LaboratorioInfo laboratorio, ModoCodigo modo)
@@ -325,15 +403,28 @@ namespace DigBit
                 }
             }
 
-            if (nuevos.Count == 0 && !generalCambia)
+            // Quien ve los codigos (la casilla de los docentes), si se ofrece y cambio.
+            bool docentesCambia = chkDocentes != null && chkDocentes.Checked != (datos.DocentesSinCodigos ?? false);
+            bool formasCambian = nuevos.Count > 0 || generalCambia;
+            if (!formasCambian && !docentesCambia)
             {
                 DialogResult = DialogResult.Cancel;
                 return;
             }
 
+            string detalle = formasCambian ? Detalle(general, generalCambia, nuevos) : "";
+            if (docentesCambia)
+            {
+                detalle += (detalle.Length > 0 ? " " : "") + (chkDocentes.Checked
+                    ? "Los docentes dejan de ver los códigos: solo los ven la administración y la persona responsable de cada laboratorio."
+                    : "Los docentes vuelven a ver los códigos de sus clases en DigBit.");
+            }
+
             // Con su contrasena otra vez: si dejo la sesion abierta y no esta, nadie mas lo cambia.
-            if (!DialogoContrasenaAdmin.Confirmar(this, "¿Cambiar cómo se entra a las clases?",
-                Detalle(general, generalCambia, nuevos) + " Vale en cuanto guardes; las clases que ya empezaron conservan su código hasta que terminen.",
+            if (!DialogoContrasenaAdmin.Confirmar(this, formasCambian ? "¿Cambiar cómo se entra a las clases?" : "¿Cambiar quién ve los códigos de las clases?",
+                detalle + (formasCambian
+                    ? " Vale en cuanto guardes; las clases que ya empezaron conservan su código hasta que terminen."
+                    : " Vale en cuanto guardes; el panel de cada docente se pone al día en menos de un minuto."),
                 "Cambiar"))
             {
                 return;
@@ -344,7 +435,7 @@ namespace DigBit
             {
                 // Tambien la forma general, aunque no cambie: guardada, la lista de
                 // abajo no se voltea cuando sus laboratorios llegan a ser mas.
-                datos.CambiarModos(general, nuevos);
+                datos.CambiarModos(general, nuevos, docentesCambia ? chkDocentes.Checked : (bool?)null);
                 DialogResult = DialogResult.OK;
             }
             catch (ErrorDeDatos ex)

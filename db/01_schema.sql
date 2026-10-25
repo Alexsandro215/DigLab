@@ -445,32 +445,93 @@ CREATE TABLE asistencias_retiradas (
         ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
--- Horario preliminar del proximo ciclo (db/16): un BORRADOR que solo ve el
--- administrador (Horarios > Proximo ciclo). Empieza como copia de la carga de
--- cada profesor y al publicarse crea clases y franjas normales con la vigencia
--- del ciclo nuevo. digbit_equipo no tiene permiso sobre estas tablas (db/07).
+-- Asistencias que da el profesor durante su clase a quien vino pero no pudo
+-- registrar su bitacora (db/22): su equipo no tenia internet, no funcionaba o
+-- no habia uno libre. Cuenta como asistencia de ese dia, pero no es bitacora.
+-- Una fila por asistencia dada, con quien, cuando, por que y desde donde.
+-- Documento oficial: anularla no la borra (activa = NULL) y sus claves son
+-- RESTRICT. digbit_equipo la lee, inserta y solo puede cambiar activa,
+-- anulada_en y anulada_por (db/07); digbit_consulta solo la lee (db/18).
+CREATE TABLE asistencias_dadas (
+    idasistencias_dadas  INT           NOT NULL AUTO_INCREMENT,
+    -- La clase (profesor + materia + grupo): la lista se lee por clase y dia.
+    fk_clase             INT           NOT NULL,
+    -- El dia (CURDATE() del servidor al darla).
+    fecha                DATE          NOT NULL,
+    fk_alumno            INT           NOT NULL,
+    -- La sesion del bloque en curso.
+    fk_codigo_accesos    INT           NOT NULL,
+    fk_profesor          INT           NOT NULL,
+    -- Reloj del servidor; sin DEFAULT (MariaDB 5.5 no lo admite).
+    dada_en              DATETIME      NOT NULL,
+    -- sin_internet | equipo | sin_equipo | otro.
+    motivo               VARCHAR(20)   NOT NULL,
+    numero_computadora   VARCHAR(100)  NULL,
+    comentario           VARCHAR(200)  NULL,
+    dada_desde           VARCHAR(120)  NULL,
+    -- 1 cuenta; NULL anulada (nunca 0): una sola que cuenta por clase, dia y alumno.
+    activa               TINYINT(1)    NULL DEFAULT 1,
+    anulada_en           DATETIME      NULL,
+    anulada_por          INT           NULL,
+    PRIMARY KEY (idasistencias_dadas),
+    UNIQUE KEY uq_asistencias_dadas_dia (fk_clase, fecha, fk_alumno, activa),
+    KEY ix_asistencias_dadas_fecha (fecha),
+    KEY ix_asistencias_dadas_sesion (fk_codigo_accesos),
+    KEY ix_asistencias_dadas_alumno (fk_alumno, fecha),
+    KEY ix_asistencias_dadas_profesor (fk_profesor, fecha),
+    KEY ix_asistencias_dadas_anulada_por (anulada_por),
+    CONSTRAINT fk_asistencias_dadas_clase FOREIGN KEY (fk_clase)
+        REFERENCES clases (idclases) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_asistencias_dadas_sesion FOREIGN KEY (fk_codigo_accesos)
+        REFERENCES codigos_accesos (idcodigos_accesos) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_asistencias_dadas_alumno FOREIGN KEY (fk_alumno)
+        REFERENCES usuarios (idusuarios) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_asistencias_dadas_profesor FOREIGN KEY (fk_profesor)
+        REFERENCES usuarios (idusuarios) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_asistencias_dadas_anulada_por FOREIGN KEY (anulada_por)
+        REFERENCES usuarios (idusuarios) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Configuraciones de horario (db/16 y db/23): copias con nombre del horario
+-- (cada docente con sus clases y sus horas en cada laboratorio) que solo usa
+-- el DigBit de la administracion (Horarios > Configuraciones y Aplicacion).
+-- Una en preparacion ('borrador', como mucho una), las guardadas ('guardado')
+-- y las aplicadas ('publicado'), que quedan como registro. Al aplicarse una,
+-- DigBit crea clases y franjas normales con su vigencia. digbit_equipo no
+-- tiene permiso sobre estas tablas (db/07); digbit_consulta solo las lee (db/18).
 CREATE TABLE ciclos_preliminares (
     idciclo        INT          NOT NULL AUTO_INCREMENT,
     nombre         VARCHAR(60)  NOT NULL,
-    -- Primer y ultimo dia de clases: la vigencia de sus clases al publicar.
-    desde          DATE         NOT NULL,
-    hasta          DATE         NOT NULL,
-    -- El dia cuyas clases se copiaron; NULL si se empezo en blanco.
+    -- Primer y ultimo dia de clases: la vigencia de sus clases al aplicarla.
+    -- NULL en una guardada, y en la que se prepara hasta ponerlas en Aplicacion.
+    desde          DATE         NULL,
+    hasta          DATE         NULL,
+    -- El dia cuyas clases se copiaron; NULL si se empezo en blanco o de otra.
     copiado_del    DATE         NULL,
-    estado         ENUM('borrador','publicado') NOT NULL DEFAULT 'borrador',
+    -- De que configuracion viene (o en cual se guardo por ultima vez). Sin
+    -- clave foranea a si misma: si esa se borra, queda el numero.
+    origen_ciclo   INT          NULL,
+    estado         ENUM('borrador','publicado','guardado') NOT NULL DEFAULT 'borrador',
     creado_por     INT          NULL,
     creado_en      DATETIME     NOT NULL,
-    -- Al publicar: el ultimo dia que se dio a las clases de antes.
+    -- El ultimo cambio (lo pone DigBit con NOW()).
+    cambiado_en    DATETIME     NULL,
+    cambiado_por   INT          NULL,
+    -- Al aplicarla: el ultimo dia que se dio a las clases de antes.
     fin_anterior   DATE         NULL,
     publicado_por  INT          NULL,
     publicado_en   DATETIME     NULL,
     PRIMARY KEY (idciclo),
     KEY ix_ciclos_preliminares_estado (estado),
+    KEY ix_ciclos_preliminares_origen (origen_ciclo),
     CONSTRAINT fk_ciclos_preliminares_creador
         FOREIGN KEY (creado_por) REFERENCES usuarios (idusuarios)
         ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT fk_ciclos_preliminares_publicador
         FOREIGN KEY (publicado_por) REFERENCES usuarios (idusuarios)
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_ciclos_preliminares_cambio
+        FOREIGN KEY (cambiado_por) REFERENCES usuarios (idusuarios)
         ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
@@ -504,6 +565,8 @@ CREATE TABLE ciclo_cargas (
     -- 'lab:dia:HH:MM-HH:MM;...' ordenado por dia, inicio y laboratorio.
     horario_origen   VARCHAR(1000) NULL,
     clase_publicada  INT           NULL,
+    -- La clase de la configuracion de la que se copio (db/23). Sin clave foranea.
+    carga_origen     INT           NULL,
     PRIMARY KEY (idcarga),
     KEY ix_ciclo_cargas_ciclo (idciclo, profesor),
     KEY ix_ciclo_cargas_profesor (profesor),
@@ -511,6 +574,7 @@ CREATE TABLE ciclo_cargas (
     KEY ix_ciclo_cargas_materia (materia),
     KEY ix_ciclo_cargas_origen (clase_origen),
     KEY ix_ciclo_cargas_publicada (clase_publicada),
+    KEY ix_ciclo_cargas_carga_origen (carga_origen),
     CONSTRAINT fk_ciclo_cargas_ciclo
         FOREIGN KEY (idciclo) REFERENCES ciclos_preliminares (idciclo)
         ON DELETE CASCADE ON UPDATE CASCADE,

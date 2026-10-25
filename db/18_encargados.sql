@@ -100,10 +100,11 @@ SET @sql := IF(NOT @hacer, @nada,
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 
 -- Solo leer lo que ensena el panel del administrador, tabla por tabla, y solo
--- las que existen (reportes_profesor, asistencias_retiradas e historial_cambios
--- llegan con db/15, db/17 y db/21). Nunca: recuperacion_contrasena ni
+-- las que existen (reportes_profesor, asistencias_retiradas, historial_cambios
+-- y asistencias_dadas llegan con db/15, db/17, db/21 y db/22, y las de las
+-- configuraciones de horario con db/16). Nunca: recuperacion_contrasena ni
 -- tipo_usuarios.
-SET @tablas := 'carreras,grupos,semestres,materias,laboratorios,clases,horarios,horario_excepciones,codigos_accesos,registros_bitacoras,usuarios,carrera_grupo_semestre,configuracion,reportes_profesor,asistencias_retiradas,historial_cambios';
+SET @tablas := 'carreras,grupos,semestres,materias,laboratorios,clases,horarios,horario_excepciones,codigos_accesos,registros_bitacoras,usuarios,carrera_grupo_semestre,configuracion,reportes_profesor,asistencias_retiradas,historial_cambios,asistencias_dadas,ciclos_preliminares,ciclo_profesores,ciclo_cargas,ciclo_franjas,ciclo_recortes';
 SET @i := 0;
 SET @sql := IF(@hacer AND FIND_IN_SET('carreras', @tablas) > 0 AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'carreras') > 0,
     CONCAT('GRANT SELECT ON teschi_otru.carreras TO ', @usuario), @nada);
@@ -153,6 +154,28 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- El historial de cambios (db/21): las alertas de cambios de horario y su ventana.
 SET @sql := IF(@hacer AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'historial_cambios') > 0,
     CONCAT('GRANT SELECT ON teschi_otru.historial_cambios TO ', @usuario), @nada);
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+-- Las asistencias que da el profesor sin bitacora (db/22): Faltas, el historial
+-- del alumno y Estadisticas.
+SET @sql := IF(@hacer AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asistencias_dadas') > 0,
+    CONCAT('GRANT SELECT ON teschi_otru.asistencias_dadas TO ', @usuario), @nada);
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+-- Las configuraciones de horario (db/16 y db/23): la persona responsable ve las
+-- guardadas y las aplicadas en Horarios > Configuraciones y Aplicacion.
+SET @sql := IF(@hacer AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ciclos_preliminares') > 0,
+    CONCAT('GRANT SELECT ON teschi_otru.ciclos_preliminares TO ', @usuario), @nada);
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+SET @sql := IF(@hacer AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ciclo_profesores') > 0,
+    CONCAT('GRANT SELECT ON teschi_otru.ciclo_profesores TO ', @usuario), @nada);
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+SET @sql := IF(@hacer AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ciclo_cargas') > 0,
+    CONCAT('GRANT SELECT ON teschi_otru.ciclo_cargas TO ', @usuario), @nada);
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+SET @sql := IF(@hacer AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ciclo_franjas') > 0,
+    CONCAT('GRANT SELECT ON teschi_otru.ciclo_franjas TO ', @usuario), @nada);
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+SET @sql := IF(@hacer AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ciclo_recortes') > 0,
+    CONCAT('GRANT SELECT ON teschi_otru.ciclo_recortes TO ', @usuario), @nada);
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 SET @sql := IF(@hacer, 'FLUSH PRIVILEGES', @nada);
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;

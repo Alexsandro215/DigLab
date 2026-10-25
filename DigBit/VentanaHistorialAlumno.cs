@@ -25,6 +25,10 @@ namespace DigBit
     /// Solo lee: el encargado de laboratorio (solo consulta) la ve igual, pero
     /// exportar es del administrador; y en kiosco no se abre ningun dialogo de
     /// archivos de Windows (dejaria recorrer el disco del equipo).
+    ///
+    /// Con db/22, tambien una fila por cada asistencia que le dio su profesor sin
+    /// bitacora (las anuladas, en gris como las quitadas): no son bitacoras, asi
+    /// que no cuentan en el resumen de bitacoras ni en el de fallas.
     /// </summary>
     public class VentanaHistorialAlumno : PantallaAdmin
     {
@@ -33,9 +37,14 @@ namespace DigBit
         private static readonly Color ColorConFalla = Color.FromArgb(255, 240, 214);
         private static readonly Color ColorFallaCelda = Color.FromArgb(255, 176, 79);
         private static readonly Color ColorAviso = Color.FromArgb(190, 85, 0);
+        // La asistencia que le dio su profesor, en el verde de su casilla en Mis grupos
+        // (el estilo "Bueno" de Excel).
+        private static readonly Color DadaFondo = Color.FromArgb(198, 239, 206);
+        private static readonly Color DadaTexto = Color.FromArgb(0, 97, 0);
         private const string SinNovedad = "Sin novedad";
 
         private readonly AlumnosDatos datos = new AlumnosDatos();
+        private readonly Consultas consultas = new Consultas();
         private readonly AlumnoInfo alumno;
         private readonly TextBox txtBuscar;
         private readonly Button btnVer;
@@ -48,12 +57,22 @@ namespace DigBit
         private bool leida;
         // La ultima lectura buena, tal cual: es lo que se exporta (DerechosArco).
         private DataTable tablaLeida;
+        // Las asistencias que le dio su profesor sin bitacora en esa misma lectura (db/22;
+        // vacia sin ella), tambien las anuladas: tambien se exportan.
+        private List<AsistenciaDada> dadasLeidas;
 
-        /// <summary>Una bitacora del alumno (una fila de AlumnosDatos.Bitacoras), ya interpretada.</summary>
+        /// <summary>
+        /// Una bitacora del alumno (una fila de AlumnosDatos.Bitacoras), ya
+        /// interpretada, o una asistencia que le dio su profesor sin bitacora (Dada).
+        /// </summary>
         private sealed class Registro
         {
-            /// <summary>La fila, para Consultas.DescribirFallas y compania, y para exportar lo que reporto tal cual.</summary>
+            /// <summary>La fila, para Consultas.DescribirFallas y compania, y para exportar lo que reporto tal cual. Null en una asistencia dada.</summary>
             public DataRow Fila;
+            /// <summary>La asistencia que le dio su profesor sin bitacora (db/22), o null si es una bitacora.</summary>
+            public AsistenciaDada Dada;
+            /// <summary>Ya se leyo de que franja o sesion extra es la sesion de la asistencia dada (Ver la sesion).</summary>
+            public bool SesionLeida;
             public int Id;
             public int SesionId;
             public DateTime? Fecha;
@@ -105,6 +124,18 @@ namespace DigBit
             public bool DeUnaClase
             {
                 get { return (FranjaId.HasValue && Fecha.HasValue) || ExcepcionId.HasValue; }
+            }
+
+            /// <summary>La de la lista: el id de la bitacora, o "d" y el de la asistencia dada (son tablas distintas).</summary>
+            public string Clave
+            {
+                get { return Dada == null ? Id.ToString(CultureInfo.InvariantCulture) : "d" + Id.ToString(CultureInfo.InvariantCulture); }
+            }
+
+            /// <summary>En gris: la asistencia que le quito su profesor, o la que le dio y anulo.</summary>
+            public bool Apagada
+            {
+                get { return RetiradaEn.HasValue || (Dada != null && !Dada.Activa); }
             }
         }
 
@@ -183,9 +214,14 @@ namespace DigBit
         protected override void Recargar(string seleccionar)
         {
             DataTable tabla;
+            List<AsistenciaDada> dadas;
             try
             {
                 tabla = datos.Bitacoras(alumno.Id);
+                // Las asistencias que le dio su docente sin bitacora (db/22), tambien las
+                // anuladas; vacia sin la 22. Si fallan, la lectura entera: sin ellas, su
+                // historial (y lo que se exporta) saldria incompleto.
+                dadas = AsistenciasDadas.DelEstudiante(alumno.Id);
             }
             catch (Exception ex)
             {
@@ -197,10 +233,76 @@ namespace DigBit
                 return;
             }
 
-            registros = tabla.Rows.Cast<DataRow>().Select(Leer).ToList();
+            registros = Mezclar(tabla.Rows.Cast<DataRow>().Select(Leer).ToList(), dadas);
             tablaLeida = tabla;
+            dadasLeidas = dadas;
             leida = true;
             Aplicar(seleccionar);
+        }
+
+        /// <summary>
+        /// Las bitacoras y las asistencias dadas en una sola lista, de la mas reciente
+        /// a la mas antigua. Sin dadas, las bitacoras tal como vienen (como antes). El
+        /// orden es estable: en una misma sesion, primero sus bitacoras.
+        /// </summary>
+        private static List<Registro> Mezclar(List<Registro> bitacoras, List<AsistenciaDada> dadas)
+        {
+            if (dadas.Count == 0)
+            {
+                return bitacoras;
+            }
+
+            return bitacoras.Concat(dadas.Select(LeerDada))
+                .OrderByDescending(r => r.Fecha ?? DateTime.MinValue)
+                .ThenByDescending(r => r.Entrada ?? TimeSpan.MinValue)
+                .ToList();
+        }
+
+        /// <summary>
+        /// Una asistencia que le dio su profesor sin bitacora: la fecha, las horas, el
+        /// laboratorio, la clase y el profesor de su sesion; el equipo que no le
+        /// sirvio y la hora en que se la dio.
+        /// </summary>
+        private static Registro LeerDada(AsistenciaDada dada)
+        {
+            Registro registro = new Registro
+            {
+                Dada = dada,
+                Id = dada.Id,
+                SesionId = dada.SesionId,
+                Fecha = dada.Fecha,
+                Entrada = dada.Inicio,
+                Salida = dada.Fin,
+                Laboratorio = dada.Laboratorio ?? "",
+                Materia = dada.Materia ?? "",
+                Grupo = dada.Grupo ?? "",
+                Profesor = dada.Docente ?? "",
+                Equipo = (dada.Equipo ?? "").Trim(),
+                // La columna Hora: cuando se la dio.
+                RegistradoEn = dada.DadaEn,
+                Reporte = DescribirDada(dada)
+            };
+            registro.TextoBusqueda = EstiloAdmin.Normalizar(string.Join(" ", registro.FechaCorta,
+                registro.Fecha.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                registro.Clase, registro.Laboratorio, registro.Profesor, registro.Equipo, registro.Reporte, "asistencia dada"));
+            return registro;
+        }
+
+        /// <summary>
+        /// "Sin bitacora: su docente le dio la asistencia (su equipo no tenia internet)"
+        /// (con sus acentos); la anulada, "Su docente le dio la asistencia (...) y la
+        /// anulo el 13/10/2026 10:50". Lo que escribio el profesor, al final (con
+        /// "otro" ya es el motivo).
+        /// </summary>
+        private static string DescribirDada(AsistenciaDada dada)
+        {
+            string porque = AsistenciasDadas.EnFrase(dada);
+            string detalle = dada.Motivo == AsistenciasDadas.Otro ? "" : (dada.Comentario ?? "").Trim();
+            string texto = dada.Activa
+                ? "Sin bitácora: su docente le dio la asistencia (" + porque + ")"
+                : "Su docente le dio la asistencia (" + porque + ") y la anuló"
+                  + (dada.AnuladaEn.HasValue ? " el " + dada.AnuladaEn.Value.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture) : "");
+            return texto + (detalle.Length > 0 ? ". Detalle: " + detalle : "");
         }
 
         protected override void AlBuscar()
@@ -265,7 +367,7 @@ namespace DigBit
             return partes.Count == 0 ? SinNovedad : string.Join(" | ", partes);
         }
 
-        /// <summary>Filtra en memoria y vuelve a pintar la lista; las asistencias quitadas, en gris.</summary>
+        /// <summary>Filtra en memoria y vuelve a pintar la lista; las asistencias quitadas (y las dadas que se anularon), en gris.</summary>
         private void Aplicar(string seleccionar)
         {
             visibles = registros.Where(r => EstiloAdmin.Coincide(r.TextoBusqueda, txtBuscar.Text)).ToList();
@@ -281,7 +383,7 @@ namespace DigBit
                     r.Hora,
                     r.Reporte
                 },
-                r => r.RetiradaEn.HasValue, r => r.Id.ToString(CultureInfo.InvariantCulture), seleccionar);
+                r => r.Apagada, r => r.Clave, seleccionar);
             // Siempre hay una elegida (la mas reciente, si no), como en Bitacoras: "Ver la sesion" a la primera.
             if (grid.SelectedRows.Count == 0 && grid.Rows.Count > 0)
             {
@@ -291,9 +393,14 @@ namespace DigBit
 
             grid.Invalidate();
 
-            int conFallas = registros.Count(r => r.ConFalla);
-            int retiradas = registros.Count(r => r.RetiradaEn.HasValue);
-            List<DateTime> fechas = registros.Where(r => r.Fecha.HasValue).Select(r => r.Fecha.Value.Date).ToList();
+            // Las cuentas son de bitacoras: las asistencias dadas van aparte (no son bitacoras)
+            // y solo las que cuentan (las anuladas se ven en gris en la lista).
+            List<Registro> bitacoras = registros.Where(r => r.Dada == null).ToList();
+            int bitacorasVisibles = visibles.Count(r => r.Dada == null);
+            int conFallas = bitacoras.Count(r => r.ConFalla);
+            int retiradas = bitacoras.Count(r => r.RetiradaEn.HasValue);
+            int dadas = registros.Count(r => r.Dada != null && r.Dada.Activa);
+            List<DateTime> fechas = bitacoras.Where(r => r.Fecha.HasValue).Select(r => r.Fecha.Value.Date).ToList();
             // En naranja si la ultima lectura fallo: no es un resumen, es un aviso.
             lblResumen.ForeColor = leida ? Color.DarkGreen : ColorAviso;
             if (!leida)
@@ -307,18 +414,36 @@ namespace DigBit
             }
             else if (visibles.Count == 0)
             {
-                lblResumen.Text = "Ninguna bitácora coincide con la búsqueda.";
+                lblResumen.Text = SinCoincidencias;
+            }
+            else if (bitacoras.Count == 0)
+            {
+                lblResumen.Text = "Todavía no ha registrado ninguna bitácora"
+                    + (dadas > 0 ? "; su docente le dio " + Plural(dadas, "asistencia", "asistencias") + " sin bitácora" : "") + ".";
             }
             else
             {
                 string periodo = fechas.Count == 0 ? ""
                     : fechas.Min() == fechas.Max() ? ", el " + EstiloAdmin.Fecha(fechas.Min())
                     : ", del " + EstiloAdmin.Fecha(fechas.Min()) + " al " + EstiloAdmin.Fecha(fechas.Max());
-                lblResumen.Text = (visibles.Count == registros.Count ? "" : visibles.Count + " de ")
-                    + Plural(registros.Count, "bitácora", "bitácoras") + periodo
+                // Con quitadas y dadas a la vez, en una sola frase mas corta: a 1366 la linea
+                // deja unos 744 px y las dos por separado pedirian unos 860.
+                lblResumen.Text = (bitacorasVisibles == bitacoras.Count ? "" : bitacorasVisibles + " de ")
+                    + Plural(bitacoras.Count, "bitácora", "bitácoras") + periodo
                     + (conFallas > 0 ? "; " + conFallas + " con fallas" : "")
-                    + (retiradas > 0 ? "; " + Plural(retiradas, "asistencia quitada", "asistencias quitadas") : "") + ".";
+                    + (retiradas > 0 && dadas > 0
+                        ? "; " + Plural(retiradas, "asistencia quitada", "asistencias quitadas") + " y " + Plural(dadas, "dada", "dadas") + " por su docente"
+                        : retiradas > 0 ? "; " + Plural(retiradas, "asistencia quitada", "asistencias quitadas")
+                        : dadas > 0 ? "; " + Plural(dadas, "asistencia que le dio su docente sin bitácora", "asistencias que le dio su docente sin bitácora")
+                        : "")
+                    + ".";
             }
+        }
+
+        /// <summary>La busqueda no deja nada: "ninguna bitacora" si solo tiene bitacoras (como antes).</summary>
+        private string SinCoincidencias
+        {
+            get { return registros.Any(r => r.Dada != null) ? "Nada coincide con la búsqueda." : "Ninguna bitácora coincide con la búsqueda."; }
         }
 
         protected override void ActualizarBotones()
@@ -372,7 +497,7 @@ namespace DigBit
 
             string texto = registros.Count == 0
                 ? (leida ? "Todavía no ha registrado ninguna bitácora." : "No se pudieron leer sus bitácoras. F5 lo vuelve a intentar.")
-                : "Ninguna bitácora coincide con la búsqueda.";
+                : SinCoincidencias;
             Rectangle area = new Rectangle(0, grid.ColumnHeadersHeight, grid.ClientSize.Width, grid.ClientSize.Height - grid.ColumnHeadersHeight);
             TextRenderer.DrawText(e.Graphics, texto, grid.Font, area, Color.Gray,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak);
@@ -397,6 +522,21 @@ namespace DigBit
             }
 
             string columna = grid.Columns[e.ColumnIndex].Name;
+            if (registro.Dada != null)
+            {
+                // La que cuenta, con el verde de su casilla en Mis grupos, tambien elegida; la
+                // anulada se queda toda en gris (LlenarLista).
+                if (registro.Dada.Activa && columna == "reporte")
+                {
+                    e.CellStyle.BackColor = DadaFondo;
+                    e.CellStyle.ForeColor = DadaTexto;
+                    e.CellStyle.SelectionBackColor = DadaFondo;
+                    e.CellStyle.SelectionForeColor = DadaTexto;
+                }
+
+                return;
+            }
+
             if (registro.ConFalla)
             {
                 if (columna == "reporte")
@@ -431,6 +571,7 @@ namespace DigBit
         /// (franja o sesion extra), en BitacoraSesion, como desde Alertas y Faltas;
         /// la que no lo es (uso libre, o del sistema anterior, sin enlace a una
         /// clase), BitacoraSesion no la encuentra: en Bitacoras, en su dia y elegida.
+        /// La de una asistencia dada es la sesion en que se dio.
         /// </summary>
         private void VerSesion()
         {
@@ -442,6 +583,20 @@ namespace DigBit
 
             try
             {
+                if (registro.Dada != null && !registro.SesionLeida)
+                {
+                    // La asistencia dada no trae de que franja o sesion extra es su sesion:
+                    // se lee una vez, al abrirla.
+                    VentanaCodigo sesion = consultas.ObtenerVentanaSesion(registro.SesionId);
+                    if (sesion != null)
+                    {
+                        registro.FranjaId = sesion.FranjaId;
+                        registro.ExcepcionId = sesion.ExcepcionId;
+                    }
+
+                    registro.SesionLeida = true;
+                }
+
                 if (registro.DeUnaClase)
                 {
                     bool extra = !registro.FranjaId.HasValue;
@@ -485,7 +640,7 @@ namespace DigBit
         /// </summary>
         private void Exportar()
         {
-            string ruta = DerechosArco.ExportarEstudiante(this, alumno, leida ? tablaLeida : null);
+            string ruta = DerechosArco.ExportarEstudiante(this, alumno, leida ? tablaLeida : null, leida ? dadasLeidas : null);
             if (ruta != null)
             {
                 Avisar("Se exportaron sus datos.");
@@ -583,11 +738,13 @@ namespace DigBit
         // =====================================================================
 
         /// <summary>
-        /// Su perfil y todas sus bitacoras en un CSV, donde elija el administrador.
-        /// Sin bitacoras ya leidas (null), las lee. La ruta del archivo, o null si
-        /// no se guardo (cancelo, kiosco, error ya explicado).
+        /// Su perfil, todas sus bitacoras y, con db/22, todas las asistencias que le
+        /// dio su profesor sin bitacora (tambien las anuladas: es su derecho de
+        /// acceso) en un CSV, donde elija el administrador. Lo que no llegue ya leido
+        /// (null), lo lee. La ruta del archivo, o null si no se guardo (cancelo,
+        /// kiosco, error ya explicado).
         /// </summary>
-        public static string ExportarEstudiante(IWin32Window dueno, AlumnoInfo alumno, DataTable bitacoras)
+        public static string ExportarEstudiante(IWin32Window dueno, AlumnoInfo alumno, DataTable bitacoras, List<AsistenciaDada> dadas = null)
         {
             if (!SePuedeExportar(dueno, alumno, "Exportar los datos de un alumno"))
             {
@@ -608,8 +765,23 @@ namespace DigBit
                 }
             }
 
+            if (dadas == null)
+            {
+                try
+                {
+                    // Vacia sin db/22: el archivo sale como siempre.
+                    dadas = AsistenciasDadas.DelEstudiante(alumno.Id);
+                }
+                catch (Exception ex)
+                {
+                    AvisoDeFalloAdmin.Mostrar(dueno, "Leer las asistencias dadas del alumno " + alumno.Matricula + " para exportarlas", ex,
+                        "No se pudieron leer las asistencias que le dio su docente, así que no se exportó nada", Titulo);
+                    return null;
+                }
+            }
+
             string ruta = ElegirArchivo(dueno, "Exportar los datos de " + alumno.NombreCompleto, alumno.Matricula);
-            if (ruta == null || !Escribir(dueno, ruta, CsvDeEstudiante(alumno, bitacoras), "Exportar los datos del alumno " + alumno.Matricula))
+            if (ruta == null || !Escribir(dueno, ruta, CsvDeEstudiante(alumno, bitacoras, dadas), "Exportar los datos del alumno " + alumno.Matricula))
             {
                 return null;
             }
@@ -617,7 +789,8 @@ namespace DigBit
             // Solo su id (y en Docentes igual): con su matricula, el log uniria a la
             // persona con su "ANON-id" si despues se anonimiza su cuenta.
             Log.Info("Datos del usuario id " + alumno.Id + " (estudiante) exportados por " + (Datos_User.getUser() ?? "-")
-                + ": su perfil y " + bitacoras.Rows.Count + " bitacoras.");
+                + ": su perfil y " + bitacoras.Rows.Count + " bitacoras"
+                + (dadas.Count > 0 ? " y " + dadas.Count + " asistencias dadas" : "") + ".");
             return ruta;
         }
 
@@ -726,10 +899,13 @@ namespace DigBit
         /// <summary>
         /// Separado por comas, como lo abre Excel en espanol de Mexico. Primero sus
         /// datos, un renglon por dato; despues, una tabla con una fila por bitacora y
-        /// lo que reporto tal como se guardo.
+        /// lo que reporto tal como se guardo; y, si las tiene (db/22), otra con las
+        /// asistencias que le dio su profesor sin bitacora, tambien las anuladas.
         /// </summary>
-        private static string CsvDeEstudiante(AlumnoInfo alumno, DataTable bitacoras)
+        private static string CsvDeEstudiante(AlumnoInfo alumno, DataTable bitacoras, List<AsistenciaDada> dadas)
         {
+            dadas = dadas ?? new List<AsistenciaDada>();
+            int dadasQueCuentan = dadas.Count(d => d.Activa);
             StringBuilder csv = new StringBuilder();
             Renglon(csv, "Datos personales en DigBit (cuenta de estudiante)");
             Renglon(csv, "Matrícula", alumno.Matricula);
@@ -746,6 +922,15 @@ namespace DigBit
 
             Renglon(csv, "Estado", Estado(alumno));
             Renglon(csv, "Bitácoras registradas", bitacoras.Rows.Count.ToString(CultureInfo.InvariantCulture));
+            if (dadas.Count > 0)
+            {
+                Renglon(csv, "Asistencias que le dio su docente sin bitácora", dadasQueCuentan.ToString(CultureInfo.InvariantCulture));
+                if (dadasQueCuentan < dadas.Count)
+                {
+                    Renglon(csv, "Asistencias que le dio su docente y después anuló", (dadas.Count - dadasQueCuentan).ToString(CultureInfo.InvariantCulture));
+                }
+            }
+
             Pie(csv);
 
             Renglon(csv, "Fecha", "Día", "Entrada", "Salida", "Laboratorio", "Materia", "Grupo", "Docente", "Equipo", "Registró",
@@ -776,6 +961,31 @@ namespace DigBit
                     TextoDe(fila, "comentarios_software"),
                     TextoDe(fila, "avisa_sin_internet").Replace(",", ", "),
                     retirada.HasValue ? retirada.Value.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture) : "");
+            }
+
+            // Las asistencias dadas: no son bitacoras, en su propia tabla. Fecha es el dia en
+            // que cuentan; Docente, el de su sesion; Anulada, cuando la anulo (vacia si cuenta).
+            if (dadas.Count > 0)
+            {
+                csv.Append("\r\n");
+                Renglon(csv, "Asistencias que le dio su docente sin bitácora");
+                Renglon(csv, "Fecha", "Día", "Laboratorio", "Materia", "Grupo", "Docente", "Se la dio", "Motivo", "Equipo", "Detalle", "Anulada");
+                foreach (AsistenciaDada dada in dadas)
+                {
+                    Renglon(csv,
+                        Dia(dada.Fecha),
+                        NombreDelDia(dada.Fecha),
+                        dada.Laboratorio,
+                        dada.Materia,
+                        dada.Grupo,
+                        dada.Docente,
+                        dada.DadaEn.ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.InvariantCulture),
+                        AsistenciasDadas.NombreDeMotivo(dada.Motivo),
+                        dada.Equipo,
+                        dada.Comentario,
+                        dada.Activa ? ""
+                            : dada.AnuladaEn.HasValue ? dada.AnuladaEn.Value.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture) : "Sí");
+                }
             }
 
             return csv.ToString();
@@ -834,13 +1044,31 @@ namespace DigBit
 
             csv.Append("\r\n");
             Renglon(csv, "Sesiones");
-            Renglon(csv, "Fecha", "Día", "Entrada", "Salida", "Laboratorio", "Materia", "Grupo", "Sesión extra", "Bitácoras registradas");
+            // Con db/22, cuantas asistencias dio sin bitacora en cada una (solo el numero: el
+            // detalle es de cada estudiante); sin ella, la tabla de siempre.
+            bool conDadas = suyos.Sesiones.Columns.Contains("dadas");
+            List<string> encabezados = new List<string> { "Fecha", "Día", "Entrada", "Salida", "Laboratorio", "Materia", "Grupo", "Sesión extra", "Bitácoras registradas" };
+            if (conDadas)
+            {
+                encabezados.Add("Asistencias que dio sin bitácora");
+            }
+
+            Renglon(csv, encabezados.ToArray());
             foreach (DataRow sesion in suyos.Sesiones.Rows)
             {
                 DateTime? fecha = FechaDe(sesion, "fecha");
-                Renglon(csv, Dia(fecha), fecha.HasValue ? NombreDelDia(fecha.Value) : "", HoraDe(sesion, "hora_entrada"), HoraDe(sesion, "hora_salida"),
+                List<string> celdas = new List<string>
+                {
+                    Dia(fecha), fecha.HasValue ? NombreDelDia(fecha.Value) : "", HoraDe(sesion, "hora_entrada"), HoraDe(sesion, "hora_salida"),
                     TextoDe(sesion, "laboratorio"), TextoDe(sesion, "materia"), TextoDe(sesion, "grupo"),
-                    TextoDe(sesion, "extra") == "1" ? "Sí" : "No", TextoDe(sesion, "bitacoras"));
+                    TextoDe(sesion, "extra") == "1" ? "Sí" : "No", TextoDe(sesion, "bitacoras")
+                };
+                if (conDadas)
+                {
+                    celdas.Add(TextoDe(sesion, "dadas"));
+                }
+
+                Renglon(csv, celdas.ToArray());
             }
 
             if (suyos.Reportes != null)

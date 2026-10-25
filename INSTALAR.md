@@ -530,13 +530,19 @@ Para la base real del TESCHI, en lugar de `preparar_bd.ps1`:
 
 Respalda con `mysqldump`, pasa una revisión que **no cambia nada**, y se detiene
 si encuentra algo que vaya a fallar. Sólo entonces aplica las migraciones (03,
-04, 05, 06 y de la 08 a la 21), en orden, saltando lo que ya esté y parando al
+04, 05, 06 y de la 08 a la 23), en orden, saltando lo que ya esté y parando al
 primer error. Hazlo fuera de horario de clase: en MariaDB 5.5 algunas
 copian la tabla entera con las escrituras bloqueadas (la 10 la de bitácoras, la
 12 la de usuarios, la 14 la de sesiones). La 19 no copia ninguna: solo crea la
 tabla donde cada docente guarda lo que elige para sus clases. La 20 añade dos
 columnas vacías a `horarios`, que es pequeña. La 21 tampoco copia nada: crea la
-tabla del historial de cambios.
+tabla del historial de cambios. La 22 tampoco: crea la tabla de las asistencias
+que da el docente, pero **va después de actualizar todos los equipos** (ver
+abajo). `migrar_bd.ps1` la aplica junto con las demás y no tiene forma de
+saltarla: si antes de eso hace falta otra migración, aplícala sola con
+`mysql` (README, «Base de datos»). La 23 solo cambia las tablas de la 16 (las
+configuraciones de horario, pequeñas y que solo usa el DigBit de la
+administración) y no hace falta actualizar los equipos para aplicarla.
 
 Sin la 10 no se puede dar de alta a ninguna cuenta de estudiante (ni desde la
 administración ni con "Crear cuenta" en el laboratorio): en la base de la
@@ -561,6 +567,25 @@ Aplícala con root: así también deja leerla a `digbit_consulta`, para que las
 personas responsables de laboratorio vean esas alertas y el historial; con otro usuario,
 `migrar_bd.ps1` lo dice con un AVISO. A `digbit_equipo` no le da nada: los
 equipos no hacen esos cambios.
+
+Para que el docente pueda **dar la asistencia** en Mis grupos a quien vino a la
+clase pero no pudo registrar su bitácora (la 22: su equipo no tenía internet,
+no funcionaba o no había uno libre; ver README, «Panel docente»), el orden
+importa:
+
+1. Actualiza DigBit en **todos** los equipos que lo usan: las máquinas de cada
+   laboratorio (descongeladas: ver «Actualizar sin reconfigurar»), las
+   computadoras docentes y la de la administración.
+   `diagnostico_equipo.ps1` dice la versión de cada uno. Un DigBit anterior no
+   lee la tabla nueva: en Mis grupos vería falta donde el docente dio la
+   asistencia, y en Faltas, en rojo, una clase que sí se dio.
+2. Aplica la 22 **con root** (con `migrar_bd.ps1` o sola). Crea
+   `asistencias_dadas` y no toca nada más, así que se puede aplicar en horario
+   de clase. Con root, además deja a `digbit_equipo` leerla, dar y anular (solo
+   `activa`, `anulada_en` y `anulada_por`; nunca borrar) y a `digbit_consulta`,
+   leerla. Con otro usuario sale un AVISO con los permisos que faltan.
+3. Ya está: no hay nada que encender en Ajustes. Desde ese momento, el docente
+   da la asistencia durante su clase.
 
 Para que **cambiar el horario no reescriba las semanas pasadas** (la 20: cada
 franja con su propia vigencia; ver README, «Cambios de horario sin reescribir

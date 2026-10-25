@@ -142,6 +142,19 @@ namespace DigBit
 
         private Label lblListo;
         private Label lblListoDetalle;
+
+        // Tras registrar, el equipo se entrega hasta la hora de salida (en el kiosco
+        // se abre el escritorio y esta pantalla se esconde) una sola vez: a los 1,5 s
+        // o, con el aviso para su docente, al pulsar "Entendido" o al acabar su
+        // cuenta, con tiempo para leerlo. Si cierra la sesion antes, no.
+        private const int SegundosParaLeerElAviso = 15;
+        private Button btnEntendido;
+        private bool conEntendido;
+        private bool equipoEntregado;
+        private VentanaCodigo ventanaAEntregar;
+        private string codigoAEntregar;
+        private Timer esperaEntrega;
+        private int segundosParaEntregar;
         private Panel pie;
         private LinkLabel lnkPerfil;
         private editar_Perfil perfil;
@@ -243,6 +256,12 @@ namespace DigBit
                 Visible = false
             };
 
+            // Con el aviso para su docente: entrega el equipo sin esperar a la cuenta.
+            btnEntendido = EstiloAdmin.BotonPrincipal("Entendido", Point.Empty, new Size(220, 44));
+            btnEntendido.Font = new DrawingFont("Century Gothic", 12F, FontStyle.Bold);
+            btnEntendido.Visible = false;
+            btnEntendido.Click += (s, e) => EntregarEquipo();
+
             lnkPerfil = new LinkLabel
             {
                 AutoSize = true,
@@ -253,7 +272,7 @@ namespace DigBit
             };
             lnkPerfil.LinkClicked += (s, e) => AbrirPerfil();
 
-            columna.Controls.AddRange(new Control[] { lblListo, lblListoDetalle });
+            columna.Controls.AddRange(new Control[] { lblListo, lblListoDetalle, btnEntendido });
 
             // Barra fija abajo: "Registrar mi bitacora" siempre a la vista, aunque la
             // lista de fallas no quepa en una pantalla de 768 de alto.
@@ -1311,6 +1330,7 @@ namespace DigBit
 
             lblListo.Visible = registrado;
             lblListoDetalle.Visible = registrado;
+            btnEntendido.Visible = registrado && conEntendido;
             lblErrorPaso2.Visible = !registrado && lblErrorPaso2.Text.Length > 0;
             if (registrado)
             {
@@ -1326,6 +1346,11 @@ namespace DigBit
                 int altoDetalle = TextRenderer.MeasureText(lblListoDetalle.Text, lblListoDetalle.Font, new Size(ancho, int.MaxValue), TextFormatFlags.WordBreak).Height;
                 lblListoDetalle.SetBounds(0, y, ancho, altoDetalle + 6);
                 y += altoDetalle + 12;
+                if (conEntendido)
+                {
+                    btnEntendido.Location = new Point(0, y + 4);
+                    y += btnEntendido.Height + 16;
+                }
             }
             else
             {
@@ -1516,7 +1541,7 @@ namespace DigBit
                         Log.Error("Validar codigo de acceso '" + codigo + "'", ex);
                         if (!SinConexion.IntentarActivar(ex.Message))
                         {
-                            MostrarErrorCodigo(SinCopiaQueSirva(ex, "No se pudo validar el código"));
+                            MostrarErrorCodigo(SinCopiaQueSirva(ex, "No se pudo validar el código", true));
                             return;
                         }
 
@@ -1638,7 +1663,7 @@ namespace DigBit
                         Log.Error("Elegir: " + que, ex);
                         if (!SinConexion.IntentarActivar(ex.Message))
                         {
-                            MostrarErrorCodigo(SinCopiaQueSirva(ex, usoLibre ? "No se pudo registrar el uso libre" : "No se pudo registrar tu clase"));
+                            MostrarErrorCodigo(SinCopiaQueSirva(ex, usoLibre ? "No se pudo registrar el uso libre" : "No se pudo registrar tu clase", !usoLibre));
                             return;
                         }
 
@@ -1690,12 +1715,16 @@ namespace DigBit
         /// Por que no se pudo y que hacer, cuando el servidor fallo y la copia local
         /// tampoco sirvio (no hay, es de otro laboratorio o es muy vieja). Sin red,
         /// reintentar no arregla nada: queda avisar. El detalle ya esta en el log.
+        /// En una clase, primero a su docente: es quien puede darle la asistencia,
+        /// y solo mientras dura la clase ("ahora"; en el uso libre no hay docente).
         /// </summary>
-        private static string SinCopiaQueSirva(Exception ex, string queNoSePudo)
+        private static string SinCopiaQueSirva(Exception ex, string queNoSePudo, bool enClase)
         {
             return MensajeDeFallo.EsDeRed(ex)
                 ? queNoSePudo + ": no hay conexión con el servidor y este equipo no tiene una copia del horario que sirva. "
-                  + "Avisa a la persona responsable del laboratorio."
+                  + (enClase
+                      ? "Avísale ahora a tu docente para que te dé la asistencia; avisa también a la persona responsable del laboratorio."
+                      : "Avisa a la persona responsable del laboratorio.")
                 : MensajeDeFallo.Explicar(queNoSePudo, ex, MensajeDeFallo.AvisaAlLaboratorio);
         }
 
@@ -2040,23 +2069,87 @@ namespace DigBit
             lblListo.Text = "Listo, tu bitácora quedó registrada.";
             // Lo dice el resultado y no SinConexion.Activo: la red tambien puede
             // caerse justo al guardar, o volver entre el codigo y el registro.
-            lblListoDetalle.Text = (guardado == ResultadoGuardado.EnEsteEquipo ? "Se guardó en este equipo y se enviará sola en cuanto haya conexión. " : "")
+            // Guardada aqui, su docente no la ve hasta que se envie: en una clase,
+            // que le avise ya (la asistencia solo se la puede dar mientras dura).
+            bool enEsteEquipo = guardado == ResultadoGuardado.EnEsteEquipo;
+            bool avisarAlDocente = enEsteEquipo && !ventana.EsUsoLibre;
+            lblListoDetalle.Text = (avisarAlDocente
+                    ? "Se guardó en este equipo y se enviará sola en cuanto haya conexión, pero tu docente aún no la ve: "
+                      + "avísale ahora para que te dé la asistencia. "
+                    : enEsteEquipo ? "Se guardó en este equipo y se enviará sola en cuanto haya conexión. " : "")
                 + (equiposSinInternet != null ? "También quedó tu aviso: sin internet en " + EstiloAdmin.Enumerar(equiposSinInternet.Split(',').ToList()) + ". " : "")
                 + "Puedes usar este equipo " + HastaLas(ventana.Fin.TimeOfDay) + ".";
-            Colocar();
-            Refresh();
 
-            // Un momento para que se lea el "listo" y se entrega el equipo hasta la hora de salida.
-            VentanaCodigo liberar = ventana;
-            string codigo = codigoAceptado;
-            Timer espera = new Timer { Interval = 1500 };
-            espera.Tick += (s, e) =>
+            // Un momento para que se lea el "listo" y se entrega el equipo. Con el aviso
+            // para su docente, el tiempo de leerlo: hasta que pulse "Entendido" o acabe
+            // la cuenta (antes eran 1,5 s y en el kiosco la pantalla se escondia sin
+            // dar tiempo de leerlo). El reloj va en componentes: si cierra la sesion
+            // mientras tanto, se va con la ventana.
+            ventanaAEntregar = ventana;
+            codigoAEntregar = codigoAceptado;
+            conEntendido = avisarAlDocente;
+            segundosParaEntregar = avisarAlDocente ? SegundosParaLeerElAviso : 0;
+            btnEntendido.Text = "Entendido (" + SegundosParaLeerElAviso + ")";
+            Colocar();
+            if (conEntendido)
             {
-                espera.Stop();
-                espera.Dispose();
-                SesionEquipo.Liberar(liberar, matricula, codigo);
+                btnEntendido.Focus();
+            }
+
+            Refresh();
+            esperaEntrega = new Timer(componentes) { Interval = avisarAlDocente ? 1000 : 1500 };
+            esperaEntrega.Tick += (s, e) =>
+            {
+                segundosParaEntregar--;
+                if (segundosParaEntregar > 0)
+                {
+                    btnEntendido.Text = "Entendido (" + segundosParaEntregar + ")";
+                    return;
+                }
+
+                EntregarEquipo();
             };
-            espera.Start();
+            esperaEntrega.Start();
+        }
+
+        /// <summary>
+        /// Entrega el equipo a quien acaba de registrar, hasta la hora de salida. Una
+        /// sola vez, aunque lo pidan a la vez la cuenta y "Entendido" (al abrir el
+        /// escritorio se siguen atendiendo los mensajes de la ventana).
+        /// </summary>
+        private void EntregarEquipo()
+        {
+            // Si mientras tanto cerro la sesion, el equipo no se libera: su bitacora ya
+            // esta guardada y, si vuelve a entrar, se le ofrece volver a usarlo.
+            if (equipoEntregado || IsDisposed || ventanaAEntregar == null)
+            {
+                return;
+            }
+
+            equipoEntregado = true;
+            if (esperaEntrega != null)
+            {
+                esperaEntrega.Stop();
+            }
+
+            btnEntendido.Enabled = false;
+
+            // La clase termino mientras leia: ya no hay tiempo que darle. Se vuelve al
+            // inicio en vez de abrir el escritorio para cerrar la sesion de Windows
+            // al instante.
+            if (ventanaAEntregar.Restante <= TimeSpan.Zero)
+            {
+                Log.Info("La sesion de " + matricula + " termino a las " + ventanaAEntregar.Fin.ToString("HH:mm")
+                    + " antes de entregarle el equipo; se vuelve al inicio.");
+                if (AppContexto.Actual != null)
+                {
+                    AppContexto.Actual.CerrarSesion();
+                }
+
+                return;
+            }
+
+            SesionEquipo.Liberar(ventanaAEntregar, matricula, codigoAEntregar, false, conEntendido);
         }
 
         /// <summary>
@@ -2068,7 +2161,7 @@ namespace DigBit
             Log.Info("Bitacora de '" + matricula + "' guardada con equipo propio; el equipo no se libera.");
             RegistroExitoso.Opcion opcion = RegistroExitoso.Mostrar(
                 string.IsNullOrEmpty(nombre) ? matricula : nombre, matricula, ventana.Laboratorio ?? LaboratorioEquipo.Nombre,
-                ventana.EsUsoLibre ? "uso libre del laboratorio" : ventana.Materia + ", " + ventana.Grupo, enEsteEquipo);
+                ventana.EsUsoLibre ? "uso libre del laboratorio" : ventana.Materia + ", " + ventana.Grupo, enEsteEquipo, ventana.EsUsoLibre);
 
             if (opcion == RegistroExitoso.Opcion.Apagar)
             {

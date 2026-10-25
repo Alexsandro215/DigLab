@@ -286,6 +286,13 @@ UNION ALL SELECT
        'falta (la 21 crea la tabla; no toca nada mas: se puede aplicar en horario de clase; con root, ademas deja leerla a digbit_consulta)'),
     'info'
 UNION ALL SELECT
+    'Asistencias que da el docente (asistencias_dadas)',
+    IF((SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asistencias_dadas') > 0,
+       'ya esta',
+       'falta (la 22 crea la tabla; no toca nada mas: se puede aplicar en horario de clase; antes, actualiza TODOS los equipos; con root, ademas da permiso a digbit_equipo y digbit_consulta)'),
+    'info'
+UNION ALL SELECT
     'Contrasenas: PBKDF2 / MD5 / total',
     CONCAT(IFNULL(SUM(password LIKE 'pbkdf2-%'), 0), ' / ',
            IFNULL(SUM(CHAR_LENGTH(password) = 32 AND password REGEXP '^[0-9a-f]{32}$'), 0), ' / ',

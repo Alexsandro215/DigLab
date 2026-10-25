@@ -29,7 +29,15 @@ Docentes y la administración descargan las bitácoras en PDF
 La administración revisa en Horarios → Faltas qué clases se quedaron sin
     bitácoras: por laboratorio, un mes con los días en rojo y, al elegir uno,
     el horario de esa semana con esas clases en rojo
+        │
+        ▼
+En Estadísticas, por periodo: cuántas veces entró cada estudiante a sus
+    clases, qué clases se dieron y qué fallas se reportaron
 ```
+
+Si el equipo de un estudiante no pudo registrar (no tenía internet o no
+funcionaba), su docente le da la asistencia en Mis grupos mientras dura la
+clase (db/22; ver «Panel docente»).
 
 Cuatro roles, los cuatro en la tabla `usuarios`:
 
@@ -89,6 +97,8 @@ mysql -u root -p < db\18_encargados.sql
 mysql -u root -p < db\19_personalizacion_clases.sql
 mysql -u root -p < db\20_vigencia_franjas.sql
 mysql -u root -p < db\21_historial_cambios.sql
+mysql -u root -p < db\22_asistencia_dada.sql
+mysql -u root -p < db\23_horarios_guardados.sql
 ```
 
 O todas de una vez, con respaldo antes y revisión, desde PowerShell:
@@ -120,9 +130,18 @@ lo enciende en Ajustes, y eso se hace después de actualizar **todos** los
 equipos. La 21 crea `historial_cambios`: quién cambió el horario, las clases,
 los laboratorios o una bitácora, cuándo y qué decía antes (ver «Historial de
 cambios y alertas de cambios de horario»). Crea una tabla nueva y no toca nada
-más; con root, además deja leerla a `digbit_consulta`.
+más; con root, además deja leerla a `digbit_consulta`. La 22 crea
+`asistencias_dadas`: la asistencia que el docente da, mientras dura su clase, a
+quien vino pero no pudo registrar su bitácora (su equipo no tenía internet, no
+funcionaba o no había uno libre), con quién, cuándo y por qué; anularla no la
+borra. Crea una tabla nueva y no toca nada más (se puede aplicar en horario de
+clase), pero se aplica **después** de actualizar **todos** los equipos
+(laboratorios, docentes y administración): un DigBit anterior no la lee y vería
+falta donde el docente dio la asistencia. Con root, además deja a `digbit_equipo`
+leerla, dar y anular (solo `activa`, `anulada_en` y `anulada_por`; nunca borrar)
+y a `digbit_consulta`, leerla; con otro usuario, lo dice con un AVISO.
 `deploy\migrar_bd.ps1` las aplica todas en orden, con respaldo y revisión
-previa.
+previa (también la 22: pásalo cuando ya estén actualizados todos los equipos).
 
 Usuarios que deja el seed:
 
@@ -289,8 +308,9 @@ la de la clase recortada a la suya (`conexion\VigenciaFranjas.cs`).
 - Con la casilla de Ajustes **«Los cambios de horario aplican desde una fecha»**
   encendida, cambiar una franja con historia (día, horas, laboratorio o clase)
   termina la vieja el día anterior a la fecha elegida (hoy o después; mañana si
-  hoy ya hubo bitácoras en ella) y crea la nueva desde esa fecha. Sus
-  cancelaciones de esa fecha en adelante pasan a la nueva si caen en su día; si
+  hoy ya hubo bitácoras o asistencias dadas en ella) y crea la nueva desde esa
+  fecha. Sus cancelaciones de esa fecha en adelante pasan a la nueva si caen en
+  su día; si
   no, se pide quitarlas antes. Quitar una franja con historia le pone fin en vez
   de borrarla, y una franja nueva en una clase que ya empezó vale desde la fecha
   elegida. Una franja sin historia se edita como siempre.
@@ -298,8 +318,8 @@ la de la clase recortada a la suya (`conexion\VigenciaFranjas.cs`).
   de que el cambio alcanza también a las semanas pasadas.
 - Las **clases**, con o sin la 20: una clase con sesiones no se desactiva, se
   **termina** en una fecha (nunca antes de su última sesión), y con sesiones de
-  días pasados o con bitácoras no cambia de docente, grupo ni materia. Dar de
-  baja una cuenta docente con «Terminar también sus clases» termina las que tienen sesiones (hoy, o el
+  días pasados, con bitácoras o con asistencias dadas (db/22) no cambia de
+  docente, grupo ni materia. Dar de baja una cuenta docente con «Terminar también sus clases» termina las que tienen sesiones (hoy, o el
   día de su última sesión) y desactiva las demás.
 - En los equipos, la copia local guarda la vigencia de cada franja (una copia
   vieja sin ella vale lo de antes), y una bitácora sin conexión nunca se enlaza
@@ -396,6 +416,14 @@ quién lo confirmó o falló, nunca la contraseña.
   igual que ya puede leer los códigos de los docentes y las sesiones de hoy:
   que solo la administración vea los códigos es una regla de las pantallas, no
   de la base.
+- **Los docentes no ven los códigos** (casilla de toda la escuela en «Códigos de
+  las clases»; `configuracion`, clave `codigos_solo_responsables` = `1`, sin
+  migración): con código único o con generación de códigos, el docente no ve
+  ningún código (panel, Mi horario, Escuchar el código, Mis bitácoras, también
+  en el kiosco) y se lo pide a la persona responsable del laboratorio, que lo ve
+  como la administración en «Los laboratorios ahora» y en Horarios. Límite
+  conocido: también es solo de las pantallas; `digbit_equipo` sigue pudiendo
+  leer los códigos.
 - **Sin servidor**, con generación de códigos cada estudiante elige su clase de la
   lista (el equipo no puede comprobar el código) y la bitácora queda marcada
   sin conexión (`docs/fase4-sin-conexion.md`); al subirla, la sesión lleva el
@@ -426,7 +454,7 @@ quién lo confirmó o falló, nunca la contraseña.
 - En los laboratorios sin código único, Horarios y "Mi horario" no pintan el
   código de su docente. Con generación de códigos, el Horario de la
   administración pinta en cada clase su código de ese día (solo de las semanas
-  que ya empezaron) y la agenda de Excepciones lo dice en su columna Código.
+  que ya empezaron) y la agenda de Cambios de un día lo dice en su columna Código.
 
 La pantalla de Bitácoras de la administración trabaja en **dos niveles**: arriba
 las sesiones (fecha, horario, código, materia, grupo, docente, laboratorio y
@@ -464,10 +492,13 @@ desaparece sola.
 - **Nadie registró bitácora**: una clase o sesión extra que terminó sin
   ninguna bitácora (su docente no vino o no pidió registrar). Es la regla de
   Horarios → Faltas, con sus correcciones, y solo desde que cada laboratorio
-  usa DigBit.
+  usa DigBit. No avisa si su docente dio asistencias en ella (db/22): la clase
+  se dio, y Faltas la pinta en ámbar.
 - **En curso y nadie ha registrado**: una clase de hoy que lleva 20 minutos
   sin bitácoras. Con el código único no avisa si el grupo llegó antes y
-  registró en la clase anterior de la misma persona docente.
+  registró en la clase anterior de la misma persona docente. Si su docente ya
+  dio asistencias, en lugar de «¿Llegó su docente?» dice cuántas y que quizá los
+  equipos del laboratorio no tienen internet.
 - **Fallas reportadas**: por laboratorio y día, cuántas bitácoras reportaron
   fallas (y de qué), desde qué equipos y qué equipos avisaron sin internet
   (db/10); también en el uso libre.
@@ -491,11 +522,68 @@ sin bitácoras; las fallas de un laboratorio, sí, con cada reporte nuevo. Al
 pulsar la notificación se abren las alertas. La regla está en
 `AvisosDeAlertas` (`conexion\AlertasDatos.cs`).
 
+#### Estadísticas (versión 1.1)
+
+El panel de la administración tiene seis secciones: Bitácoras, Estudiantes,
+Docentes, Laboratorios, Horarios y **Estadísticas** (y debajo, «Los
+laboratorios ahora»). Estadísticas (`VentanaEstadisticas`) dice, en el periodo
+que elijas, cuántas veces entró cada estudiante a sus clases, qué clases se
+dieron y qué fallas se reportaron. Solo lee: no escribe nada ni necesita
+migración.
+
+- **Filtros**: el periodo («Este ciclo», que empieza el día en que empezó la
+  clase vigente más antigua; «Ciclo anterior»; «Este mes»; «Esta semana»;
+  «Últimos 30 días»; o «Elegir fechas...», hasta 400 días atrás), el
+  laboratorio, la persona docente y el grupo.
+- **Cinco cifras**, que al pulsarlas llevan a su pestaña ya ordenada:
+  - asistencia de los estudiantes, con cuántos van bajo el 80 %;
+  - clases que se dieron: «X de N», donde una clase se dio si alguien registró
+    su bitácora o si su docente dio la asistencia a quien no pudo registrar, y N
+    son las que ya pasaron y contaban (sin las canceladas); «sin registro» va en
+    rojo;
+  - bitácoras registradas;
+  - fallas reportadas: hardware, software y red, y con db/15 también las de los
+    docentes;
+  - equipos avisados sin internet (db/10).
+- **Seis pestañas**:
+  - Estudiantes: entró X de N, asistencia y faltas; al elegir a un estudiante,
+    «Sus clases» y «Ver sus bitácoras».
+  - Clases: se dieron, sin registro, clases con bitácoras, la asistencia del
+    grupo y su lista.
+  - Grupos.
+  - **Docentes**: solo la asistencia de cada docente, sin datos de estudiantes.
+    Columnas: se dieron, sin registro, canceladas, asistencias que dio (db/22)
+    y sus reportes (db/15). Al elegir a un docente salen sus clases día por día,
+    con «¿Se dio?» («Sí (16 bitácoras)», «Sí (2 asistencias dadas, sin
+    bitácoras)», «Sin registro», «Cancelada», «Aún no pasa» o «No cuenta»), y
+    doble clic abre la bitácora de esa clase.
+  - Laboratorios: desde cuándo registra cada uno con DigBit.
+  - Equipos: fallas por equipo, en cuántas sesiones falló, avisos sin internet
+    y el último reporte.
+- **Las mismas reglas que el resto**:
+  - la asistencia es la de Mis grupos: `AsistenciaDatos.LeerEnLote` lee de una
+    vez las listas de todas las clases;
+  - las clases son las de Faltas (`HorariosDatos.LeerCalendario`);
+  - así, las cifras cuadran con Mis grupos, Faltas, Alertas y Bitácoras.
+
+  Los datos los calcula `conexion\EstadisticasDatos.cs`; las cifras y las barras
+  de las tablas están en `PiezasEstadisticas.cs`.
+- **Guardar en Excel (CSV)...** guarda la pestaña que se ve, con un membrete con
+  el periodo y los filtros. En esta versión no hay PDF. En el kiosco no hay CSV y
+  las tablas no se copian.
+- **Lectura**: lee en segundo plano y guarda lo leído 10 minutos para la misma
+  cuenta. **F5** o «Actualizar» vuelve a leer. Sin conexión se sigue viendo lo
+  último leído, con su hora.
+
+La persona responsable de laboratorio la ve en solo consulta (ver «Responsable
+de laboratorio»). El personal docente no tiene estadísticas: lo suyo está en
+Mis grupos.
+
 #### Panel docente (versión 1.1)
 
-Arriba, sus secciones (Mi horario, Mis bitácoras, Mi perfil), como en el panel
-de administración. Debajo, a la izquierda, la ficha de la clase de la que se
-habla (la abierta o la próxima de hoy): cómo va y cuánto falta, la materia, el
+Arriba, sus secciones (Mi horario, Mis grupos, Mis bitácoras, Mi perfil), como
+en el panel de administración. Debajo, a la izquierda, la ficha de la clase de
+la que se habla (la abierta o la próxima de hoy): cómo va y cuánto falta, la materia, el
 grupo, el laboratorio y, en curso, una línea de tiempo de su hora de inicio a
 la de fin; luego su código en grande (lo que dicta a su grupo), cómo se
 deletrea y tres cifras de cómo va: bitácoras registradas, fallas reportadas y
@@ -512,18 +600,59 @@ un laboratorio que aún no usa DigBit no se juzga ("No cuenta"). Al pasar el
 ratón por una clase sale todo su detalle y, al pulsarla, quién registró.
 "Mi horario" pone su código único en grande arriba a la derecha.
 
+**Mis grupos y «Dar asistencia» (db/22).** Mis grupos enseña la lista de
+asistencia de cada grupo como una hoja de Excel, armada con quienes registran su
+bitácora. Con db/17, durante la clase la persona docente quita la asistencia a
+quien registró y no está en el salón, o se la devuelve.
+
+Con la 22, **mientras dura la clase** (con el reloj del servidor), también **da
+la asistencia** a quien está en el salón y no pudo registrar su bitácora:
+
+- **Cómo se da**: en su casilla P de hoy, «Darle la asistencia...». Si aún no
+  está en la lista, con «Dar asistencia a alguien que no está en la lista...»,
+  por matrícula exacta (`DialogoDarAsistencia`).
+- **Qué se elige**: el motivo (su equipo no tenía internet, no funcionaba, no
+  había uno libre u otro, con detalle), el equipo si se sabe y un detalle.
+- **La casilla**: queda en una A verde. Durante la clase se puede quitar
+  («Quitarle la asistencia que le diste: no está en el salón»); anularla no la
+  borra.
+- **Cómo cuenta**: como asistencia en todas partes y nunca como bitácora. Si su
+  bitácora llega después, cuenta una vez.
+- **CSV**: la pone como «A» y añade al final «Asistencias que dio el docente sin
+  bitácora».
+- **En el horario de tres días**: una clase sin bitácoras en la que dio
+  asistencias sale con la pastilla «Sin bitácoras» en gris, no en rojo, y, si
+  cabe, «Diste 2 asistencias sin bitácora».
+- **En el kiosco** (el docente en un equipo del laboratorio): pide su contraseña
+  antes de cualquier cambio de la lista y no la vuelve a pedir en 2 minutos;
+  tres equivocadas cierran la sesión.
+
+La administración lo ve en la Bitácora de la clase y su PDF, en Bitácoras, en
+el historial del estudiante, en Faltas (en ámbar: la clase se dio), en Alertas
+y en Estadísticas. Decide el servidor, con su reloj (`AsistenciaDatos`,
+`conexion\SesionDeHoy.cs` y `conexion\AsistenciasDadas.cs`). Sin la 22 no se
+ofrece y todo se ve como antes.
+
 #### Responsable de laboratorio: el panel en solo consulta (db/18, versión 1.1)
 
 La persona responsable de laboratorio, y quien le ayuda del servicio social, entra al
 **mismo panel que la administración, en solo consulta**: «Los laboratorios
 ahora», las alertas (con su campana y la notificación de Windows), Bitácoras con
-sus PDF, Estudiantes, Docentes, Laboratorios y Horarios con sus pestañas, pero
-sin poder cambiar nada. Tampoco ve lo que es solo de la
+sus PDF, Estudiantes, Docentes, Laboratorios, Horarios con sus pestañas (la
+quinta, «Horarios guardados», es la lista de plantillas y horarios aplicados) y
+Estadísticas, pero sin poder cambiar nada. Tampoco ve lo que es solo de la
 administración: ni Ajustes (con la clave de la API), ni «Códigos de las clases»,
 ni ningún código de clase (los generados cada semana, el de cada docente ni el
 de cada sesión). En lugar de esas dos pastillas lleva **Solo consulta**, que
 explica qué incluye, y la ventana se llama «DigBit - Responsable de laboratorio» (sus
 secciones llevan «(solo consulta)» en el título).
+
+En **Estadísticas (solo consulta)** ve lo mismo que la administración, pero
+solo guarda en Excel (CSV) las pestañas **Laboratorios, Grupos y Equipos**, que
+no llevan datos personales. En Estudiantes, Clases y Docentes el botón queda
+apagado y explica que esos datos solo los guarda en un archivo la
+administración de DigBit (`EstadisticasDatos.SeGuardaEnCsv`). «Ver sus
+bitácoras» se abre con «Exportar sus datos...» apagado, como en Estudiantes.
 
 Lo decide un solo sitio, `Permisos` (`DigBit\Infraestructura\Permisos.cs`), por
 el tipo de la cuenta: las pantallas no crean (u ocultan) lo que escribe, cada
@@ -689,6 +818,20 @@ DigBit sigue atendiendo estudiantes con ella (diseño en `docs/fase4-sin-conexio
   puede, avisa: con Deep Freeze y sin carpeta de datos se perderían.
 - La liberación del equipo y el Vigilante funcionan igual: nunca dependieron
   de la base.
+- **Aviso al estudiante**: si viene a una clase, se le pide que avise a su
+  docente («Si vienes a una clase, avísale ahora a tu docente para que te dé la
+  asistencia.»), que con db/22 se la da en Mis grupos mientras dura la clase.
+  - Dónde sale: en la pantalla «Sin conexión» y en el inicio de sesión del
+    kiosco, en la pantalla del estudiante sin una copia del horario que sirva, y
+    cuando su bitácora se quedó guardada en el equipo, que su docente aún no ve.
+  - En el kiosco sale también en las demás pantallas de arranque que dejan el
+    equipo inservible: sin `connections.config` (o dañado), cuenta de la base
+    rechazada, sin laboratorio asignado o no dado de alta, y cuando no se pudo
+    comprobar el laboratorio del equipo.
+  - En ese último caso, «Listo» espera a que pulse «Entendido» (o 15 s) antes
+    de liberar el equipo. Con equipo propio sale en `RegistroExitoso`, y el globo
+    al abrir el escritorio lo recuerda.
+  - En el uso libre no sale.
 
 Sin copia local (equipo recién instalado) o con una de otro laboratorio, la
 app se comporta como antes: pantalla "Sin conexión" con reintento.
@@ -917,6 +1060,7 @@ mysql -u root -p < db\07_usuarios_minimos.sql
 | `recuperacion_contrasena` (db/13) | nada: la usa solo la API, con su propio usuario | todo | nada |
 | `personalizacion_clases` (lo que cada docente elige para sus clases, db/19) | leer, añadir, cambiar y borrar | todo | nada: la persona responsable no ve las pantallas docentes |
 | `historial_cambios` (quién cambió qué y cuándo, db/21) | nada: ningún equipo hace esos cambios | todo (lo escribe al cambiar) | leer: alertas de cambios de horario e historial |
+| `asistencias_dadas` (la asistencia que da el docente a quien no pudo registrar su bitácora, db/22) | leer, añadir y anular: **sólo** `activa`, `anulada_en` y `anulada_por`; nunca borrar | todo | leer |
 | Cambiar el esquema, otras bases | no | no | no |
 
 El reparto no se hizo a ojo: se inventariaron las 165 consultas rastreando **quién
@@ -1031,12 +1175,14 @@ db/
   13_recuperacion_contrasena.sql   Para una base que ya existía: códigos de recuperación por correo y ajustes de toda la escuela
   14_registro_sin_clase.sql    Para una base que ya existía: sesiones de uso libre (sin clase) en los laboratorios sin códigos
   15_reportes_profesor.sql     Para una base que ya existía: las fallas que reporta cada docente durante su clase
-  16_ciclo_preliminar.sql      Para una base que ya existía: el borrador del horario del próximo ciclo
+  16_ciclo_preliminar.sql      Para una base que ya existía: las tablas de las configuraciones de horario (el horario del próximo ciclo)
   17_asistencia_retirada.sql   Para una base que ya existía: las asistencias que cada docente quita durante su clase
   18_encargados.sql            Responsables de laboratorio: el tipo 4 y la cuenta de MySQL de solo lectura digbit_consulta (con root)
   19_personalizacion_clases.sql   Para una base que ya existía: lo que cada docente elige para sus clases (imagen, color y nombre corto)
   20_vigencia_franjas.sql      Para una base que ya existía: la vigencia propia de cada franja (cambiar el horario sin reescribir el pasado)
   21_historial_cambios.sql     Para una base que ya existía: quién cambió el horario, los laboratorios o una bitácora, cuándo y qué decía antes
+  22_asistencia_dada.sql       Para una base que ya existía: la asistencia que da el docente a quien no pudo registrar su bitácora, con quién, cuándo y por qué
+  23_horarios_guardados.sql    Para una base que ya existía (después de la 16): guardar varias configuraciones de horario con nombre, prepararlas y aplicarlas con sus fechas
 api/                           API en PHP de "¿Olvidaste tu contraseña?" para el hosting de la escuela (ver api/LEEME.md)
   recuperar.php                Solicitar un código, confirmarlo con la contraseña nueva, y probar la instalación
   lib/comun.php, lib/correo.php   Base de datos, contraseñas (PBKDF2 como DigBit) y un cliente SMTP para Gmail
@@ -1054,6 +1200,8 @@ deploy/
   permitir_en_defender.ps1     Excluye DigBit y recupera lo que Defender puso en cuarentena
   abrir_bd_en_red.ps1          Abre el MySQL de pruebas al resto de la red
   probar_horarios.ps1          Escenarios de horarios y códigos, sin base de datos
+  probar_configuraciones.ps1   Las configuraciones de horario (guardar, preparar, editar, permisos) contra una base de desarrollo; no deja datos
+  probar_aplicar.ps1           Aplicar y deshacer una configuración de horario contra una base de desarrollo; no deja datos
 docs/
   fase3-diseno.md              Diseño de la liberación del equipo y el cierre de sesión
   fase6-horarios.md            Diseño de los horarios por laboratorio (agenda de la administración)
@@ -1090,8 +1238,11 @@ DigBit/
     EncargadosDatos.cs         Las personas responsables de laboratorio (tipo 4) para su sección
     CuentaDeConsulta.cs        La cuenta de MySQL de solo lectura con que trabaja la sesión de una persona responsable (db/18)
     CatalogosDatos.cs          Carreras, semestres y grupos para los diálogos
-    Esquema.cs                 Qué migraciones tiene la base (08 a 21), para no fallar si faltan
+    Esquema.cs                 Qué migraciones tiene la base (08 a 22), para no fallar si faltan
     HistorialCambios.cs        Quién cambió qué y cuándo (db/21): lo anota cada cambio en su transacción y lo leen Alertas y el historial
+    AsistenciasDadas.cs        Las asistencias que da el docente (db/22): motivos, textos y lo que leen la Bitácora de la clase, el historial y Faltas
+    SesionDeHoy.cs             El bloque de hoy en curso de una clase y su sesión (la lee o la crea) para dar una asistencia o reportar una falla
+    EstadisticasDatos.cs       Estadísticas: una lectura (asistencia en lote, Faltas, fallas y avisos) y el cálculo de las cifras y las pestañas, sin volver a la base
     VigenciaFranjas.cs         Cuándo se da una franja: la vigencia de su clase recortada a la suya (db/20), en SQL y en memoria
     PersonalizacionClasesDatos.cs   Lo que cada docente elige para sus clases (db/19): leerlo ya resuelto por clase, sus imágenes y guardarlo
     RecuperacionContrasena.cs  Habla con la API de recuperación: pedir el código, confirmarlo y probarla
@@ -1106,9 +1257,11 @@ DigBit/
   RJControls/                  Controles personalizados (botones, cajas de texto, combos)
   AvisoSesion.cs, PantallaError.cs   Ventanas de aviso de fin de sesión y de error
   RegistroExitoso.cs           Equipo propio: registro guardado, apagar o volver al login
-  PrincipalAdministrador.cs    Administración: las cinco secciones y «Los laboratorios ahora» (la persona responsable de laboratorio, en solo consulta)
+  PrincipalAdministrador.cs    Administración: las seis secciones (con Estadísticas) y «Los laboratorios ahora» (la persona responsable de laboratorio, en solo consulta)
   VentanaAlertas.cs            Administración: las alertas, con filtros, y de ahí a la clase, sus bitácoras, su horario o Faltas; marcar una clase como no dada
   VentanaHistorialCambios.cs   Administración y responsables de laboratorio: el historial de cambios (db/21), con filtros y lo de antes y lo de ahora
+  VentanaEstadisticas.cs       Administración y responsables de laboratorio: Estadísticas (filtros, cinco cifras, seis pestañas y CSV)
+  PiezasEstadisticas.cs        Las cifras grandes de Estadísticas y las barras dentro de las celdas de sus tablas
   BotonCabecera.cs             Las pastillas de la cabecera del panel de administración (Mi perfil, Ajustes, Códigos, Alertas con campana y globo; Solo consulta)
   DialogoContrasenaAdmin.cs    Vuelve a pedir la contraseña de la administración antes de un cambio delicado; tres fallos cierran la sesión
   DialogoAccesoClases.cs       Cómo entra cada estudiante (por escuela o laboratorio) y el código de una clase abierta por la administración
@@ -1119,7 +1272,7 @@ DigBit/
   AdministrarAlumnos.cs, AdministrarProfesores.cs, AdministrarLaboratorios.cs   Secciones de la administración (Estudiantes, Docentes, Laboratorios)
   AdministrarEncargados.cs     Responsables de laboratorio, desde Docentes: alta, edición, contraseña y baja
   GestionBitacorasAdministrador.cs   Bitácoras: sesiones con filtros, quién registró y PDF (también «Mis bitácoras» del panel docente)
-  AdministrarHorarios.cs       Administración: Horarios (horario por laboratorio, clases, excepciones y faltas)
+  AdministrarHorarios.cs       Administración: Horarios por laboratorio (pestañas Horario semanal, Clases, Cambios de un día, Faltas y Próximo ciclo; choques de la semana)
   ColoresProfesor.cs           Un color por docente (el elegido o uno automático), el mismo en Horarios, Docentes y el panel
   SelectorColorProfesor.cs     El selector de color del diálogo de docente: muestra, automático, paleta y "Otro..."
   Profesor_Principal.cs, TarjetasProfesor.cs   Docente: su código con las bitácoras de la clase, sus clases de ayer, hoy y mañana, y sus secciones
@@ -1128,6 +1281,7 @@ DigBit/
   CirculoClase.cs              El círculo de cada clase (su imagen o sus iniciales sobre su color), el lomo de color y el botón del círculo
   ImagenDeClase.cs             Abre, endereza, recorta y reduce la imagen de una clase (128 x 128, como mucho 60 000 bytes)
   DialogoPersonalizarClase.cs  Docente: "Personalizar tu clase": imagen, color, nombre corto y a qué grupos se aplica
+  DialogoDarAsistencia.cs      Docente: «Dar asistencia» en Mis grupos (desde la casilla o por matrícula), con motivo, equipo y detalle (db/22)
   BitacoraSesion.cs            Quién registró en una clase: tabla en vivo, cuenta atrás y PDF
   TablaAlumnosPdf.cs           La tabla de estudiantes de los PDF de bitácoras
   Alumno_Principal.cs          Estudiante: el código, cómo está el equipo y si ve otros sin internet
@@ -1153,6 +1307,7 @@ Tablas de la base de datos:
 | `configuracion` | Ajustes de toda la escuela, como la dirección de la API de recuperación, el secreto de los códigos generados y la contraseña de `digbit_consulta` (los equipos solo la leen) |
 | `personalizacion_clases` | Lo que cada docente elige para sus clases, por materia (en todos sus grupos) o por grupo: imagen, color y nombre corto. Solo lo ven sus pantallas (db/19) |
 | `historial_cambios` | Quién cambió el horario, las clases, los laboratorios o una bitácora, cuándo, y qué decía antes y qué dice ahora. Solo se añade (db/21) |
+| `asistencias_dadas` | La asistencia que da el docente, durante su clase, a quien no pudo registrar su bitácora: quién, cuándo, por qué y desde qué equipo. Anularla no la borra (db/22) |
 
 ## Estado del proyecto y trabajo pendiente
 
@@ -1187,8 +1342,9 @@ que falta, en orden de prioridad:
       instalado.
 - [x] Guardar carrera/grupo al registrar una cuenta de estudiante.
 - [x] Horarios por laboratorio (fase 6): la administración arma la agenda de
-      cada laboratorio (docente, grupo, materia, código fijo) con excepciones
-      por día; el personal docente deja de generar códigos; cada equipo conoce su
+      cada laboratorio (docente, grupo, materia, código fijo) con cambios de un
+      día (pestañas Horario semanal, Clases, Cambios de un día, Faltas y Próximo
+      ciclo); el personal docente deja de generar códigos; cada equipo conoce su
       laboratorio; fila naranja para la bitácora que reporta una falla. Capa de
       datos probada contra un MySQL local; las pantallas compilan y falta
       probarlas con datos reales en el TESCHI.

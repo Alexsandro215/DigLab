@@ -49,6 +49,24 @@ namespace DigBit.conexion
 
         public List<AlumnoInfo> Listar()
         {
+            return Leer(null);
+        }
+
+        /// <summary>
+        /// Un alumno con todo lo de Listar (carrera, semestre, correo, estado...), o
+        /// null si ya no existe. Lo usa Estadisticas para abrir "Bitacoras de ..."
+        /// con el mismo objeto que la pantalla de Alumnos: su "Exportar sus datos"
+        /// escribe el perfil con lo que recibe. Lanza si no hay servidor.
+        /// </summary>
+        public AlumnoInfo Obtener(int id)
+        {
+            List<AlumnoInfo> leidos = Leer(id);
+            return leidos.Count == 0 ? null : leidos[0];
+        }
+
+        /// <summary>El SELECT de Listar; con id, solo ese alumno.</summary>
+        private List<AlumnoInfo> Leer(int? id)
+        {
             List<AlumnoInfo> lista = new List<AlumnoInfo>();
             using (MySqlConnection conexion = mconexion.GetConexion())
             {
@@ -72,12 +90,18 @@ namespace DigBit.conexion
                     LEFT JOIN (SELECT rb.fk_usuario, COUNT(*) AS bitacoras,
                                       MAX(COALESCE(ca.fecha, DATE(ca.hora_registro))) AS ultima
                                  FROM registros_bitacoras rb
-                                 INNER JOIN codigos_accesos ca ON ca.idcodigos_accesos = rb.fk_codigo_accesos
+                                 INNER JOIN codigos_accesos ca ON ca.idcodigos_accesos = rb.fk_codigo_accesos" + (id.HasValue ? @"
+                                WHERE rb.fk_usuario = @Id" : "") + @"
                                 GROUP BY rb.fk_usuario) b ON b.fk_usuario = u.idusuarios
-                    WHERE u.fk_tipo_usuario = @Tipo
+                    WHERE u.fk_tipo_usuario = @Tipo" + (id.HasValue ? " AND u.idusuarios = @Id" : "") + @"
                     ORDER BY u.apellido_paterno, u.apellido_materno, u.nombre", conexion))
                 {
                     comando.Parameters.AddWithValue("@Tipo", TipoUsuario);
+                    if (id.HasValue)
+                    {
+                        comando.Parameters.AddWithValue("@Id", id.Value);
+                    }
+
                     using (MySqlDataReader reader = comando.ExecuteReader())
                     {
                         while (reader.Read())

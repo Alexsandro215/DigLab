@@ -14,9 +14,9 @@ using Timer = System.Windows.Forms.Timer;
 namespace DigBit
 {
     /// <summary>
-    /// Panel del administrador. Arriba, las cinco secciones (bitacoras, alumnos,
-    /// profesores, laboratorios y horarios); debajo, con un reloj, lo que pasa en
-    /// cada laboratorio en la hora anterior, la actual y la siguiente.
+    /// Panel del administrador. Arriba, las seis secciones (bitacoras, alumnos,
+    /// profesores, laboratorios, horarios y estadisticas); debajo, con un reloj, lo
+    /// que pasa en cada laboratorio en la hora anterior, la actual y la siguiente.
     ///
     /// La hora es la del servidor MySQL, la misma con la que los equipos del
     /// laboratorio deciden si aceptan un codigo: si el reloj de esta PC va
@@ -100,6 +100,9 @@ namespace DigBit
         private NotifyIcon avisoWindows;
         private readonly AvisosDeAlertas avisos = new AvisosDeAlertas();
         private FormWindowState estadoSinMinimizar = FormWindowState.Maximized;
+        // Lo mismo para cada seccion (Mostrar): si se minimizo, vuelve como estaba
+        // (Estadisticas y Horarios, maximizadas).
+        private readonly Dictionary<Form, FormWindowState> estadoDeVentanas = new Dictionary<Form, FormWindowState>();
         private bool leyendoAlertas;
         private ResultadoAlertas alertas;
         private DateTime? alertasVistasHasta;
@@ -451,7 +454,8 @@ namespace DigBit
         {
             MessageBox.Show(this, "Entraste como responsable de laboratorio." + Environment.NewLine + Environment.NewLine
                 + "Puedes ver los laboratorios en vivo, las alertas, las bitácoras (y descargarlas en PDF), las listas de estudiantes y de docentes, "
-                + "los laboratorios y los horarios." + Environment.NewLine + Environment.NewLine
+                + "los laboratorios, los horarios y las estadísticas (y guardar en Excel las de laboratorios, grupos y equipos)."
+                + Environment.NewLine + Environment.NewLine
                 + "No puedes registrar, editar ni dar de baja a nadie, cambiar horarios ni clases, corregir bitácoras, ni cambiar "
                 + "los códigos de las clases o los ajustes. Si hace falta un cambio, pídeselo a la administración de DigBit." + Environment.NewLine + Environment.NewLine
                 + "Tu correo y tu contraseña sí los cambias tú, en Mi perfil.",
@@ -499,42 +503,54 @@ namespace DigBit
             TableLayoutPanel fila = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 5,
+                ColumnCount = 6,
                 RowCount = 1,
                 Margin = new Padding(0, 14, 0, 8)
             };
-            for (int i = 0; i < 5; i++)
+            for (int i = 0; i < fila.ColumnCount; i++)
             {
-                fila.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20F));
+                fila.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F / fila.ColumnCount));
             }
 
             fila.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
-            // El encargado de laboratorio (solo consulta) tiene las mismas cinco: cambia
-            // lo que dicen, porque en ellas solo busca, ve y descarga.
+            // El encargado de laboratorio (solo consulta) tiene las mismas seis: cambia
+            // lo que dicen, porque en ellas solo busca, ve y descarga. La fila no crece
+            // (a 1366x768 el panel en vivo ya va justo): donde la descripcion no cabe
+            // en sus 3 renglones (a 1280 y en el minimo del panel) se pinta la corta.
             bool soloConsulta = Permisos.SoloConsulta;
             AgregarSeccion(fila, 0, "Bitácoras", soloConsulta
                 ? "Consultar y descargar en PDF las bitácoras de cada clase."
-                : "Consultar, corregir y descargar las bitácoras de cada clase.", AbrirBitacoras);
+                : "Consultar, corregir y descargar las bitácoras de cada clase.", soloConsulta
+                ? "Consultar y descargar en PDF."
+                : "Consultar, corregir y descargar en PDF.", AbrirBitacoras);
             AgregarSeccion(fila, 1, "Estudiantes", soloConsulta
                 ? "Buscar estudiantes: su carrera, sus bitácoras y si su cuenta está de baja."
-                : "Buscar, registrar y editar estudiantes; ver sus bitácoras; dar de baja.", AbrirAlumnos);
+                : "Buscar, registrar y editar estudiantes; ver sus bitácoras; dar de baja.", soloConsulta
+                ? "Buscar; ver su carrera y sus bitácoras."
+                : "Buscar, registrar, editar y dar de baja.", AbrirAlumnos);
             AgregarSeccion(fila, 2, "Docentes", soloConsulta
                 ? "Buscar docentes; ver su horario y sus bitácoras."
-                : "Buscar, registrar y editar docentes y responsables de laboratorio; dar de baja.", AbrirProfesores);
+                : "Buscar, registrar y editar docentes y responsables de laboratorio; dar de baja.", soloConsulta
+                ? null
+                : "Docentes y responsables de laboratorio.", AbrirProfesores);
             AgregarSeccion(fila, 3, "Laboratorios", soloConsulta
                 ? "Ver cada laboratorio, cuánto se usa y su horario."
-                : "Dar de alta, cambiar el nombre, ver su horario o quitarlos.", AbrirLaboratorios);
-            AgregarSeccion(fila, 4, "Horarios", "Horario semanal, clases, excepciones y faltas.", () => AbrirHorarios(0));
+                : "Dar de alta, cambiar el nombre, ver su horario o quitarlos.", null, AbrirLaboratorios);
+            AgregarSeccion(fila, 4, "Horarios", "Horario semanal, clases, excepciones y faltas.", null, () => AbrirHorarios(0));
+            // La misma para la administracion y para el encargado: la ventana solo lee.
+            AgregarSeccion(fila, 5, "Estadísticas", "Asistencias y reportes de fallas por periodo.", null, AbrirEstadisticas);
             return fila;
         }
 
-        private void AgregarSeccion(TableLayoutPanel fila, int columna, string titulo, string descripcion, Action abrir)
+        /// <param name="corta">La que se pinta si la descripcion no cabe (TarjetaOpcion.DescripcionCorta); null si siempre cabe.</param>
+        private void AgregarSeccion(TableLayoutPanel fila, int columna, string titulo, string descripcion, string corta, Action abrir)
         {
             TarjetaOpcion tarjeta = new TarjetaOpcion(titulo, descripcion)
             {
+                DescripcionCorta = corta,
                 Dock = DockStyle.Fill,
-                Margin = new Padding(columna == 0 ? 0 : 6, 0, columna == 4 ? 0 : 6, 0)
+                Margin = new Padding(columna == 0 ? 0 : 6, 0, columna == fila.ColumnCount - 1 ? 0 : 6, 0)
             };
             tarjeta.Click += (s, e) => abrir();
             fila.Controls.Add(tarjeta, columna, 0);
@@ -622,19 +638,23 @@ namespace DigBit
             ModoCodigo general = ModosDeAcceso.General(datos.GeneralGuardada, modos);
             int otros = modos.Count(m => m != general);
             string forma = "Códigos: " + ModosDeAcceso.Nombre(general) + (otros == 0 ? "" : " (" + otros + " con otra forma)");
+            // En la ayuda, no en el texto (a 1366 ya no cabria el "Cambiar...").
+            string quienLosVe = datos.CodigosSoloResponsables
+                ? " Los docentes no ven los códigos: se los piden a la persona responsable del laboratorio (cada tarjeta dice el de su clase)."
+                : "";
             if (Permisos.SoloConsulta)
             {
                 // El encargado de laboratorio lo ve, pero no lo cambia: sin "Cambiar..."
                 // ni enlace, y habilitado para que su ayuda salga (como sin db/11).
                 lnkAcceso.Text = forma;
                 lnkAcceso.LinkArea = new LinkArea(0, 0);
-                ayudaAcceso.SetToolTip(lnkAcceso, ComoEntran + " Solo la administración de DigBit puede cambiarlo.");
+                ayudaAcceso.SetToolTip(lnkAcceso, ComoEntran + quienLosVe + " Solo la administración de DigBit puede cambiarlo.");
                 return;
             }
 
             lnkAcceso.Text = forma + ". Cambiar...";
             lnkAcceso.LinkArea = new LinkArea(0, lnkAcceso.Text.Length);
-            ayudaAcceso.SetToolTip(lnkAcceso, ComoEntran);
+            ayudaAcceso.SetToolTip(lnkAcceso, ComoEntran + quienLosVe);
         }
 
         private void CambiarAcceso()
@@ -789,6 +809,16 @@ namespace DigBit
         }
 
         /// <summary>
+        /// Asistencias, clases que se dieron y fallas del periodo (VentanaEstadisticas).
+        /// No escribe nada: el encargado de laboratorio la ve igual (con el CSV
+        /// limitado, lo decide la ventana).
+        /// </summary>
+        private void AbrirEstadisticas()
+        {
+            Mostrar("estadisticas", () => new VentanaEstadisticas());
+        }
+
+        /// <summary>
         /// Una ventana por seccion: si ya esta abierta se trae al frente. Al
         /// cerrarla se refresca el panel, que puede haber cambiado (un laboratorio
         /// nuevo, una clase desactivada).
@@ -798,8 +828,28 @@ namespace DigBit
             Form ventana;
             if (!ventanas.TryGetValue(clave, out ventana) || ventana.IsDisposed)
             {
+                if (ventana != null)
+                {
+                    estadoDeVentanas.Remove(ventana);
+                }
+
                 ventana = crear();
-                ventana.FormClosed += (s, e) => ActualizarDatos();
+                Form nueva = ventana;
+                // Como estaba antes de minimizarla (como el panel, OnSizeChanged): las
+                // que se abren maximizadas no vuelven en una ventana pequena.
+                estadoDeVentanas[nueva] = nueva.WindowState == FormWindowState.Minimized ? FormWindowState.Normal : nueva.WindowState;
+                nueva.SizeChanged += (s, e) =>
+                {
+                    if (nueva.WindowState != FormWindowState.Minimized)
+                    {
+                        estadoDeVentanas[nueva] = nueva.WindowState;
+                    }
+                };
+                nueva.FormClosed += (s, e) =>
+                {
+                    estadoDeVentanas.Remove(nueva);
+                    ActualizarDatos();
+                };
                 ventanas[clave] = ventana;
             }
 
@@ -813,7 +863,8 @@ namespace DigBit
 
             if (ventana.WindowState == FormWindowState.Minimized)
             {
-                ventana.WindowState = FormWindowState.Normal;
+                FormWindowState antes;
+                ventana.WindowState = estadoDeVentanas.TryGetValue(ventana, out antes) ? antes : FormWindowState.Normal;
             }
 
             ventana.Activate();
@@ -1171,7 +1222,8 @@ namespace DigBit
 
             actualizando = true;
             versionColores = ColoresProfesor.Version;
-            Task.Run(() => new HorariosDatos().PanoramaDelDia())
+            // Con "Los docentes no ven los codigos", tambien el de cada clase (para darselo al grupo).
+            Task.Run(() => new HorariosDatos().PanoramaDelDia(null, true))
                 .ContinueWith(tarea =>
                 {
                     try
@@ -1267,6 +1319,10 @@ namespace DigBit
             {
                 avisoWindows.Visible = false;
             }
+
+            // La lectura guardada de Estadisticas: otra cuenta no la reutiliza y no
+            // quedan datos de estudiantes en memoria al cerrar la sesion.
+            EstadisticasDatos.Olvidar();
 
             base.OnFormClosed(e);
         }

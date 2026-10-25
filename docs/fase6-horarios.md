@@ -63,6 +63,202 @@
 > 20 → encender la casilla en Ajustes. Un DigBit anterior no conoce las columnas
 > y vería a la vez la franja terminada y la nueva.
 
+> **Cambio del 2026-10-22: asistencias que da el docente (`db/22_asistencia_dada.sql`).**
+> Durante su clase, el docente puede dar la asistencia en Mis grupos a quien está
+> en el salón y no pudo registrar su bitácora (su equipo no tenía internet, no
+> funcionaba o no había uno libre). Para Horarios, eso quiere decir que la clase
+> se dio aunque nadie registrara, y que su sesión ya tiene historia:
+>
+> - **Faltas, estado ámbar** (`EstadoEnCalendario.SinBitacorasConAsistencia`):
+>   - Cuándo: una clase que ya pasó, que contaba, sin bitácoras propias y con
+>     asistencias dadas en su sesión. Se pinta en **ámbar**, con el pie «Sin
+>     bitácoras: 2 asistencias dadas»: se dio.
+>   - Orden de las reglas: se decide después de cancelada, por venir, con
+>     bitácoras (también las de otra sesión: recortes y clases seguidas con
+>     código fijo) y no contaba.
+>   - No es falta: no da la alerta «Nadie registró bitácora» y su menú no ofrece
+>     «Marcar como no dada»; «Ver quién registró (0 bitácoras; 2 asistencias
+>     dadas)...» dice cuántas hubo.
+>   - El día del mes no se pinta de rojo por ella. Con la 22, el verde de la
+>     leyenda dice «Todas se dieron».
+>   - Los resúmenes de la semana y del mes la cuentan aparte («... y 2 sin
+>     bitácoras con asistencia dada (en ámbar)»), y la ayuda de la leyenda lo
+>     explica.
+>   - Las asistencias anuladas no cuentan: una clase con solo anuladas sale en
+>     rojo, como en la lista de asistencia. Mientras la clase está en curso sigue
+>     en gris.
+> - **Guardas de Horarios:** una sesión con asistencias dadas, también las
+>   anuladas (son historia), cuenta como una con bitácoras:
+>   - La franja que hoy ya tuvo clase así se cambia o se quita, como pronto,
+>     desde mañana (con la casilla de Ajustes encendida). Editada en su sitio,
+>     su sesión de hoy conserva sus horas y su enlace, y no se desenlaza.
+>   - Una sesión extra con ellas no se quita ni se recorta, tampoco desde
+>     «Aplicar excepción».
+>   - Lo que le quedaba a una clase recortada con ellas no se devuelve entero (no
+>     se quita su cancelación), y ese recorte impide quitar la franja desde esa
+>     fecha.
+>   - Una clase con ellas tiene historia: no cambia de docente, grupo ni materia.
+>   - Los avisos dicen «... o asistencias que dio su docente» solo cuando las hay.
+> - Alertas, «Los laboratorios ahora» y el horario de tres días del docente
+>   dicen cuántas asistencias dio su docente en una clase sin bitácoras.
+> - Sin la 22, todo como antes.
+
+> **Cambio del 2026-10-24: configuraciones de horario y su aplicación
+> (`db/16_ciclo_preliminar.sql` y `db/23_horarios_guardados.sql`).** Dos
+> pestañas nuevas al final de Horarios (desde el 2026-10-25 son una sola,
+> **Próximo ciclo**, con las configuraciones llamadas plantillas: ver abajo). En **Configuraciones** se guarda el
+> horario (cada docente con sus clases y sus horas en cada laboratorio), se
+> tienen varios guardados y se prepara el del próximo ciclo; nada de eso cambia
+> los laboratorios. **Aplicación** es el paso aparte que lo pone en uso
+> (`PestanaAplicacion`, `CicloPreliminarDatos.Aplicar.cs`, `RevisionAplicacion`):
+>
+> - **Qué pide:** el primer y el último día del horario nuevo, el último día del
+>   de ahora (por omisión, la víspera; si antes hay vacaciones, el último día de
+>   clases, para que las vacaciones no cuenten como faltas) y el nombre con que
+>   queda en el registro.
+> - **Antes de aplicar**, revisado en segundo plano cada vez que cambia una
+>   fecha:
+>   - en rojo, lo que no deja aplicar: clases sin docente, de docentes de baja o
+>     con horas en un laboratorio desactivado; choques, también con las clases
+>     que ya están en Clases en esas fechas; clases repetidas; la misma clase
+>     (docente, grupo y materia) ya en Clases en esas fechas (la regla de
+>     `ExigirSinCruceDeTerna`); fechas fuera de orden; una sesión o asistencia
+>     ya registrada después del último día del de ahora, y un nombre repetido;
+>   - en ámbar, lo que solo avisa: clases sin horario, la misma materia con dos
+>     docentes, cambios «desde una fecha» y sesiones extra que quedan fuera, un
+>     último día que ya pasó, que empieza mañana, y la casilla de Ajustes «Los
+>     cambios de horario aplican desde una fecha» apagada, con dónde se
+>     enciende (encendida sale en verde).
+> - **Al aplicar** (con la contraseña de la administración, todo en una
+>   transacción que vuelve a revisar lo mismo):
+>   - crea las clases con esa vigencia y el código de su docente (quien no tiene,
+>     lo recibe) y sus franjas **sin fecha propia** (`vigente_desde` y
+>     `vigente_hasta` en NULL): su vigencia es la de su clase;
+>   - las clases que valen el último día del de ahora y siguen después terminan
+>     ese día, nunca antes de su última sesión; también las desactivadas, sin
+>     tocar `activa`. Lo de antes queda en `ciclo_recortes`;
+>   - no borra nada ni toca franjas, excepciones, sesiones, bitácoras ni
+>     asistencias, y deja **un solo renglón** en el historial («Horario
+>     aplicado», tipo `horario`), que a las demás cuentas les llega como alerta
+>     «Cambio de horario»;
+>   - con la casilla marcada, antes guarda el horario de ese día «como quedó»,
+>     como configuración guardada.
+> - **Deshacer**, mientras no empiece y ninguna de sus clases tenga sesiones ni
+>   asistencias dadas: borra sus clases (con sus franjas y excepciones) y
+>   devuelve su fecha de fin a las de antes, salvo a las que se les cambió
+>   después o que se cruzarían con otra igual. Vuelve a quedar en preparación,
+>   con sus fechas como propuesta. También pide la contraseña.
+> - **Los equipos no se actualizan.** Un DigBit anterior a la 20 decide con la
+>   vigencia de la clase: no ve las clases nuevas antes de su primer día ni las
+>   de antes después de su fin, y nunca dos veces la misma hora (probado con la
+>   compilación del 13/10/2026).
+> - **La casilla de Ajustes no se enciende sola al aplicar:** es de todos los
+>   equipos y cambia cómo funcionan «Editar franja» y «Quitar franja».
+> - **Retoques:** antes de que empiece, en Horarios y Clases, en su sitio
+>   (todavía no tiene historia); después, «desde una fecha». La configuración
+>   aplicada guarda cómo se aplicó y no cambia con esos retoques.
+> - La persona responsable del laboratorio ve lo aplicado, sin aplicar ni
+>   deshacer.
+> - Pruebas: `deploy\probar_aplicar.ps1` (en la base local con MySQL 8 y en
+>   MariaDB 5.5; deja la base como estaba).
+
+> **Cambio del 2026-10-25: «No tomar en cuenta» en Faltas (sin migración).**
+> Al cambiar el horario a mitad de ciclo, las clases que ya no se daban salían
+> en rojo y había que marcarlas como no dadas una por una. Ahora, bajo el
+> resumen del mes de Faltas, la administración tiene dos botones
+> (`PestanaCalendario`; la persona responsable del laboratorio no los ve y la
+> capa de datos se lo rechaza con `Permisos.Exigir`):
+>
+> - **«No tomar en cuenta...»:** se elige el laboratorio (el de Faltas, o
+>   «Todos los laboratorios» activos), las fechas (del primer día del mes que se
+>   ve hasta hoy, como mucho hoy y 400 días) y el motivo (por omisión «Cambio de
+>   horario»). La vista previa lee esas fechas igual que Faltas
+>   (`LeerCalendario` con su casilla) y dice «17 clases sin bitácoras dejarán
+>   de contar como faltas», con su lista.
+>   - Solo entran las clases del horario en rojo (`HorariosDatos.EntraEnNoTomar`):
+>     las que tienen bitácoras o asistencias dadas no se tocan. Las sesiones
+>     extra en rojo (y lo que le quedó a una clase recortada) tampoco: «Marcar
+>     como no dada» las borra, y en lote se borraría algo que no se puso aquí;
+>     la nota las cuenta y dice que se quitan una por una.
+>   - Al aceptar (`HorariosDatos.NoTomarEnCuenta`), en **una** transacción que
+>     vuelve a leer esas fechas, cada una se cancela ese día como «Marcar como
+>     no dada» (`InsertarCancelada`), con el motivo y « (no tomar en cuenta)» al
+>     final, todas con el mismo `creada_en` y `creada_por`. Lo que ya no está en
+>     rojo no se toca. No borra nada. Deja **un** renglón en el historial
+>     (db/21; tipo `cancelacion`, acción `no_contar`, con la lista de clases sin
+>     su código); sin la 21, ninguno.
+>   - Desde ese momento salen canceladas (rayadas) en Faltas, no dan la alerta
+>     «Nadie registró bitácora» y en Estadísticas (C2) cuentan como canceladas.
+> - **«Volver a contar...»** (deshacer): la lista de cada vez que se usó y
+>   sigue puesta (`LeerLotesSinContar`: las cancelaciones con la marca,
+>   agrupadas por motivo, quién y `creada_en`). Al elegir una,
+>   `VolverAContar` quita en una transacción **solo** esas cancelaciones (nada
+>   que no haya puesto «No tomar en cuenta») y deja un renglón (acción
+>   `volver_a_contar`); sus clases vuelven a salir como antes. Si a alguna se
+>   le puso después una sesión extra de su misma clase en sus horas, no cambia
+>   nada y dice cuál quitar antes. Una sola cancelación del lote también se
+>   puede quitar en Cambios de un día, como cualquier otra.
+> - Sin tabla nueva: el lote se reconoce por la marca del motivo y su
+>   `creada_en`. Vale igual sin db/20, db/21 ni db/22.
+> - Pruebas (2026-10-25): una copia temporal de la base local (MySQL 8) y la
+>   3318 (MariaDB 5.5): la vista previa cuenta lo mismo que Faltas; tras
+>   aplicar, Faltas, Alertas y C2 cambian solo en esas clases; volver a contar
+>   deja `CHECKSUM` de `horario_excepciones` y de las demás tablas como antes.
+
+> **Cambio del 2026-10-25: la ventana Horarios por laboratorio, más clara (sin
+> migración).** Las pestañas dicen qué se hace en ellas y van de lo de todos los
+> días a lo que aún no se usa:
+>
+> | Antes | Ahora | Persona responsable del laboratorio |
+> |---|---|---|
+> | Horarios | **Horario semanal** | Horario semanal |
+> | Clases | **Clases** | Clases |
+> | Excepciones | **Cambios de un día** | Cambios de un día |
+> | Faltas | **Faltas** | Faltas |
+> | Configuraciones + Aplicación | **Próximo ciclo** (en azul grisáceo: 1. Plantillas, 2. Preparación, 3. Aplicar con fechas; `PestanaProximoCiclo`) | **Horarios guardados** (solo la lista, para ver) |
+>
+> - **El renglón de abajo del título** dice para qué sirve la pestaña que se ve
+>   (uno por pestaña y por cuenta). «F5 actualiza y Esc cierra» pasa a la ayuda
+>   de Cerrar. La persona responsable tiene la pastilla «Solo consulta» junto
+>   al título.
+> - **Una palabra por acción**, las mismas que en la preparación de Próximo
+>   ciclo (`TextosDelHorario`): «Poner clase...», «Cambiar horas...», «Quitar
+>   horas...» y, solo en el horario en uso, «Cambio de un día...»; «Cancelar
+>   esta clase ese día...», «Volver a darla ese día...», «Dar una sesión
+>   extra...». «Aplicar» queda solo para el horario nuevo. El menú de una clase
+>   la nombra por su materia y su grupo. Cancelar una clase un día pide
+>   «Cancelar la clase» (en rojo) o «Volver», también desde Faltas y Alertas.
+> - **Botones apagados sin nada elegido** (con cuadros libres, «Poner clase...»;
+>   con cuadros, «Cambio de un día...»; con una clase, «Cambiar horas...» y
+>   «Quitar horas...»); al pasar el ratón dicen qué elegir. En Cambios de un
+>   día, con «Una semana» o «Un mes» (solo los cambios) no salen los botones y
+>   lo dice.
+> - **La leyenda de Horario semanal**, en dos renglones: arriba, en verde o en
+>   ámbar, el acceso y si «Cambiar horas» vale desde una fecha o también para
+>   las semanas pasadas (la casilla de Ajustes); debajo, cómo se usa.
+> - **Saltos entre pestañas:** «Ver las faltas de esta semana >» (Horario
+>   semanal → Faltas), «Ver esta semana en Horario semanal >» (Faltas), «Ver en
+>   el horario» (Clases: el laboratorio donde la clase tiene más horas, con su
+>   docente resaltado), «Ver esta clase en Clases» y «Ver el ... en Cambios de
+>   un día» (menú de una clase) y «Ver la semana en Horario semanal >» (Cambios
+>   de un día). El laboratorio elegido es el mismo en Horario semanal, Cambios
+>   de un día, Faltas y la preparación de Próximo ciclo.
+> - **Choques del horario en uso:** Horario semanal cuenta los de la semana que
+>   se ve (de lunes a domingo, en todos los laboratorios activos) con la regla
+>   de la revisión de Próximo ciclo: el mismo día, a horas que se cruzan, en el
+>   mismo laboratorio, con la misma persona docente o con el mismo grupo
+>   (`ChoqueEnUso`, sobre `HorariosDatos.ObtenerTodasLasFranjas`). Los dice la
+>   pastilla roja «Choques: N» (clic: la lista, con «Ver en el horario») y, en
+>   el laboratorio que se ve, cada clase que choca va en rojo con «Choca: mismo
+>   grupo». Con la base local salen los 22 que encontró la revisión de una copia
+>   del horario de hoy (datos de prueba cargados con SQL, sin pasar por la
+>   validación).
+> - **Clases antes de las 07:00 o después de las 21:00:** la cuadrícula
+>   (Horario semanal, Faltas y el PDF; `CuadriculaSemanal.HorasSegunClases`)
+>   amplía sus horas a las de las clases de esa semana. Con más de 14 horas,
+>   cada una puede encogerse hasta 22 px: a 1366x768 caben hasta 19 sin barra.
+>   Antes, una clase de las 06:00 se dibujaba desde las 07:00.
+
 ## Objetivo
 
 Hoy el profesor genera un código al llegar a clase y ese código vale en
@@ -156,7 +352,7 @@ pasaron:
   materia y el grupo), con marco naranja y `EXTRA dd/MM` donde va el código.
   Si cae sobre una franja que ese día **no** está cancelada (un choque), va
   rayada en naranja encima de la franja. Clic encima: quitarla o ver ese día
-  en la pestaña Excepciones.
+  en la pestaña Cambios de un día.
 - **Franja cancelada**: rayado gris sobre la franja y un rótulo
   `CANCELADA dd/MM - motivo`. Desde el menú de la franja se puede quitar la
   cancelación.
@@ -242,7 +438,7 @@ DigBit arranca en el equipo del Lab 2
    │  DIGBIT_LABORATORIO) y lo resuelve a laboratorios.idlaboratorios
    ▼
 Login del alumno → pantalla de código
-   │  arriba muestra "Laboratorio 2 · ahora: Redes I, 3A, Prof. Velazco,
+   │  arriba muestra "Laboratorio 2, ahora: Redes I, 3A, Prof. Velazco,
    │  hasta 10:00" si hay clase en curso (o "sin clase programada ahora")
    ▼
 Teclea el código → Consultas.ResolverCodigo(codigo, idLaboratorio)
@@ -313,12 +509,12 @@ reloj del servidor, como hasta ahora.
 
 | Pantalla | Qué hace |
 |---|---|
-| **Horarios** | Selector de laboratorio y cuadrícula semanal con **un cuadro por hora** (lunes a sábado, 07:00 a 21:00). El administrador selecciona uno o varios cuadros libres, arrastrando o con Ctrl+clic, incluso en varios días, y les **asigna una clase** (maestro, materia, grupo, código) desde un diálogo: cada bloque contiguo se convierte en una franja y los solapes se informan por bloque. Arriba, la **semana** que se ve. Clic en una franja: menú con editar, borrar, cancelar solo ese día (el de su columna en la semana que se ve; si ya pasó, queda como no dada) y quitar esa cancelación. El arrastre empieza en cualquier cuadro, libre u ocupado, y `Ctrl+clic` suma cuadros sueltos; con varios cuadros seleccionados el menú ofrece *Asignar clase* (solo a los libres, para todas las semanas) y **Aplicar excepción** (solo ese día de la semana elegida): en un diálogo se puede cambiar de semana, se elige si solo se quitan esas horas o si entra una sesión extra de una clase, y el motivo; un resumen dice qué pasará con cada clase que se cruza ("se le quita 08:00-09:00; ese día da 09:00-10:00") y al aplicar se enseña lo que se hizo y la cuadrícula va a esa semana. Los colores de las franjas son **por maestro**. Doble clic: editar o nueva franja con horas a media hora. *Imprimir* a PDF queda pendiente. Con **generación de códigos** (db/11), cada clase enseña, en el sitio del código, el suyo de ese día: el de su sesión si ya se abrió y, si no, el generado; solo de las semanas que ya empezaron (los de una semana se generan su lunes) y solo aquí, no en el horario de un profesor. |
-| **Clases** | Lista de clases (profesor, grupo, materia, código, vigencia, activa). Arriba, un **buscador** (profesor, materia, grupo, código o número de empleado; sin importar acentos ni mayúsculas; con varias palabras salen las clases que las tienen todas) y una lista **Profesor** con el color y el número de clases de cada uno; los dos filtran lo ya leído, sin volver a la base. Nueva: elige profesor, grupo y materia; el código se propone aleatorio y se puede editar (se comprueba que no exista); vigencia con dos fechas. Editar: código y vigencia siempre (la vigencia sin dejar fuera ninguna de sus sesiones); profesor/grupo/materia solo si la clase aún no tiene sesiones pasadas ni con bitácoras (lo comprueba también la capa de datos). Desactivar si no tiene sesiones; con sesiones, *Terminar clase...* en una fecha. |
-| **Excepciones** | Filtro **Día / Semana / Mes** más laboratorio, con un **calendario propio** siempre visible a la izquierda (mes completo, flechas para cambiar de mes, hoy con borde naranja). Los días que no se pueden elegir salen **sombreados en gris** según el modo: en *Día* se elige cualquier día; en *Semana* sólo los lunes, y al elegir uno se marca la semana entera de lunes a domingo; en *Mes* ningún día es seleccionable y sólo se cambia de mes con las flechas, que marcan el mes completo. La selección se resalta en verde con un borde alrededor de todo el rango. En *Día* se lista la agenda completa de ese día (franjas efectivas y extras), que es desde donde se cancela una clase. En *Semana* (lunes a domingo) y *Mes* se listan **solo las excepciones** del rango, con su fecha, para revisarlas sin ir día por día. Columnas: Fecha, Inicio, Fin, Código, Materia, Grupo, Profesor, Estado ("normal" / "CANCELADA: motivo" / "extra: motivo"); canceladas en gris, extras en naranja claro, y un rótulo con el rango y cuántas excepciones hay. Acciones: *Cancelar este día* sobre una franja normal (con motivo), *Quitar cancelación* (con lo que le quedaba a la clase si se recortó), *Sesión extra* (clase, inicio, fin, motivo; validada contra la agenda efectiva) y *Quitar extra* (pregunta si se devuelve lo que canceló). La columna **Código** dice con qué se entra ese día: el código del profesor, el generado de esa clase (generación de códigos) o «—» (sin códigos). |
-| **Faltas** (antes «Calendario») | Qué clases se quedaron **sin bitácoras** (`PestanaCalendario`, `HorariosDatos.LeerCalendario`). Se elige un **laboratorio** arriba (de entrada, el que se miraba en Horario) y a la izquierda sale el **calendario del mes** (◀ ▶ para cambiar de mes): cada día en **rojo** si alguna de sus clases se quedó sin bitácoras (con cuántas), **verde** si todas las que contaban registraron, gris si no contaban o aún no pasan, blanco sin clases; hoy con borde naranja. **Al pulsar un día** se elige su semana (fila con marco verde; también con las flechas del teclado) y, debajo del calendario, un resumen del mes. La casilla *Contar también los laboratorios que aún no usan DigBit* empieza **sin marcar** (se recuerda en la sesión), igual que en las Alertas: un laboratorio cuenta desde su primera bitácora con DigBit y lo de antes, como los laboratorios que aún no lo usan, sale en gris, así que el rojo es siempre una falta de verdad. Marcada, toda clase que ya pasó sin bitácoras sale en rojo, también en los laboratorios que todavía registran en el sistema anterior, donde ese rojo no quiere decir que no se dio la clase. Se leen las seis semanas que se ven del mes. A la derecha, el horario de la semana elegida **tal cual, sin los colores ni los códigos de cada docente**: en **rojo** las clases que ya pasaron y en las que nadie registró bitácora; en blanco las que sí, con cuántas; en gris las que aún no terminan o no cuentan (el laboratorio todavía no registraba con DigBit, la persona docente estaba de baja, la extra se puso cuando ya había pasado); rayadas las canceladas. Un laboratorio cuenta desde su primera sesión enlazada al horario. Las sesiones sin enlace se emparejan por laboratorio, día, profesor y horas; las que no son de ninguna clase se listan aparte. En los laboratorios con código fijo, quien llega en los 15 minutos antes de la segunda de dos clases seguidas del mismo profesor queda en la sesión de la primera: se le cuentan a la segunda (por `registrado_en`, hasta 10 minutos después de su inicio, lo que tarda en llenarse la bitácora); y lo que le queda a una clase recortada (aunque se recortara con la clase empezada o ya pasada) cuenta con las bitácoras de su franja. Cada semana se juzga con las franjas que se daban entonces (su vigencia propia, db/20): con la casilla de Ajustes encendida, mover, quitar o añadir una franja no cambia las semanas anteriores. Sin la 20, o con la casilla apagada, las semanas pasadas se juzgan con el horario de hoy (si se mueve o se añade una franja, sus semanas anteriores salen con la nueva). Clic en una clase: ver quién registró, o marcar una en rojo como no dada (se cancela ese día, con motivo). |
+| **Horario semanal** (antes «Horarios») | Selector de laboratorio y cuadrícula semanal con **un cuadro por hora** (lunes a sábado, 07:00 a 21:00). El administrador selecciona uno o varios cuadros libres, arrastrando o con Ctrl+clic, incluso en varios días, y les **asigna una clase** (maestro, materia, grupo, código) desde un diálogo: cada bloque contiguo se convierte en una franja y los solapes se informan por bloque. Arriba, la **semana** que se ve. Clic en una franja: menú con editar, borrar, cancelar solo ese día (el de su columna en la semana que se ve; si ya pasó, queda como no dada) y quitar esa cancelación. El arrastre empieza en cualquier cuadro, libre u ocupado, y `Ctrl+clic` suma cuadros sueltos; con varios cuadros seleccionados el menú ofrece *Asignar clase* (solo a los libres, para todas las semanas) y **Aplicar excepción** (solo ese día de la semana elegida): en un diálogo se puede cambiar de semana, se elige si solo se quitan esas horas o si entra una sesión extra de una clase, y el motivo; un resumen dice qué pasará con cada clase que se cruza ("se le quita 08:00-09:00; ese día da 09:00-10:00") y al aplicar se enseña lo que se hizo y la cuadrícula va a esa semana. Los colores de las franjas son **por maestro**. Doble clic: editar o nueva franja con horas a media hora. *Imprimir* a PDF queda pendiente. Con **generación de códigos** (db/11), cada clase enseña, en el sitio del código, el suyo de ese día: el de su sesión si ya se abrió y, si no, el generado; solo de las semanas que ya empezaron (los de una semana se generan su lunes) y solo aquí, no en el horario de un profesor. |
+| **Clases** | Lista de clases (profesor, grupo, materia, código, vigencia, activa). Arriba, un **buscador** (profesor, materia, grupo, código o número de empleado; sin importar acentos ni mayúsculas; con varias palabras salen las clases que las tienen todas) y una lista **Profesor** con el color y el número de clases de cada uno; los dos filtran lo ya leído, sin volver a la base. Nueva: elige profesor, grupo y materia; el código se propone aleatorio y se puede editar (se comprueba que no exista); vigencia con dos fechas. Editar: código y vigencia siempre (la vigencia sin dejar fuera ninguna de sus sesiones); profesor/grupo/materia solo si la clase aún no tiene sesiones pasadas ni con bitácoras o asistencias dadas (lo comprueba también la capa de datos). Desactivar si no tiene sesiones; con sesiones, *Terminar clase...* en una fecha. |
+| **Cambios de un día** (antes «Excepciones»; ver el cambio del 2026-10-25, arriba) | Filtro **Mostrar** (Un día: todas sus clases / Una semana / Un mes: solo los cambios) más laboratorio, con un **calendario propio** siempre visible a la izquierda (mes completo, flechas para cambiar de mes, hoy con borde naranja). Los días que no se pueden elegir salen **sombreados en gris** según el modo: en *Día* se elige cualquier día; en *Semana* sólo los lunes, y al elegir uno se marca la semana entera de lunes a domingo; en *Mes* ningún día es seleccionable y sólo se cambia de mes con las flechas, que marcan el mes completo. La selección se resalta en verde con un borde alrededor de todo el rango. En *Día* se lista la agenda completa de ese día (franjas efectivas y extras), que es desde donde se cancela una clase. En *Semana* (lunes a domingo) y *Mes* se listan **solo las excepciones** del rango, con su fecha, para revisarlas sin ir día por día. Columnas: Fecha, Inicio, Fin, Código, Materia, Grupo, Profesor, Estado ("Se da" / "Cancelada: motivo" / "Sesión extra: motivo"); canceladas en gris, extras en naranja claro, y un rótulo con el rango y cuántas excepciones hay. Acciones, solo en «Un día»: *Cancelar esta clase ese día...* sobre una que se da (con motivo; «Cancelar la clase» o «Volver»), *Volver a darla ese día...* (quita la cancelación y lo que le quedaba a la clase si se recortó), *Dar una sesión extra...* (clase, inicio, fin, motivo; validada contra la agenda efectiva) y *Quitar la sesión extra...* (pregunta si se devuelve lo que canceló). «Ver la semana en Horario semanal >» lleva a esa semana. La columna **Código** dice con qué se entra ese día: el código del profesor, el generado de esa clase (generación de códigos) o «—» (sin códigos). |
+| **Faltas** (antes «Calendario») | Qué clases se quedaron **sin bitácoras** (`PestanaCalendario`, `HorariosDatos.LeerCalendario`). Se elige un **laboratorio** arriba (el mismo que en Horario semanal y Cambios de un día: al cambiarlo en una pestaña, las demás lo siguen) y a la izquierda sale el **calendario del mes** (◀ ▶ para cambiar de mes): cada día en **rojo** si alguna de sus clases se quedó sin bitácoras (con cuántas), **verde** si todas las que contaban registraron, gris si no contaban o aún no pasan, blanco sin clases; hoy con borde naranja. **Al pulsar un día** se elige su semana (fila con marco verde; también con las flechas del teclado) y, debajo del calendario, un resumen del mes. La casilla *Contar también los laboratorios que aún no usan DigBit* empieza **sin marcar** (se recuerda en la sesión), igual que en las Alertas: un laboratorio cuenta desde su primera bitácora con DigBit y lo de antes, como los laboratorios que aún no lo usan, sale en gris, así que el rojo es siempre una falta de verdad. Marcada, toda clase que ya pasó sin bitácoras sale en rojo, también en los laboratorios que todavía registran en el sistema anterior, donde ese rojo no quiere decir que no se dio la clase. Se leen las seis semanas que se ven del mes. A la derecha, el horario de la semana elegida **tal cual, sin los colores ni los códigos de cada docente**: en **rojo** las clases que ya pasaron y en las que nadie registró bitácora; en blanco las que sí, con cuántas; en gris las que aún no terminan o no cuentan (el laboratorio todavía no registraba con DigBit, la persona docente estaba de baja, la extra se puso cuando ya había pasado); rayadas las canceladas. Un laboratorio cuenta desde su primera sesión enlazada al horario. Las sesiones sin enlace se emparejan por laboratorio, día, profesor y horas; las que no son de ninguna clase se listan aparte. En los laboratorios con código fijo, quien llega en los 15 minutos antes de la segunda de dos clases seguidas del mismo profesor queda en la sesión de la primera: se le cuentan a la segunda (por `registrado_en`, hasta 10 minutos después de su inicio, lo que tarda en llenarse la bitácora); y lo que le queda a una clase recortada (aunque se recortara con la clase empezada o ya pasada) cuenta con las bitácoras de su franja. Cada semana se juzga con las franjas que se daban entonces (su vigencia propia, db/20): con la casilla de Ajustes encendida, mover, quitar o añadir una franja no cambia las semanas anteriores. Sin la 20, o con la casilla apagada, las semanas pasadas se juzgan con el horario de hoy (si se mueve o se añade una franja, sus semanas anteriores salen con la nueva). Clic en una clase: ver quién registró, o en una en rojo «Cancelar esta clase ese día (no se dio)...» (con motivo). «Ver esta semana en Horario semanal >», a la derecha del título de la semana, lleva a esa semana en el mismo laboratorio. Con db/22, en **ámbar** las que ya pasaron sin bitácoras pero con asistencias que dio su docente: se dieron, así que no son faltas ni se marcan como no dadas (ver el cambio del 2026-10-22, arriba). Bajo el resumen del mes, solo la administración: **«No tomar en cuenta...»** (las clases en rojo de unas fechas dejan de contar en lote, con un motivo) y **«Volver a contar...»** para deshacerlo (ver el cambio del 2026-10-25, arriba). |
 
-La ventana abre **maximizada** en la pestaña Horarios (las cuatro, en este orden: Horarios, Clases, Excepciones y Faltas) y usan todo el espacio: en
+La ventana abre **maximizada** en la pestaña Horario semanal (las cinco, en este orden: Horario semanal, Clases, Cambios de un día, Faltas y Próximo ciclo) y usan todo el espacio: en
 la cuadrícula cada clase enseña el profesor y el código en la primera línea,
 la materia con el grupo a la derecha en la segunda y la hora si cabe.
 
@@ -385,8 +581,12 @@ laboratorio de cada equipo y recorrer las pantallas con datos reales.
   laboratorio sin avisar**: sin excepción registrada, el código no entra. Es
   el comportamiento pedido (punto 3), pero conviene que el administrador pueda
   crear la extra en el momento, desde cualquier equipo.
-- **Cambio de semestre.** Nuevas clases con nueva vigencia; las anteriores
-  caducan solas por fecha. El historial de sesiones y bitácoras se conserva.
+- **Cambio de semestre.** Se prepara y se aplica en Horarios > Próximo ciclo
+  (pasos 2 y 3; cambios del 2026-10-24 y 2026-10-25, arriba): las clases nuevas
+  quedan con su vigencia y las de antes terminan el último día que se les da,
+  sin borrar nada. El historial de sesiones y bitácoras se conserva. Aplicar a
+  mitad del ciclo parte en dos cada clase que sigue igual, con su asistencia por
+  separado: para los ajustes de por medio están los cambios «desde una fecha».
 - **Equipos con un DigBit anterior a la 20** (Deep Freeze, reimaginados cada
   semestre): deciden con su propio SQL y no conocen la vigencia de las franjas.
   Con la casilla de Ajustes encendida verían a la vez la franja terminada y la

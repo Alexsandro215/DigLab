@@ -26,6 +26,10 @@ namespace DigBit
     /// naranja entre el encabezado y la tabla, un renglon por reporte. La fila
     /// elegida va en verde claro (la de una falla, en un naranja mas intenso) y
     /// ni el refresco de cada 10 s ni F5 la cambian, ni el orden, ni lo que se ve.
+    ///
+    /// Las asistencias que dio el profesor a quien no pudo registrar (db/22) no
+    /// son bitacoras: no van en la tabla; la linea de abajo las cuenta, su ayuda
+    /// dice a quien y el PDF las lleva en su propia tabla.
     /// </summary>
     public class BitacoraSesion : Form
     {
@@ -88,6 +92,18 @@ namespace DigBit
         private int reportesPuestos;
         // Ya se anoto en el log que no se pudieron leer los reportes (no cada 10 s).
         private bool avisoReportes;
+        // Las asistencias que dio el profesor en esta sesion (db/22; vacia sin la 22). Si
+        // una lectura falla se quedan las de la anterior, como los reportes.
+        private List<AsistenciaDada> dadasPuestas = new List<AsistenciaDada>();
+        private bool avisoDadas;
+        private readonly LectorDeDadas lectorDadas = new LectorDeDadas();
+        // La ayuda de la linea de abajo, que dice a quien se le dio. Solo desde que hubo
+        // alguna: con su propia ayuda la Label ya no ensena la suya del "..." (el texto
+        // entero), asi que desde entonces esta lo lleva siempre.
+        private readonly ToolTip ayudaCantidad = new ToolTip { AutoPopDelay = 30000, InitialDelay = 400 };
+        private bool conAyudaCantidad;
+        // Lo que dice esa ayuda: solo se vuelve a poner si cambio (no cada 10 s, por si se esta viendo).
+        private string ayudaCantidadPuesta;
         private readonly ToolTip ayudaBotones = new ToolTip();
         // La celda de la falla, en negrita con la letra de la tabla (no con la del formulario).
         private readonly DrawingFont fuenteFalla = new DrawingFont("Century Gothic", 9F, FontStyle.Bold);
@@ -130,6 +146,8 @@ namespace DigBit
             MinimizeBox = false;
             StartPosition = FormStartPosition.CenterParent;
             ShowInTaskbar = false;
+            // El icono de DigBit en su barra: el del panel del administrador, como Mi horario.
+            Icon = (Icon)new ComponentResourceManager(typeof(PrincipalAdministrador)).GetObject("$this.Icon");
             Text = "Bitácora de la clase";
 
             int ancho = ClientSize.Width;
@@ -326,6 +344,7 @@ namespace DigBit
             }
 
             ayudaBotones.Dispose();
+            ayudaCantidad.Dispose();
             base.OnFormClosed(e);
         }
 
@@ -459,22 +478,50 @@ namespace DigBit
                 }
             }
 
+            // Las asistencias que dio su docente a quien no pudo registrar (db/22). Si no se
+            // pueden leer, quien registro se ve igual y la linea cuenta las de antes.
+            try
+            {
+                dadasPuestas = lectorDadas.DeLaSesion(idSesion);
+            }
+            catch (Exception ex)
+            {
+                if (!avisoDadas)
+                {
+                    avisoDadas = true;
+                    Log.Aviso("BitacoraSesion: no se pudieron leer las asistencias dadas de la sesion " + idSesion + ": " + ex.Message);
+                }
+            }
+
             int conFalla = alumnos.Rows.Cast<DataRow>().Count(Consultas.ConFalla);
             string sinInternet = Consultas.DescribirSinInternet(Consultas.ContarSinInternet(
                 alumnos.Rows.Cast<DataRow>().Select(f => f["avisa_sin_internet"].ToString())), true);
             // Los que dice la franja (si esta vez no se pudieron leer, los de la lectura anterior).
             int delProfesor = reportesPuestos;
+            int dadas = dadasPuestas.Count;
             // "Ningun alumno reporto fallas" y no "sin fallas": junto a lo que reporto el profesor
-            // se contradiria. Sin registros (la sesion la abrio un reporte del profesor), nada
-            // de los alumnos.
+            // se contradiria. Sin registros (la sesion la abrio un reporte del profesor o una
+            // asistencia que dio), nada de los alumnos. Lo del profesor en una sola frase: a
+            // 1366 la linea mide unos 680 px y "la asistencia a N estudiantes" ya no cabria.
+            List<string> delDocente = new List<string>();
+            if (delProfesor > 0)
+            {
+                delDocente.Add("reportó " + (delProfesor == 1 ? "1 falla" : delProfesor + " fallas"));
+            }
+
+            if (dadas > 0)
+            {
+                delDocente.Add("dio " + (dadas == 1 ? "1 asistencia" : dadas + " asistencias") + " sin bitácora");
+            }
+
             lblCantidad.Text = "Registros: " + alumnos.Rows.Count
                 + (alumnos.Rows.Count == 0 ? ""
                     : conFalla == 0 ? ". Nadie reportó fallas en su bitácora"
                     : conFalla == 1 ? ". 1 estudiante reportó fallas" : ". " + conFalla + " estudiantes reportaron fallas")
                 + (sinInternet.Length > 0 ? ". " + sinInternet : "")
-                + (delProfesor == 1 ? ". Su docente reportó 1 falla"
-                    : delProfesor > 1 ? ". Su docente reportó " + delProfesor + " fallas" : "")
+                + (delDocente.Count > 0 ? ". Su docente " + string.Join(" y ", delDocente) : "")
                 + ".";
+            PonerAyudaDeLaCantidad(alumnos);
             btnDescargar.Enabled = true;
             MostrarTiempoRestante();
         }
@@ -497,6 +544,51 @@ namespace DigBit
             lblReportes.Text = renglones;
             pnlReportes.AccessibleName = renglones.Length == 0 ? null : lblReportesTitulo.Text + " " + renglones.Replace(Environment.NewLine, " ");
             AcomodarReportes(false);
+        }
+
+        /// <summary>
+        /// La ayuda de la linea de abajo cuando su docente dio asistencias sin
+        /// bitacora: la linea entera y, debajo, a quien, a que hora y por que (como
+        /// mucho 15; el resto, en el PDF). Sin ninguna, y si nunca las hubo, nada:
+        /// la Label sigue ensenando sola su texto entero si no cabe.
+        /// </summary>
+        private void PonerAyudaDeLaCantidad(DataTable alumnos)
+        {
+            if (dadasPuestas.Count == 0 && !conAyudaCantidad)
+            {
+                return;
+            }
+
+            conAyudaCantidad = true;
+            string ayuda = lblCantidad.Text;
+            if (dadasPuestas.Count > 0)
+            {
+                HashSet<string> conBitacora = new HashSet<string>(alumnos.Rows.Cast<DataRow>().Select(f => f["fk_usuario"].ToString()));
+                const int Maximo = 15;
+                ayuda += Environment.NewLine + Environment.NewLine
+                    + "Asistencias que dio su docente sin bitácora (cuentan en la lista, pero no son bitácoras):";
+                foreach (AsistenciaDada dada in dadasPuestas.Take(Maximo))
+                {
+                    string detalle = dada.Motivo == AsistenciasDadas.Otro ? "" : (dada.Comentario ?? "").Trim();
+                    ayuda += Environment.NewLine + dada.DadaEn.ToString("HH:mm", CultureInfo.InvariantCulture) + "  " + dada.Nombre + ": "
+                        + AsistenciasDadas.EnFrase(dada)
+                        + (string.IsNullOrWhiteSpace(dada.Equipo) ? "" : " (" + dada.Equipo + ")")
+                        + (detalle.Length > 0 ? ". " + detalle : "")
+                        + (conBitacora.Contains(dada.AlumnoId.ToString(CultureInfo.InvariantCulture)) ? ". Después llegó su bitácora" : "")
+                        + ".";
+                }
+
+                if (dadasPuestas.Count > Maximo)
+                {
+                    ayuda += Environment.NewLine + "... y " + (dadasPuestas.Count - Maximo) + " más (todas, en el PDF).";
+                }
+            }
+
+            if (ayuda != ayudaCantidadPuesta)
+            {
+                ayudaCantidadPuesta = ayuda;
+                ayudaCantidad.SetToolTip(lblCantidad, ayuda);
+            }
         }
 
         /// <summary>
@@ -854,7 +946,8 @@ namespace DigBit
                 datosPdf.Profesor = nombreProfesor;
             }
 
-            PdfBitacora.Escribir(datosPdf, consultas.consultaRegistroSesion(idSesion), destino);
+            // Con las asistencias que dio su docente (db/22), en su propia tabla; sin la 22, el de siempre.
+            PdfBitacora.Escribir(datosPdf, consultas.consultaRegistroSesion(idSesion), lectorDadas.DeLaSesion(idSesion), destino);
         }
     }
 }

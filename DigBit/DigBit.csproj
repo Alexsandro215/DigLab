@@ -147,6 +147,10 @@
     <Compile Include="conexion\VigenciaFranjas.cs" />
     <Compile Include="conexion\ResumenDeClase.cs" />
     <Compile Include="conexion\HistorialCambios.cs" />
+    <Compile Include="conexion\CicloPreliminarDatos.cs" />
+    <Compile Include="conexion\CicloPreliminarDatos.Aplicar.cs" />
+    <Compile Include="conexion\RevisionCiclo.cs" />
+    <Compile Include="conexion\RevisionAplicacion.cs" />
     <Compile Include="Infraestructura\Inactividad.cs" />
     <Compile Include="VentanaHistorialAlumno.cs">
       <SubType>Form</SubType>
@@ -172,8 +176,11 @@
     <Compile Include="conexion\AjustesDatos.cs" />
     <Compile Include="conexion\AlertasDatos.cs" />
     <Compile Include="conexion\ReportesProfesorDatos.cs" />
+    <Compile Include="conexion\SesionDeHoy.cs" />
     <Compile Include="conexion\AsistenciaDatos.cs" />
+    <Compile Include="conexion\AsistenciasDadas.cs" />
     <Compile Include="conexion\ResumenAsistencia.cs" />
+    <Compile Include="conexion\EstadisticasDatos.cs" />
     <Compile Include="conexion\CuentaDeConsulta.cs" />
     <Compile Include="conexion\EncargadosDatos.cs" />
     <Compile Include="conexion\PersonalizacionClasesDatos.cs" />
@@ -270,13 +277,22 @@
     <Compile Include="DialogoReporteFalla.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="DialogoDarAsistencia.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="VentanaMisGrupos.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="VentanaEstadisticas.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="HojaAsistencia.cs">
       <SubType>Component</SubType>
     </Compile>
     <Compile Include="TableroAsistencia.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="PiezasEstadisticas.cs">
       <SubType>Component</SubType>
     </Compile>
     <Compile Include="AdministrarEncargados.cs">
@@ -291,6 +307,15 @@
     </Compile>
     <Compile Include="PestanaCalendario.cs">
       <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="PestanaProximoCiclo.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="PestanaAplicacion.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="DialogosConfiguraciones.cs">
+      <SubType>Form</SubType>
     </Compile>
     <Compile Include="PrincipalAdministrador.cs">
       <SubType>Form</SubType>

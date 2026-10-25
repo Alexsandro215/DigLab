@@ -39,6 +39,8 @@ namespace DigBit.conexion
         public string Profesor = "";
         public TimeSpan Inicio;
         public TimeSpan Fin;
+        /// <summary>De una en curso: las asistencias que ya dio su profesor a quien no pudo registrar (db/22).</summary>
+        public int AsistenciasDadas;
 
         // De las fallas de un dia en un laboratorio.
         public int Bitacoras;
@@ -106,7 +108,12 @@ namespace DigBit.conexion
                     case TipoAlerta.SinBitacoras:
                         return clase + (EsExtra ? " (sesión extra)" : "") + ". ¿No vino o no pidió registrar?";
                     case TipoAlerta.EnCursoSinBitacoras:
-                        return clase + ": empezó a las " + HorariosDatos.Hora(Inicio) + " y nadie ha registrado. ¿Llegó su docente?";
+                        // Con asistencias dadas (db/22) su docente si llego: quiza no hay internet.
+                        return AsistenciasDadas > 0
+                            ? clase + ": empezó a las " + HorariosDatos.Hora(Inicio) + " y nadie ha registrado; su docente ya dio "
+                              + (AsistenciasDadas == 1 ? "1 asistencia" : AsistenciasDadas + " asistencias")
+                              + ": quizá los equipos del laboratorio no tienen internet."
+                            : clase + ": empezó a las " + HorariosDatos.Hora(Inicio) + " y nadie ha registrado. ¿Llegó su docente?";
                     case TipoAlerta.CambioDeHorario:
                         return QueCambio.TrimEnd('.') + ". Lo hizo " + Quien + ".";
                     default:
@@ -262,9 +269,12 @@ namespace DigBit.conexion
     ///  - Clases que terminaron sin bitacoras: la regla de la pestana Faltas
     ///    (HorariosDatos.LeerCalendario, con sus correcciones), y solo desde que
     ///    cada laboratorio usa DigBit: uno que aun no lo usa no llena de alertas.
+    ///    Una en la que su profesor dio asistencias (db/22) se dio: no es Falta
+    ///    (SinBitacorasConAsistencia, en ambar) y no avisa.
     ///  - Clases en curso sin nadie a los MinutosSinRegistro minutos, tambien solo
     ///    donde ya se usa DigBit y con la misma correccion de los que llegaron
     ///    antes con el codigo unico (quedan en la clase anterior del mismo profesor).
+    ///    Con asistencias dadas tambien avisa (quiza no hay internet), diciendolo.
     ///  - Fallas reportadas por laboratorio y dia (tambien en el uso libre), con
     ///    los equipos que avisaron sin internet (db/10).
     ///  - Cambios del horario que hizo otra persona (db/21, HistorialCambios):
@@ -364,7 +374,8 @@ namespace DigBit.conexion
                         Grupo = s.Grupo ?? "",
                         Profesor = s.Profesor ?? "",
                         Inicio = s.Inicio,
-                        Fin = s.Fin
+                        Fin = s.Fin,
+                        AsistenciasDadas = s.AsistenciasDadas
                     });
                 }
 

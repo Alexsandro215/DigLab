@@ -199,25 +199,61 @@ namespace DigBit.conexion
         /// </summary>
         public static ModoCodigo? LeerGeneral(MySqlConnection conexion, MySqlTransaction transaccion = null)
         {
+            return LeerAjustes(conexion, transaccion).General;
+        }
+
+        /// <summary>
+        /// Los dos ajustes de "Codigos de las clases" que van en configuracion
+        /// (db/13), en una sola consulta: el panel la repite cada 30 s. Sin db/13,
+        /// si esta cuenta no ve la tabla o con un error de esquema, los dos en
+        /// null. Recuerda lo leido de los docentes (CodigosSoloResponsables.Activa).
+        /// </summary>
+        public static AjustesDeCodigos LeerAjustes(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            AjustesDeCodigos ajustes = new AjustesDeCodigos();
             try
             {
                 if (!Esquema.Ajustes(conexion, transaccion))
                 {
-                    return null;
+                    CodigosSoloResponsables.Recordar(false);
+                    return ajustes;
                 }
 
-                using (MySqlCommand comando = new MySqlCommand("SELECT valor FROM configuracion WHERE clave = @Clave", conexion, transaccion))
+                string general = "";
+                string soloResponsables = "";
+                using (MySqlCommand comando = new MySqlCommand(
+                    "SELECT clave, valor FROM configuracion WHERE clave IN (@General, @Solo)", conexion, transaccion))
                 {
-                    comando.Parameters.AddWithValue("@Clave", ClaveGeneral);
-                    object valor = comando.ExecuteScalar();
-                    string texto = valor == null || valor == DBNull.Value ? "" : Convert.ToString(valor, CultureInfo.InvariantCulture).Trim().ToLowerInvariant();
-                    return texto == "fijo" || texto == "renovable" || texto == "sin_codigo" ? Desde(texto) : (ModoCodigo?)null;
+                    comando.Parameters.AddWithValue("@General", ClaveGeneral);
+                    comando.Parameters.AddWithValue("@Solo", CodigosSoloResponsables.Clave);
+                    using (MySqlDataReader reader = comando.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            string valor = reader.IsDBNull(1) ? "" : Convert.ToString(reader.GetValue(1), CultureInfo.InvariantCulture).Trim().ToLowerInvariant();
+                            if (string.Equals(reader.GetString(0), ClaveGeneral, StringComparison.OrdinalIgnoreCase))
+                            {
+                                general = valor;
+                            }
+                            else
+                            {
+                                soloResponsables = valor;
+                            }
+                        }
+                    }
                 }
+
+                ajustes.General = general == "fijo" || general == "renovable" || general == "sin_codigo" ? Desde(general) : (ModoCodigo?)null;
+                ajustes.SoloResponsables = CodigosSoloResponsables.Desde(soloResponsables);
+                CodigosSoloResponsables.Recordar(ajustes.SoloResponsables.Value);
             }
             catch (MySqlException ex) when (EsDeEsquema(ex))
             {
-                return null;
+                // Sin poder leerla se queda lo ultimo que se supo de los docentes.
+                ajustes = new AjustesDeCodigos();
             }
+
+            return ajustes;
         }
 
         /// <summary>La forma general guardada o, si no hay, la de la mayoria de esos modos.</summary>
@@ -262,6 +298,71 @@ namespace DigBit.conexion
 
             Log.Aviso("No se pudo leer el modo de acceso de los laboratorios (" + ex.Number + ": " + ex.Message
                 + "). Se usa el codigo unico de cada profesor.");
+        }
+    }
+
+    /// <summary>Lo que ModosDeAcceso.LeerAjustes lee de configuracion; null lo que no esta (o sin db/13).</summary>
+    public class AjustesDeCodigos
+    {
+        /// <summary>La forma general guardada ("Codigos de las clases", arriba).</summary>
+        public ModoCodigo? General;
+
+        /// <summary>"Los docentes no ven los codigos" (CodigosSoloResponsables); con db/13 nunca es null.</summary>
+        public bool? SoloResponsables;
+    }
+
+    /// <summary>
+    /// "Los docentes no ven los codigos: solo la administracion y los
+    /// responsables de laboratorio", para toda la escuela (casilla de "Codigos
+    /// de las clases"): configuracion codigos_solo_responsables = '1' (db/13,
+    /// sin migracion propia; sin la clave, como siempre). Vale para el codigo
+    /// unico y para la generacion de codigos; sin codigos no hay nada que
+    /// ocultar. Con ella el docente no ve el codigo en ningun sitio (su panel,
+    /// Mi horario, Escuchar el codigo, sus bitacoras, en su equipo y en el del
+    /// laboratorio) y se lo pide a la persona responsable del laboratorio, que
+    /// entonces si lo ve, como la administracion (Permisos.VeCodigosDeProfesor).
+    ///
+    /// Es una regla de las pantallas, no de la base: la cuenta de MySQL de los
+    /// equipos (digbit_equipo) sigue pudiendo leer los codigos, como antes.
+    /// </summary>
+    internal static class CodigosSoloResponsables
+    {
+        /// <summary>La clave en configuracion: '1' encendida; '0' o sin ella, apagada.</summary>
+        public const string Clave = "codigos_solo_responsables";
+
+        /// <summary>Lo que dice el docente en lugar del codigo.</summary>
+        public const string PideElCodigo = "Pídele el código a la persona responsable del laboratorio.";
+
+        // Lo ultimo que se leyo de la base (de otro hilo: el panel lee en segundo plano).
+        private static volatile bool activa;
+
+        /// <summary>
+        /// Lo ultimo que se leyo (cada lectura de ModosDeAcceso.LeerAjustes: el
+        /// panorama del panel cada 30 s, Laboratorios, Mi horario y Horarios).
+        /// Falso hasta la primera lectura y sin db/13.
+        /// </summary>
+        public static bool Activa
+        {
+            get { return activa; }
+        }
+
+        public static bool Desde(string valor)
+        {
+            return (valor ?? "").Trim() == "1";
+        }
+
+        public static string Valor(bool encendida)
+        {
+            return encendida ? "1" : "0";
+        }
+
+        internal static void Recordar(bool encendida)
+        {
+            if (activa != encendida)
+            {
+                activa = encendida;
+                Log.Info("Codigos de las clases: los docentes " + (encendida ? "NO ven" : "ven") + " los codigos (" + Clave + ").");
+            }
         }
     }
 
@@ -592,6 +693,58 @@ namespace DigBit.conexion
             }
 
             return codigos;
+        }
+
+        /// <summary>
+        /// Los de esos laboratorios en un dia, por laboratorio y Clave: lo mismo
+        /// que DeLaboratorio de ese dia, pero de todos en dos consultas (el panel
+        /// en vivo, con CodigosSoloResponsables, lo pide cada 30 s). Null sin secreto.
+        /// </summary>
+        public static Dictionary<int, Dictionary<string, string>> DelDiaDe(MySqlConnection conexion, DateTime fecha, ICollection<int> laboratorios)
+        {
+            if (laboratorios == null || laboratorios.Count == 0)
+            {
+                return new Dictionary<int, Dictionary<string, string>>();
+            }
+
+            byte[] secreto = Secreto(conexion);
+            if (secreto == null)
+            {
+                return null;
+            }
+
+            string labs = string.Join(",", laboratorios.Distinct().Select(id => id.ToString(CultureInfo.InvariantCulture)));
+            Dictionary<int, List<int>> franjas = laboratorios.Distinct().ToDictionary(id => id, id => new List<int>());
+            Dictionary<int, List<int>> extras = laboratorios.Distinct().ToDictionary(id => id, id => new List<int>());
+            int diaSemana = ((int)fecha.DayOfWeek + 6) % 7 + 1;
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT idhorarios, laboratorios_idlaboratorios FROM horarios WHERE dia_semana = @Dia AND laboratorios_idlaboratorios IN (" + labs + ")", conexion))
+            {
+                comando.Parameters.AddWithValue("@Dia", diaSemana);
+                using (MySqlDataReader lector = comando.ExecuteReader())
+                {
+                    while (lector.Read())
+                    {
+                        franjas[Convert.ToInt32(lector["laboratorios_idlaboratorios"])].Add(Convert.ToInt32(lector["idhorarios"]));
+                    }
+                }
+            }
+
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT idhorario_excepciones, laboratorios_idlaboratorios FROM horario_excepciones "
+                + "WHERE tipo = 'extra' AND fecha = @Fecha AND laboratorios_idlaboratorios IN (" + labs + ")", conexion))
+            {
+                comando.Parameters.AddWithValue("@Fecha", fecha.Date);
+                using (MySqlDataReader lector = comando.ExecuteReader())
+                {
+                    while (lector.Read())
+                    {
+                        extras[Convert.ToInt32(lector["laboratorios_idlaboratorios"])].Add(Convert.ToInt32(lector["idhorario_excepciones"]));
+                    }
+                }
+            }
+
+            return franjas.Keys.ToDictionary(id => id, id => DelDia(secreto, fecha.Date, franjas[id], extras[id]));
         }
 
         /// <summary>

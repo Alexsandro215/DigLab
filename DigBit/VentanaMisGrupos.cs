@@ -41,7 +41,13 @@ namespace DigBit
     /// mientras uno de sus bloques de hoy esta en curso o cuando su clase de hoy
     /// cambia de estado (empieza, hace una pausa o termina): la columna de hoy
     /// aparece y se cierra sola. Mientras dura, el profesor puede quitar la
-    /// asistencia a quien registro sin estar en el salon, o devolversela. Las
+    /// asistencia a quien registro sin estar en el salon, o devolversela, y (con
+    /// db/22) darla a quien esta en el salon pero no pudo registrar su bitacora
+    /// (DialogoDarAsistencia), tambien a quien aun no esta en la lista, y quitar
+    /// la que dio. Lo decide y lo guarda el servidor con su reloj; despues, la
+    /// ficha del panel vuelve a contar (ResumenDeClase.Olvidar). En kiosco, cada
+    /// cambio pide antes su contrasena si no la confirmo en los ultimos 2
+    /// minutos (ConfirmarEnKiosco). Las
     /// tarjetas del tablero que se pulsan marcan a sus alumnos en la hoja.
     /// Tambien la abre "Asistencia" de la tarjeta del codigo, con esa clase elegida.
     ///
@@ -76,16 +82,22 @@ namespace DigBit
         // materia de la cabecera a 1366 (por que, en su ayuda).
         private const string TextoNoSeCopio = "No se copió: inténtalo de nuevo.";
         private const string TextoGuardada = "Lista guardada: ábrela con Excel.";
+        private const string TextoDada = "Asistencia dada.";
         private const string TituloGuardarCsv = "Guardar en Excel (CSV)...";
         /// <summary>Todo lo que puede decir el estado (con la hora mas ancha): el mas largo fija su ancho.</summary>
         private static readonly string[] TextosDeEstado =
         {
             "Leyendo tus grupos...", "Leyendo la lista...", "No se pudo leer la lista", "Actualizado a las 00:00",
             "No se pudo actualizar a las 00:00", TextoCopiada, TextoEsperaLista, TextoSinLista, TextoSinListaQueGuardar,
-            TextoSinAlumnosQueCopiar, TextoNoSeCopio, TextoGuardada
+            TextoSinAlumnosQueCopiar, TextoNoSeCopio, TextoGuardada, TextoDada
         };
         private const string TextoNota = "Tus grupos de este ciclo. La lista de cada uno se arma con quienes registran su bitácora: "
             + "quien llega después entra con falta en las clases anteriores. F5 actualiza.";
+        // Con db/22: tambien entra a la lista quien recibe del profesor la asistencia.
+        private const string TextoNotaConDadas = "Tus grupos de este ciclo. La lista de cada uno se arma con quienes registran su bitácora "
+            + "o reciben de ti la asistencia: quien llega después entra con falta en las clases anteriores. F5 actualiza.";
+        /// <summary>En kiosco, cuanto vale la contrasena del profesor confirmada antes de cambiar una asistencia.</summary>
+        private static readonly TimeSpan VigenciaDeLaContrasena = TimeSpan.FromMinutes(2);
         // La hora del estado es la del servidor; lo de cada 30 s va en su ayuda, no a la vista.
         private const string AyudaEstado = "Hora del servidor. Mientras dura la clase de hoy, la lista se vuelve a leer sola cada 30 segundos.";
         private const string AyudaEstadoEnCurso = "Hora del servidor. La clase de hoy sigue: la lista se vuelve a leer sola cada 30 segundos.";
@@ -182,6 +194,9 @@ namespace DigBit
         private bool estadoError;
         private string estadoDetalle;
         private bool conAviso;
+        // En kiosco: cuando confirmo su contrasena por ultima vez (DateTime.UtcNow), o null.
+        // Se olvida al cerrar la ventana (va con ella).
+        private DateTime? contrasenaConfirmada;
 
         /// <summary>Como va hoy la clase de un grupo.</summary>
         private enum EstadoHoy
@@ -299,6 +314,7 @@ namespace DigBit
             // Oculta hasta saber que tiene grupos.
             hoja = new HojaAsistencia { TabIndex = 2, Visible = false };
             hoja.CambiarAsistencia += CambiarAsistencia;
+            hoja.DarSinLista += () => DarAsistencia(null);
             hoja.MarcaQuitada += MarcaQuitadaEnLaHoja;
 
             using (Graphics g = Graphics.FromHwnd(IntPtr.Zero))
@@ -599,8 +615,40 @@ namespace DigBit
                         .OrderBy(f => f.DiaSemana).ThenBy(f => f.Inicio).ToList()))
                     .ToList();
                 PersonalLeido personal = conPersonal ? LeerPersonal(versionPersonal) : null;
-                return Tuple.Create(ahora, leidos, leidoEnRelojLocal, personal);
+                return Tuple.Create(ahora, leidos, leidoEnRelojLocal, personal, ConDadas());
             }).ContinueWith(tarea => EnLaVentana(() => GruposLeidos(tarea)));
+        }
+
+        /// <summary>
+        /// En segundo plano: si la base guarda las asistencias que da el profesor
+        /// (db/22), para la nota de la lista desde que se ve. Esquema lo recuerda por
+        /// cuenta. Si falla, como sin ella: la nota se pone al dia con la lista.
+        /// </summary>
+        private static bool ConDadas()
+        {
+            try
+            {
+                using (MySql.Data.MySqlClient.MySqlConnection conexion = new Conexion().GetConexion())
+                {
+                    return Esquema.AsistenciaDada(conexion);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Aviso("Mis grupos: no se pudo ver si la base tiene db/22: " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>La nota de debajo de la lista de grupos, con db/22 o sin ella; si cambia, se vuelve a colocar.</summary>
+        private void PonerNota(bool conDadas)
+        {
+            string nota = conDadas ? TextoNotaConDadas : TextoNota;
+            if (lblNota.Text != nota)
+            {
+                lblNota.Text = nota;
+                Acomodar();
+            }
         }
 
         /// <summary>
@@ -639,7 +687,7 @@ namespace DigBit
             return personal;
         }
 
-        private void GruposLeidos(Task<Tuple<DateTime, List<GrupoDelProfesor>, DateTime, PersonalLeido>> tarea)
+        private void GruposLeidos(Task<Tuple<DateTime, List<GrupoDelProfesor>, DateTime, PersonalLeido, bool>> tarea)
         {
             leyendoGrupos = false;
             Cursor = Cursors.Default;
@@ -664,6 +712,8 @@ namespace DigBit
             int antes = Elegido == null ? 0 : Elegido.Clase.Id;
             grupos = tarea.Result.Item2;
             gruposLeidos = true;
+            // Antes de colocar: la nota que se ve ya es la de esta base (Acomodar, abajo).
+            lblNota.Text = tarea.Result.Item5 ? TextoNotaConDadas : TextoNota;
             lista.BeginUpdate();
             lista.Items.Clear();
             foreach (GrupoDelProfesor grupo in grupos)
@@ -845,9 +895,10 @@ namespace DigBit
         /// </summary>
         private void MostrarLeida(GrupoDelProfesor grupo)
         {
-            // Quitar asistencias, solo con un bloque de hoy en curso (no en el hueco entre dos).
-            hoja.PuedeQuitar = EnCurso(grupo);
+            // Cambiar asistencias, solo con un bloque de hoy en curso (no en el hueco entre dos).
+            hoja.PuedeCambiar = EnCurso(grupo);
             hoja.Mostrar(grupo.Leida, profesor);
+            PonerNota(grupo.Leida.ConDadas);
             int? marcada = tablero.Marcada;
             tablero.Mostrar(grupo.Resumen, BloquesDeHoy(grupo), Ahora);
             claseMostrada = grupo.Clase.Id;
@@ -974,8 +1025,106 @@ namespace DigBit
             LeerGrupos();
         }
 
-        /// <summary>Quitar o devolver la asistencia de hoy: lo comprueba y lo guarda AsistenciaDatos con el reloj del servidor.</summary>
-        private void CambiarAsistencia(AlumnoDeAsistencia alumno, DateTime fecha, bool quitar)
+        /// <summary>
+        /// Lo que pidio el profesor en el menu de la casilla de hoy: quitar o
+        /// devolver la asistencia (db/17), darla (db/22, con el dialogo) o quitar la
+        /// que dio. Lo comprueba y lo guarda AsistenciaDatos con el reloj del
+        /// servidor; en kiosco, antes, su contrasena (ConfirmarEnKiosco).
+        /// </summary>
+        private void CambiarAsistencia(AlumnoDeAsistencia alumno, DateTime fecha, AccionAsistencia accion)
+        {
+            GrupoDelProfesor grupo = Elegido;
+            if (grupo == null || cambiando || alumno == null)
+            {
+                return;
+            }
+
+            if (accion == AccionAsistencia.Dar)
+            {
+                DarAsistencia(alumno);
+                return;
+            }
+
+            int idClase = grupo.Clase.Id;
+            if (!ConfirmarEnKiosco(idClase))
+            {
+                return;
+            }
+
+            if (accion == AccionAsistencia.QuitarLaQueDiste)
+            {
+                Guardar(grupo, () => new AsistenciaDatos().QuitarLaQueDiste(idClase, idProfesor, alumno.Id),
+                    "Quitar la asistencia", "No se pudo quitar la asistencia", "quitar la asistencia dada al alumno " + alumno.Id);
+                return;
+            }
+
+            bool quitar = accion == AccionAsistencia.Quitar;
+            List<int> bitacoras;
+            alumno.BitacorasDelDia.TryGetValue(fecha, out bitacoras);
+            List<int> deHoyEnLaClase = bitacoras ?? new List<int>();
+            Guardar(grupo, () => new AsistenciaDatos().CambiarAsistencia(idClase, idProfesor, alumno.Id, deHoyEnLaClase, quitar),
+                quitar ? "Quitar la asistencia" : "Devolver la asistencia",
+                quitar ? "No se pudo quitar la asistencia" : "No se pudo devolver la asistencia",
+                (quitar ? "quitar" : "devolver") + " la asistencia del alumno " + alumno.Id);
+        }
+
+        /// <summary>
+        /// Un cambio de asistencia en segundo plano (con el cursor de espera y sin
+        /// releer la hoja debajo). Si no se pudo, por que (y que hacer) en un
+        /// mensaje; despues, la lista otra vez y la ficha del panel vuelve a contar.
+        /// </summary>
+        private void Guardar(GrupoDelProfesor grupo, Func<string> cambio, string titulo, string queNoSePudo, string paraElLog)
+        {
+            cambiando = true;
+            Cursor = Cursors.WaitCursor;
+            Task.Run(cambio)
+                .ContinueWith(tarea => EnLaVentana(() =>
+                {
+                    cambiando = false;
+                    Cursor = Cursors.Default;
+                    // La causa y que hacer; el detalle tecnico, al registro (abajo).
+                    string problema = tarea.IsFaulted
+                        ? MensajeDeFallo.Explicar(queNoSePudo, tarea.Exception.GetBaseException(), AvisoDeFalloDocente.SiSigue)
+                        : tarea.Result;
+                    if (tarea.IsFaulted)
+                    {
+                        Log.Error("Mis grupos: " + paraElLog, tarea.Exception.GetBaseException());
+                    }
+
+                    if (problema != null)
+                    {
+                        MessageBox.Show(this, problema, titulo, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+
+                    ListaCambiada(grupo);
+                }));
+        }
+
+        /// <summary>
+        /// Tras un cambio de asistencia: la ficha del panel del profesor vuelve a
+        /// contar en su siguiente lectura y la lista se lee otra vez, callada, aunque
+        /// ya se este leyendo (esa lectura pudo ser de antes del cambio).
+        /// </summary>
+        private void ListaCambiada(GrupoDelProfesor grupo)
+        {
+            ResumenDeClase.Olvidar();
+            if (Elegido == grupo)
+            {
+                LeerHoja(grupo, true, true);
+            }
+        }
+
+        /// <summary>
+        /// Darle la asistencia de hoy (db/22) a ese alumno de la lista o, con null, a
+        /// quien se busque por su matricula. En kiosco, antes su contrasena. Con el
+        /// cursor de espera, PrepararDar dice si ahora se puede (la clase en curso,
+        /// con el reloj del servidor) y trae sus equipos; si no, un mensaje con por
+        /// que; si si, el dialogo, que lo guarda. Mientras esta abierto el reloj no
+        /// relee la hoja. Dada, el estado lo dice 5 s y la lista se lee otra vez;
+        /// sin darla, tambien se lee si el servidor dijo que no o la clase termino
+        /// con el dialogo abierto (DialogoDarAsistencia.HayQueReleer).
+        /// </summary>
+        private void DarAsistencia(AlumnoDeAsistencia alumno)
         {
             GrupoDelProfesor grupo = Elegido;
             if (grupo == null || cambiando)
@@ -983,36 +1132,117 @@ namespace DigBit
                 return;
             }
 
-            List<int> bitacoras;
-            alumno.BitacorasDelDia.TryGetValue(fecha, out bitacoras);
+            int idClase = grupo.Clase.Id;
+            if (!ConfirmarEnKiosco(idClase))
+            {
+                return;
+            }
+
             cambiando = true;
             Cursor = Cursors.WaitCursor;
-            Task.Run(() => new AsistenciaDatos().CambiarAsistencia(grupo.Clase.Id, idProfesor, alumno.Id, bitacoras ?? new List<int>(), quitar))
+            Task.Run(() => new AsistenciaDatos().PrepararDar(idClase, idProfesor))
                 .ContinueWith(tarea => EnLaVentana(() =>
                 {
-                    cambiando = false;
                     Cursor = Cursors.Default;
-                    // La causa y que hacer; el detalle tecnico, al registro (abajo).
-                    string problema = tarea.IsFaulted
-                        ? MensajeDeFallo.Explicar(quitar ? "No se pudo quitar la asistencia" : "No se pudo devolver la asistencia",
-                            tarea.Exception.GetBaseException(), AvisoDeFalloDocente.SiSigue)
-                        : tarea.Result;
-                    if (tarea.IsFaulted)
+                    string nombre = null;
+                    bool releer = false;
+                    try
                     {
-                        Log.Error("Mis grupos: " + (quitar ? "quitar" : "devolver") + " la asistencia del alumno " + alumno.Id, tarea.Exception.GetBaseException());
+                        if (tarea.IsFaulted)
+                        {
+                            Exception error = tarea.Exception.GetBaseException();
+                            Log.Error("Mis grupos: preparar la asistencia que se da en la clase " + idClase, error);
+                            MessageBox.Show(this, MensajeDeFallo.Explicar("No se pudo dar la asistencia", error, AvisoDeFalloDocente.SiSigue),
+                                "Dar la asistencia", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            return;
+                        }
+
+                        PreparacionDar preparacion = tarea.Result;
+                        if (preparacion.Problema != null)
+                        {
+                            MessageBox.Show(this, preparacion.Problema, "Dar la asistencia", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            ListaCambiada(grupo);
+                            return;
+                        }
+
+                        AsistenciaDeClase lista = grupo.Leida;
+                        DiaDeAsistencia deHoy = lista == null ? null : lista.Dias.LastOrDefault(d => d.EnCurso);
+                        DateTime hoy = deHoy != null ? deHoy.Fecha : (DateTime.Now + desfase).Date;
+                        // Quien aun no esta en la lista entra con falta solo si ya hubo clases que cuentan.
+                        bool conClasesAntes = lista != null && lista.Dias.Any(d => d.Fecha.Date < hoy.Date);
+                        using (DialogoDarAsistencia dialogo = new DialogoDarAsistencia(grupo.Clase.Materia, grupo.Clase.Grupo, preparacion, hoy, alumno,
+                            conClasesAntes, () => DateTime.Now + desfase,
+                            matricula => new AsistenciaDatos().BuscarEstudiante(idClase, matricula),
+                            id => grupo.Leida == null ? null : grupo.Leida.Alumnos.FirstOrDefault(a => a.Id == id),
+                            (id, motivo, equipo, detalle) => new AsistenciaDatos().DarAsistencia(idClase, idProfesor, id, motivo, equipo, detalle)))
+                        {
+                            DialogResult resultado = dialogo.ShowDialog(this);
+                            if (resultado != DialogResult.OK || IsDisposed)
+                            {
+                                // El servidor dijo que no (ya registro, la clase termino...) o la
+                                // clase termino con el dialogo abierto: la lista, al dia ya.
+                                releer = dialogo.HayQueReleer && !IsDisposed;
+                                return;
+                            }
+
+                            nombre = dialogo.NombreDelEstudiante;
+                        }
+                    }
+                    finally
+                    {
+                        cambiando = false;
+                        if (releer && Elegido == grupo)
+                        {
+                            LeerHoja(grupo, true, true);
+                        }
                     }
 
-                    if (problema != null)
-                    {
-                        MessageBox.Show(this, problema, quitar ? "Quitar la asistencia" : "Devolver la asistencia", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    }
-
-                    // Otra vez la lista, callada; aunque ya se este leyendo: esa lectura pudo ser de antes del cambio.
-                    if (Elegido == grupo)
-                    {
-                        LeerHoja(grupo, true, true);
-                    }
+                    Avisar(TextoDada, Color.DarkGreen, "Le diste la asistencia de hoy a " + nombre + ": ya cuenta en la lista.");
+                    ListaCambiada(grupo);
                 }));
+        }
+
+        /// <summary>
+        /// En un equipo del laboratorio (kiosco), antes de cualquier cambio de
+        /// asistencia: la contrasena del profesor, si no la confirmo en los ultimos 2
+        /// minutos (si se aleja con su sesion abierta, un estudiante no puede darse la
+        /// asistencia). Tres equivocadas cierran la sesion (DialogoContrasenaAdmin).
+        /// En su propio equipo no se pide. Mientras se pide, el reloj no relee la hoja.
+        /// </summary>
+        private bool ConfirmarEnKiosco(int idClase)
+        {
+            if (!Kiosco.Activo)
+            {
+                return true;
+            }
+
+            DateTime ahora = DateTime.UtcNow;
+            if (contrasenaConfirmada.HasValue && ahora >= contrasenaConfirmada.Value && ahora - contrasenaConfirmada.Value < VigenciaDeLaContrasena)
+            {
+                return true;
+            }
+
+            bool confirmada;
+            cambiando = true;
+            try
+            {
+                confirmada = DialogoContrasenaAdmin.Confirmar(this, "¿Cambiar la asistencia desde este equipo del laboratorio?",
+                    "Estás en un equipo de estudiantes. Para que nadie más cambie la asistencia con tu sesión abierta, escribe tu contraseña. "
+                    + "Durante 2 minutos no te la vuelve a pedir.",
+                    "Continuar", "Cambiar asistencia en kiosco, clase " + idClase, TiposUsuario.Profesor);
+            }
+            finally
+            {
+                cambiando = false;
+            }
+
+            if (!confirmada || IsDisposed)
+            {
+                return false;
+            }
+
+            contrasenaConfirmada = DateTime.UtcNow;
+            return true;
         }
 
         /// <summary>En el hilo de la ventana, si sigue abierta.</summary>

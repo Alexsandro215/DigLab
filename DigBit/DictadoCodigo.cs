@@ -83,7 +83,8 @@ namespace DigBit
 
         /// <summary>
         /// Si se ofrece a quien tiene la sesion en este equipo: nunca en el kiosco,
-        /// al alumno ni al encargado de laboratorio (no ve los codigos).
+        /// al alumno ni a quien no ve los codigos (Permisos.VeCodigosDeProfesor: el
+        /// encargado de laboratorio o, si los docentes no los ven, el profesor).
         /// </summary>
         public static bool Permitido
         {

@@ -8,14 +8,22 @@ namespace DigBit.conexion
     public class AsistenciaDelDia
     {
         public DiaDeAsistencia Dia;
-        /// <summary>Cuantos registraron (y les cuenta como asistencia).</summary>
+        /// <summary>Cuantos tienen asistencia: registraron (y les cuenta) o se la dio su profesor (db/22).</summary>
         public int Asistieron;
+        /// <summary>De ellos, a cuantos se la dio su profesor sin bitacora (db/22): para los textos.</summary>
+        public int Dadas;
         /// <summary>Cuantos registraron sin estar en el salon (se les quito).</summary>
         public int Retiradas;
         /// <summary>Con la clase en curso: cuantos aun no registran (P, pendientes).</summary>
         public int Pendientes;
         /// <summary>Los de la lista: quien entro despues cuenta con falta en las anteriores.</summary>
         public int EnLista;
+
+        /// <summary>De los que tienen asistencia, los que registraron su bitacora (sin las dadas).</summary>
+        public int Registraron
+        {
+            get { return Asistieron - Dadas; }
+        }
 
         public double Porcentaje
         {
@@ -27,8 +35,10 @@ namespace DigBit.conexion
     public class AlumnoResumido
     {
         public AlumnoDeAsistencia Alumno;
-        /// <summary>Clases en que registro (tambien la de hoy si ya registro).</summary>
+        /// <summary>Clases en que tiene asistencia: registro o se la dio su profesor (tambien la de hoy si ya la tiene).</summary>
         public int Asistencias;
+        /// <summary>De ellas, las que se la dio su profesor sin bitacora (db/22): para los textos.</summary>
+        public int Dadas;
         /// <summary>Clases en que falto: las que terminaron sin registrar y las que se le quitaron. Lo pendiente de hoy no.</summary>
         public int Faltas;
         /// <summary>Faltas seguidas hasta la ultima clase que ya cuenta (lo pendiente de hoy se salta).</summary>
@@ -37,7 +47,7 @@ namespace DigBit.conexion
         public DateTime? InicioDeRacha;
         /// <summary>Veces que registro sin estar en el salon.</summary>
         public int Retiradas;
-        /// <summary>Hoy, con la clase en curso: ya registro y le cuenta.</summary>
+        /// <summary>Hoy, con la clase en curso: ya tiene asistencia (registro y le cuenta, o se la dio su profesor).</summary>
         public bool RegistroHoy;
         /// <summary>Hoy, con la clase en curso: aun no registra (P).</summary>
         public bool PendienteHoy;
@@ -59,7 +69,9 @@ namespace DigBit.conexion
     /// (Mis grupos), con las reglas de la hoja: lo pendiente de hoy (P: la clase
     /// sigue y aun no registra) no cuenta ni como asistencia ni como falta; la A
     /// de hoy si cuenta; una asistencia quitada (registro sin estar en el salon)
-    /// es falta. Con el minimo de asistencia se tiene derecho a evaluacion.
+    /// es falta; una asistencia que dio el profesor (db/22) es asistencia, igual
+    /// que una bitacora (ya esta en Presente: Dadas solo sirve para los textos).
+    /// Con el minimo de asistencia se tiene derecho a evaluacion.
     /// </summary>
     public class ResumenAsistencia
     {
@@ -118,8 +130,21 @@ namespace DigBit.conexion
 
         public static ResumenAsistencia De(AsistenciaDeClase lista)
         {
+            return De(lista, null);
+        }
+
+        /// <summary>
+        /// Las cuentas contando solo los dias que pasan el filtro (un periodo, un
+        /// laboratorio: Estadisticas). La lista no cambia: quien entro a ella despues
+        /// cuenta con falta en los dias del filtro anteriores, como en Mis grupos.
+        /// Retiradas y Dadas de cada alumno tambien son solo de esos dias, y la racha
+        /// de faltas es la que llega al ultimo de ellos. Con null cuentan todos (De(lista)).
+        /// </summary>
+        public static ResumenAsistencia De(AsistenciaDeClase lista, Func<DiaDeAsistencia, bool> cuenta)
+        {
             ResumenAsistencia resumen = new ResumenAsistencia { Lista = lista };
-            List<DiaDeAsistencia> dias = lista.Dias.OrderBy(d => d.Fecha).ToList();
+            List<DiaDeAsistencia> dias = lista.Dias.Where(d => cuenta == null || cuenta(d)).OrderBy(d => d.Fecha).ToList();
+            HashSet<DateTime> fechas = cuenta == null ? null : new HashSet<DateTime>(dias.Select(d => d.Fecha));
             foreach (DiaDeAsistencia dia in dias)
             {
                 AsistenciaDelDia delDia = new AsistenciaDelDia
@@ -127,6 +152,7 @@ namespace DigBit.conexion
                     Dia = dia,
                     EnLista = lista.Alumnos.Count,
                     Asistieron = lista.Alumnos.Count(a => a.Presente.Contains(dia.Fecha)),
+                    Dadas = lista.Alumnos.Count(a => a.SinBitacora.Contains(dia.Fecha)),
                     Retiradas = lista.Alumnos.Count(a => a.Retiradas.Contains(dia.Fecha))
                 };
                 if (dia.EnCurso)
@@ -140,7 +166,12 @@ namespace DigBit.conexion
 
             foreach (AlumnoDeAsistencia alumno in lista.Alumnos)
             {
-                AlumnoResumido resumido = new AlumnoResumido { Alumno = alumno, Retiradas = alumno.Retiradas.Count };
+                AlumnoResumido resumido = new AlumnoResumido
+                {
+                    Alumno = alumno,
+                    Retiradas = fechas == null ? alumno.Retiradas.Count : alumno.Retiradas.Count(fechas.Contains),
+                    Dadas = fechas == null ? alumno.SinBitacora.Count : alumno.SinBitacora.Count(fechas.Contains)
+                };
                 bool racha = true;
                 for (int i = dias.Count - 1; i >= 0; i--)
                 {
