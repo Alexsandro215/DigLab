@@ -15,18 +15,35 @@ namespace DigBit
     /// El PDF de la bitacora de una sesion: el encabezado de la plantilla
     /// (Resources\plantilla.html) con los logos y la tabla de alumnos. Lo usan
     /// Bitacoras (una sesion o un lote) y la bitacora de una clase
-    /// (BitacoraSesion), que antes tenian cada una su copia. Debajo, si las hay,
-    /// las asistencias que dio el profesor a quien no pudo registrar (db/22):
-    /// en su propia tabla, porque no son bitacoras.
+    /// (BitacoraSesion), que antes tenian cada una su copia. Debajo, si los hay,
+    /// lo que reporto el profesor desde su panel (db/15) y las asistencias que dio
+    /// a quien no pudo registrar (db/22): cada uno en su propia tabla, porque no
+    /// son bitacoras de estudiantes.
     /// </summary>
     internal static class PdfBitacora
     {
+        // La vista previa de Bitacoras lo genera en segundo plano mientras otra
+        // ventana puede pedir el suyo: XMLWorker y sus listas compartidas, de uno en uno.
+        private static readonly object Candado = new object();
+
         /// <summary>
         /// El PDF en destino (pdfDoc.Close lo cierra; ToArray de un MemoryStream sirve
         /// igual). dadas: las que cuentan de esa sesion (LectorDeDadas.DeLaSesion, con
-        /// el nombre como en la tabla de bitacoras); vacia o null, el PDF de siempre.
+        /// el nombre como en la tabla de bitacoras); reportes: lo que reporto su
+        /// docente en esa sesion (ReportesProfesorDatos.DeLaSesion). Vacias o null, el
+        /// PDF de siempre. Se puede llamar desde cualquier hilo (los datos ya leidos).
         /// </summary>
-        public static void Escribir(EncabezadoPdfSesion datos, DataTable alumnos, IList<AsistenciaDada> dadas, Stream destino)
+        public static void Escribir(EncabezadoPdfSesion datos, DataTable alumnos, IList<AsistenciaDada> dadas,
+            IList<ReporteProfesor> reportes, Stream destino)
+        {
+            lock (Candado)
+            {
+                EscribirAhora(datos, alumnos, dadas, reportes, destino);
+            }
+        }
+
+        private static void EscribirAhora(EncabezadoPdfSesion datos, DataTable alumnos, IList<AsistenciaDada> dadas,
+            IList<ReporteProfesor> reportes, Stream destino)
         {
             // Lo que falta (el profesor y el grupo del uso libre), con un guion. La
             // plantilla se lee como XHTML: un '&' o un '<' en un nombre la romperia.
@@ -56,6 +73,7 @@ namespace DigBit
             }
 
             TablaAlumnosPdf.Agregar(pdfDoc, alumnos);
+            TablaAlumnosPdf.AgregarReportesDocente(pdfDoc, reportes);
             TablaAlumnosPdf.AgregarDadas(pdfDoc, dadas, alumnos);
             pdfDoc.Close();
         }
@@ -194,6 +212,62 @@ namespace DigBit
         }
 
         /// <summary>
+        /// Lo que reporto el profesor desde su panel durante la clase (db/15), debajo
+        /// de la tabla de bitacoras y en la suya: no es de ningun estudiante. Con los
+        /// naranjas de las fallas de la tabla de arriba. Sin ninguno (o sin la 15) no
+        /// se anade nada y el PDF queda como siempre.
+        /// </summary>
+        public static void AgregarReportesDocente(Document pdfDoc, IList<ReporteProfesor> reportes)
+        {
+            if (reportes == null || reportes.Count == 0)
+            {
+                return;
+            }
+
+            Font normal = FontFactory.GetFont(FontFactory.HELVETICA, 10f);
+            Font negrita = FontFactory.GetFont(FontFactory.HELVETICA_BOLD, 10f);
+            pdfDoc.Add(new Paragraph("Fallas que reportó su docente",
+                FontFactory.GetFont(FontFactory.HELVETICA_BOLD, 11f)) { SpacingBefore = 12f });
+
+            PdfPTable tabla = new PdfPTable(5) { WidthPercentage = 100, SpacingBefore = 4f };
+            tabla.SetWidths(new float[] { 6f, 9f, 18f, 12f, 55f });
+            foreach (string encabezado in new[] { "No.", "Hora", "Computadora", "Área", "Falla" })
+            {
+                tabla.AddCell(new PdfPCell(new Phrase(encabezado)) { BackgroundColor = BaseColor.LIGHT_GRAY, Padding = 4f });
+            }
+
+            int numeroFila = 1;
+            foreach (ReporteProfesor reporte in reportes)
+            {
+                string falla = (reporte.Falla ?? "").Trim().TrimEnd('.');
+                string detalle = (reporte.Comentarios ?? "").Trim();
+                string[] celdas =
+                {
+                    numeroFila.ToString(CultureInfo.InvariantCulture),
+                    reporte.RegistradoEn.ToString("HH:mm", CultureInfo.InvariantCulture),
+                    string.IsNullOrWhiteSpace(reporte.Equipo) ? "Todo el laboratorio" : reporte.Equipo.Trim(),
+                    ReportesProfesorDatos.NombreDeArea(reporte.Area),
+                    falla + (detalle.Length > 0 ? ". " + detalle : "")
+                };
+                for (int i = 0; i < celdas.Length; i++)
+                {
+                    bool esLaFalla = i == celdas.Length - 1;
+                    tabla.AddCell(new PdfPCell(new Phrase(celdas[i], esLaFalla ? negrita : normal))
+                    {
+                        Padding = 4f,
+                        BackgroundColor = esLaFalla ? Fuerte : Suave
+                    });
+                }
+
+                numeroFila++;
+            }
+
+            pdfDoc.Add(tabla);
+            pdfDoc.Add(new Paragraph("Las reportó su docente durante la clase, desde su panel de DigBit.",
+                FontFactory.GetFont(FontFactory.HELVETICA_OBLIQUE, 8f)) { SpacingBefore = 6f });
+        }
+
+        /// <summary>
         /// Las asistencias que dio el profesor a quien no pudo registrar su bitacora
         /// (db/22), debajo de la de bitacoras y en su propia tabla: cuentan como
         /// asistencia, pero no son bitacoras. Sin ninguna (o sin la 22) no se anade
@@ -293,8 +367,9 @@ namespace DigBit
 
         /// <summary>
         /// Las que cuentan de esa sesion (AsistenciasDadas.DeLaSesion), de la primera a
-        /// la ultima, con el nombre como en la tabla de bitacoras ("Nombre Apellidos"),
-        /// o vacia sin db/22.
+        /// la ultima, con el nombre como en la tabla de bitacoras del PDF ("Nombre
+        /// Apellidos") y, para las pantallas, NombreLista como la lista oficial
+        /// ("Apellidos Nombre"), o vacia sin db/22.
         /// </summary>
         public List<AsistenciaDada> DeLaSesion(int idSesion)
         {
@@ -311,6 +386,12 @@ namespace DigBit
                 }
 
                 List<AsistenciaDada> dadas = AsistenciasDadas.DeLaSesion(conexion, idSesion);
+                // El de la lista oficial, para las pantallas, antes de que PonerNombres lo cambie para el PDF.
+                foreach (AsistenciaDada dada in dadas)
+                {
+                    dada.NombreLista = dada.Nombre;
+                }
+
                 PonerNombres(conexion, dadas);
                 return dadas;
             }

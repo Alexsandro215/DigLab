@@ -58,16 +58,16 @@ namespace DigBit
             txtBuscar = CrearBuscador(new Point(Margen, 112), 230);
             ayuda.SetToolTip(txtBuscar, "Lo que dice el cambio: materia, grupo, docente, laboratorio, estudiante, motivo...");
 
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Desde", new Point(280, 88)));
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Desde", new Point(280, 86)));
             dtpDesde = CrearFecha(new Point(280, 111));
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Hasta", new Point(430, 88)));
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Hasta", new Point(430, 86)));
             dtpHasta = CrearFecha(new Point(430, 111));
             cambiandoFiltros = true;
             dtpHasta.Value = DateTime.Today;
             dtpDesde.Value = DateTime.Today.AddDays(-DiasPorOmision);
             cambiandoFiltros = false;
 
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Tipo", new Point(580, 88)));
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Tipo", new Point(580, 86)));
             cboTipo = EstiloHorarios.CrearCombo(new Point(580, 111), 190);
             cboTipo.MaxDropDownItems = 12;
             cboTipo.Items.Add(TodosLosTipos);
@@ -83,7 +83,7 @@ namespace DigBit
             ayuda.SetToolTip(cboTipo, "Cambios de horario: franjas, clases, cancelaciones y sesiones extra (los que avisan en Alertas).");
             Controls.Add(cboTipo);
 
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Quién", new Point(790, 88)));
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Quién", new Point(790, 86)));
             // Ancho para un nombre con su numero; menos en una pantalla angosta.
             cboQuien = EstiloHorarios.CrearCombo(new Point(790, 111), Math.Max(180, Math.Min(300, ClientSize.Width - Margen - 790)));
             cboQuien.MaxDropDownItems = 16;
@@ -438,6 +438,13 @@ namespace DigBit
             string periodo = "del " + EstiloAdmin.Fecha(dtpDesde.Value.Date <= dtpHasta.Value.Date ? dtpDesde.Value : dtpHasta.Value)
                 + " al " + EstiloAdmin.Fecha(dtpDesde.Value.Date <= dtpHasta.Value.Date ? dtpHasta.Value : dtpDesde.Value);
             Color naranja = Color.FromArgb(190, 85, 0);
+            // En medio de la lista vacia, por que lo esta (no un rectangulo blanco).
+            ListaDigBit.PonerTextoVacio(grid,
+                lecturaFallida ? "No se pudo leer el historial. F5 lo vuelve a intentar."
+                : !lectura.Disponible ? "Todavía no hay historial en esta base (falta db/21)."
+                : lectura.Cambios.Count == 0 ? "Sin cambios " + periodo + "."
+                : "Ningún cambio coincide con la búsqueda. Borra la búsqueda o cambia «Tipo» o «Quién».",
+                lecturaFallida);
             if (lecturaFallida)
             {
                 lblResumen.ForeColor = naranja;
@@ -455,7 +462,7 @@ namespace DigBit
             }
             else
             {
-                lblResumen.ForeColor = Color.DarkGreen;
+                lblResumen.ForeColor = EstiloAdmin.TextoOscuro;
                 lblResumen.Text = lectura.Cambios.Count == 0 ? "Sin cambios " + periodo + "."
                     : visibles.Count + (visibles.Count == 1 ? " cambio" : " cambios")
                       + (visibles.Count < lectura.Cambios.Count ? " de " + lectura.Cambios.Count : "") + " " + periodo + ".";

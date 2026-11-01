@@ -57,24 +57,41 @@ namespace DigBit
             // Solo la barra de titulo ("Alumnos (solo consulta)"); el titulo grande no cambia.
             Text = titulo + (Permisos.SoloConsulta ? " (solo consulta)" : "");
 
-            Controls.Add(new Label
+            // Titulo en el verde del TESCHI y, debajo, el subtitulo en gris (como el
+            // inicio de sesion): se distingue de un vistazo que es cada cosa.
+            Label lblTituloGrande = new Label
             {
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 18F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
+                ForeColor = EstiloHorarios.VerdeTeschi,
                 Location = new Point(28, 14),
                 Text = titulo
-            });
+            };
+            Controls.Add(lblTituloGrande);
             Controls.Add(new Label
             {
                 AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 10F),
-                ForeColor = Color.FromArgb(50, 50, 50),
-                Location = new Point(30, 50),
+                Font = new DrawingFont("Century Gothic", 9.5F),
+                ForeColor = EstiloAdmin.TextoSecundario,
+                Location = new Point(30, 52),
                 Text = subtitulo
             });
 
+            // Solo consulta: tambien junto al titulo grande, como en Horarios (la barra de
+            // titulo maximizada casi no se lee). Al pulsarla, que puede hacer aqui. Despues
+            // del titulo y el subtitulo: FichaDocente y Estadisticas los buscan en ese orden.
+            if (Permisos.SoloConsulta)
+            {
+                Label soloConsulta = EstiloAdmin.EtiquetaSoloConsulta(ayuda);
+                Action seguir = () => soloConsulta.Location = new Point(lblTituloGrande.Right + 8, lblTituloGrande.Top + 10);
+                lblTituloGrande.LocationChanged += (s, e) => seguir();
+                lblTituloGrande.SizeChanged += (s, e) => seguir();
+                seguir();
+                Controls.Add(soloConsulta);
+            }
+
             lblResumen = LineaDeEstado(ClientSize.Height - 62, new DrawingFont("Century Gothic", 10F, FontStyle.Bold));
+            lblResumen.ForeColor = EstiloAdmin.TextoOscuro;
             lblResumen.Text = "Cargando...";
             lblAviso = LineaDeEstado(ClientSize.Height - 38, new DrawingFont("Century Gothic", 9.5F));
 
@@ -120,12 +137,16 @@ namespace DigBit
         /// <summary>La lista, desde esa altura hasta encima de los botones.</summary>
         protected DataGridView CrearLista(int arriba)
         {
-            grid = EstiloHorarios.CrearGrid(new Point(Margen, arriba), new Size(ClientSize.Width - 2 * Margen, ClientSize.Height - arriba - 76));
+            // 24 px libres entre la lista y los botones de abajo (antes 18: se veian pegados).
+            grid = EstiloHorarios.CrearGrid(new Point(Margen, arriba), new Size(ClientSize.Width - 2 * Margen, ClientSize.Height - arriba - 82));
             grid.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            grid.RowTemplate.Height = 26;
+            grid.RowTemplate.Height = 34;
             // Un encabezado largo ("No. de empleado") pasa a dos lineas en vez de cortarse.
             grid.ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.True;
             grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+            // Con margen arriba y abajo: el encabezado de un renglon se quedaba en
+            // unos 22 px (Alertas) y se veia apretado contra la primera fila.
+            grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(8, 7, 8, 7);
             grid.SelectionChanged += (s, e) => ActualizarBotones();
             grid.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) AlDobleClic(); };
             grid.KeyDown += (s, e) =>
@@ -143,7 +164,7 @@ namespace DigBit
         /// <summary>Caja de busqueda: filtra al dejar de teclear (AlBuscar) y con flecha abajo baja a la lista.</summary>
         protected TextBox CrearBuscador(Point posicion, int ancho)
         {
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Buscar", new Point(posicion.X, posicion.Y - 24)));
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Buscar", new Point(posicion.X, posicion.Y - 26)));
             TextBox buscador = EstiloHorarios.CrearTexto(posicion, ancho);
             buscador.TextChanged += (s, e) => { esperaBusqueda.Stop(); esperaBusqueda.Start(); };
             buscador.KeyDown += (s, e) =>
@@ -322,13 +343,99 @@ namespace DigBit
     {
         public static readonly Color FondoError = Color.FromArgb(255, 228, 228);
 
+        // Jerarquia del texto (2026-10-31): lo secundario (subtitulos, notas) en
+        // gris y las etiquetas y resumenes en gris oscuro; el verde, para titulos.
+        public static readonly Color TextoSecundario = Color.FromArgb(95, 99, 96);
+        public static readonly Color TextoOscuro = Color.FromArgb(55, 60, 57);
+
+        /// <summary>
+        /// Linea fina de LineaSuave para separar grupos dentro de un dialogo (en
+        /// vez de juntarlos o de marcarlos con bordes).
+        /// </summary>
+        public static Label Separador(Point posicion, int ancho)
+        {
+            return new Label
+            {
+                AutoSize = false,
+                BackColor = EstiloHorarios.LineaSuave,
+                Location = posicion,
+                Size = new Size(ancho, 1)
+            };
+        }
+
         /// <summary>Boton relleno para la accion principal de una pantalla o dialogo.</summary>
         public static Button BotonPrincipal(string texto, Point posicion, Size tamano)
         {
-            Button boton = EstiloHorarios.CrearBoton(texto, posicion, tamano);
-            boton.BackColor = Color.DarkGreen;
+            return ComoPrincipal(EstiloHorarios.CrearBoton(texto, posicion, tamano));
+        }
+
+        /// <summary>
+        /// Un boton de EstiloHorarios.CrearBoton (o de PantallaAdmin.BotonAbajo) con el
+        /// aspecto del principal: relleno verde y letra blanca. Devuelve el mismo boton.
+        /// </summary>
+        public static Button ComoPrincipal(Button boton)
+        {
+            BotonesApagados.PonerColores(boton, EstiloHorarios.VerdeTeschi, EstiloHorarios.VerdeTeschi);
             boton.ForeColor = Color.White;
+            boton.FlatAppearance.MouseOverBackColor = Color.FromArgb(0, 96, 55);
+            boton.FlatAppearance.MouseDownBackColor = Color.FromArgb(0, 84, 48);
             return boton;
+        }
+
+        /// <summary>El rojo de lo que quita algo (dar de baja, terminar una clase, quitar horas).</summary>
+        public static readonly Color RojoPeligro = Color.FromArgb(170, 50, 30);
+
+        /// <summary>
+        /// El boton de una accion que quita algo, en rojo con letra blanca: tambien al
+        /// pasar el raton y al pulsarlo (un rojo mas oscuro, nunca el verde, que se
+        /// lee como seguro). Apagado se ve apagado como cualquier principal
+        /// (BotonesApagados) y al encenderse vuelve a su rojo. Devuelve el mismo boton.
+        /// </summary>
+        public static Button Peligroso(Button boton)
+        {
+            BotonesApagados.PonerColores(boton, RojoPeligro, RojoPeligro);
+            boton.ForeColor = Color.White;
+            boton.FlatAppearance.MouseOverBackColor = Color.FromArgb(145, 40, 22);
+            boton.FlatAppearance.MouseDownBackColor = Color.FromArgb(125, 34, 18);
+            return boton;
+        }
+
+        /// <summary>
+        /// Un codigo de clase como se ensena en las listas y se dicta: en mayusculas
+        /// (TarjetaCodigo.Mayusculas). "SM5lu" se leia con una ele que parece un 1 o
+        /// una I. Nadie distingue mayusculas al cotejarlo, asi que no cambia nada mas.
+        /// </summary>
+        public static string Codigo(string codigo)
+        {
+            return TarjetaCodigo.Mayusculas(codigo);
+        }
+
+        /// <summary>
+        /// La etiqueta gris "Solo consulta" junto al titulo grande de cada seccion
+        /// (PantallaAdmin y Horarios). Se pulsa: abre lo que puede hacer la persona
+        /// responsable (Permisos.ExplicarSoloConsulta). Sin posicion: la pone quien la usa.
+        /// </summary>
+        public static Label EtiquetaSoloConsulta(ToolTip ayuda)
+        {
+            Label etiqueta = new Label
+            {
+                AutoSize = true,
+                BackColor = Color.FromArgb(240, 240, 240),
+                Cursor = Cursors.Hand,
+                Font = new DrawingFont("Century Gothic", 9F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(80, 80, 80),
+                Padding = new Padding(8, 3, 8, 3),
+                Text = "Solo consulta",
+                AccessibleRole = AccessibleRole.Link,
+                AccessibleDescription = "Qué puedes hacer aquí"
+            };
+            if (ayuda != null)
+            {
+                ayuda.SetToolTip(etiqueta, "Qué puedes hacer aquí");
+            }
+
+            etiqueta.Click += (s, e) => Permisos.ExplicarSoloConsulta(etiqueta.FindForm());
+            return etiqueta;
         }
 
         /// <summary>Titulo grande dentro de un dialogo.</summary>
@@ -339,7 +446,7 @@ namespace DigBit
                 AutoSize = false,
                 AutoEllipsis = true,
                 Font = new DrawingFont("Century Gothic", 14F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
+                ForeColor = EstiloHorarios.VerdeTeschi,
                 Location = new Point(24, 16),
                 Size = new Size(ancho, 30),
                 Text = texto
@@ -359,13 +466,26 @@ namespace DigBit
             };
         }
 
-        /// <summary>Guardar (relleno) y Cancelar abajo a la derecha de un dialogo; Enter guarda y Esc cancela.</summary>
+        /// <summary>
+        /// Lo que BotonesDialogo agrega abajo del dialogo (2026-10-31): los botones
+        /// quedan donde estaban respecto a lo de arriba y con 24 px hasta el borde de
+        /// abajo, como a los lados (antes 16: se veian pegados al borde).
+        /// </summary>
+        public const int AireBajoBotones = 8;
+
+        /// <summary>
+        /// Guardar (relleno) y Cancelar abajo a la derecha de un dialogo; Enter guarda y
+        /// Esc cancela. El dialogo crece AireBajoBotones: los botones van en Height - 64.
+        /// Llamarlo cuando el dialogo ya tiene su alto.
+        /// </summary>
         public static Button BotonesDialogo(Form dialogo, string textoGuardar, Action guardar)
         {
+            dialogo.ClientSize = new Size(dialogo.ClientSize.Width, dialogo.ClientSize.Height + AireBajoBotones);
+            int y = dialogo.ClientSize.Height - 40 - 16 - AireBajoBotones;
             int anchoGuardar = Math.Max(130, TextRenderer.MeasureText(textoGuardar, new DrawingFont("Century Gothic", 10F, FontStyle.Bold)).Width + 30);
-            Button cancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(dialogo.ClientSize.Width - 24 - 120, dialogo.ClientSize.Height - 56), new Size(120, 40));
+            Button cancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(dialogo.ClientSize.Width - 24 - 120, y), new Size(120, 40));
             cancelar.DialogResult = DialogResult.Cancel;
-            Button hacer = BotonPrincipal(textoGuardar, new Point(cancelar.Left - 10 - anchoGuardar, dialogo.ClientSize.Height - 56), new Size(anchoGuardar, 40));
+            Button hacer = BotonPrincipal(textoGuardar, new Point(cancelar.Left - 10 - anchoGuardar, y), new Size(anchoGuardar, 40));
             hacer.Click += (s, e) => guardar();
             dialogo.Controls.Add(hacer);
             dialogo.Controls.Add(cancelar);
@@ -425,6 +545,80 @@ namespace DigBit
     }
 
     /// <summary>
+    /// "Solo consulta": lo que puede hacer la persona responsable de laboratorio, en
+    /// vinetas cortas (Permisos.QuePuedeHacer): que puede ver, que puede guardar,
+    /// donde esta el codigo que le piden y que hace la administracion. Antes era un
+    /// MessageBox de tres parrafos. Un solo boton, "Entendido" (Enter y Esc).
+    /// </summary>
+    internal sealed class DialogoSoloConsulta : Form
+    {
+        private const int Ancho = 580;
+        private const int Sangria = 44;
+
+        public DialogoSoloConsulta(IList<KeyValuePair<string, string>> puntos)
+        {
+            EstiloHorarios.PrepararDialogo(this, "Solo consulta", new Size(Ancho, 200));
+            Icon = (Icon)new System.ComponentModel.ComponentResourceManager(typeof(PrincipalAdministrador)).GetObject("$this.Icon");
+            DrawingFont fuenteIntro = new DrawingFont("Century Gothic", 10F);
+            DrawingFont fuenteTitulo = new DrawingFont("Century Gothic", 10F, FontStyle.Bold);
+            DrawingFont fuenteTexto = new DrawingFont("Century Gothic", 10F);
+            Disposed += (s, e) =>
+            {
+                fuenteIntro.Dispose();
+                fuenteTitulo.Dispose();
+                fuenteTexto.Dispose();
+            };
+
+            Controls.Add(EstiloAdmin.TituloDialogo("Qué puedes hacer aquí", Ancho - 48));
+            const string intro = "Entraste como responsable de laboratorio: puedes verlo todo, pero los cambios los hace la administración de DigBit.";
+            Label lblIntro = Parrafo(intro, fuenteIntro, EstiloAdmin.TextoSecundario, 24, 52, Ancho - 48);
+            Controls.Add(lblIntro);
+
+            int y = lblIntro.Bottom + 14;
+            int anchoTexto = Ancho - Sangria - 24;
+            foreach (KeyValuePair<string, string> punto in puntos ?? new List<KeyValuePair<string, string>>())
+            {
+                // La vineta: un punto verde a la altura del titulo.
+                Label vineta = new Label
+                {
+                    AutoSize = false,
+                    BackColor = EstiloHorarios.VerdeTeschi,
+                    Location = new Point(28, y + 7),
+                    Size = new Size(7, 7)
+                };
+                Controls.Add(vineta);
+                Label titulo = Parrafo(punto.Key, fuenteTitulo, EstiloHorarios.VerdeTeschi, Sangria, y, anchoTexto);
+                Controls.Add(titulo);
+                Label texto = Parrafo(punto.Value, fuenteTexto, EstiloAdmin.TextoOscuro, Sangria, titulo.Bottom + 2, anchoTexto);
+                Controls.Add(texto);
+                y = texto.Bottom + 12;
+            }
+
+            Button entendido = EstiloAdmin.BotonPrincipal("Entendido", new Point(Ancho - 24 - 130, y + 6), new Size(130, 40));
+            entendido.DialogResult = DialogResult.OK;
+            Controls.Add(entendido);
+            AcceptButton = entendido;
+            CancelButton = entendido;
+            ClientSize = new Size(Ancho, entendido.Bottom + 18);
+            ActiveControl = entendido;
+        }
+
+        private static Label Parrafo(string texto, DrawingFont fuente, Color color, int x, int y, int ancho)
+        {
+            return new Label
+            {
+                AutoSize = false,
+                Font = fuente,
+                ForeColor = color,
+                UseMnemonic = false,
+                Location = new Point(x, y),
+                Size = new Size(ancho, PiezasConfiguracion.AltoDe(texto, fuente, ancho) + 2),
+                Text = texto
+            };
+        }
+    }
+
+    /// <summary>
     /// Alta y edicion de un alumno, un profesor o un encargado de laboratorio.
     /// Cada campo con su etiqueta encima y los errores dentro del propio dialogo.
     /// Al alumno se le pide su carrera (y el semestre, si se quiere); al
@@ -462,6 +656,10 @@ namespace DigBit
         // dice que no podra recuperar su contrasena el solo (la linea naranja).
         private readonly bool avisoSinCorreo;
         private const int AltoAvisoCorreo = 18;
+        // Editar a un estudiante que entra con el SIIA: en lugar de la contrasena, una nota.
+        private readonly bool contrasenaDelSiia;
+        // Tres renglones: la del docente ("...(Docentes, «Enlazar...»).") con 50 se cortaba.
+        private const int AltoNotaSiia = 62;
         private Label lblSinCorreo;
         // Crear cuenta con el aviso de privacidad del TESCHI en Ajustes (RNF72): el
         // aviso con desplazamiento y la casilla obligatoria que habilita el boton.
@@ -509,6 +707,16 @@ namespace DigBit
             }
 
             nombreIdentificador = EsAlumno ? "matrícula" : "número de empleado";
+            // Quien entra con el SIIA (Ajustes): su contrasena es la del SIIA (en DigBit
+            // solo esta la huella para cuando el SIIA no responde): aqui no se pide ni
+            // se cambia. Estudiantes al editarlos (no se registran: su cuenta se crea
+            // sola); docentes al registrarlos y al editarlos (entran con su numero de
+            // empleado, su contrasena y su NIP, y la administracion los enlaza).
+            if (!autoregistro && (EsAlumno || EsProfesor))
+            {
+                ConfiguracionSiia siia = InicioConSiia.LeerSinFallar();
+                contrasenaDelSiia = EsAlumno ? existente != null && siia.Estudiantes : siia.Docentes;
+            }
             conCodigo = datosProfesores != null && datosProfesores.CodigoPorProfesor;
             ProfesorInfo profesor = existente as ProfesorInfo;
             codigoOriginal = profesor == null ? "" : (profesor.Codigo ?? "");
@@ -596,8 +804,8 @@ namespace DigBit
         private void InicializarComponentes()
         {
             string quien = EsAlumno ? "estudiante" : EsEncargado ? "responsable de laboratorio" : "docente";
-            // Los campos de contrasena estan tambien al editar (opcionales): 70.
-            int alto = 330 + (EsAlumno ? 62 : conCodigo ? 84 : 0) + 70 + (autoregistro ? 26 : 0)
+            // Los campos de contrasena estan tambien al editar (opcionales): 74; con el SIIA, una nota.
+            int alto = 338 + (EsAlumno ? 66 : conCodigo ? 88 : 0) + (contrasenaDelSiia ? AltoNotaSiia : 74) + (autoregistro ? 26 : 0)
                 + (avisoSinCorreo ? AltoAvisoCorreo : 0)
                 + (ConAvisoPrivacidad ? AltoAvisoPrivacidad : 0)
                 + (EsProfesor ? SelectorColorProfesor.Alto + 6 : 0)
@@ -631,7 +839,7 @@ namespace DigBit
             // guardaria cortado sin avisar.
             txtCorreo.MaxLength = 45;
 
-            y += 62;
+            y += 66;
             if (avisoSinCorreo)
             {
                 // Debajo del correo, mientras este vacio: es opcional, pero sin el la
@@ -666,25 +874,25 @@ namespace DigBit
                 y += AltoNotaServicioSocial;
             }
 
-            txtNombre = Campo("Nombre(s) *", 24, y, 190);
+            txtNombre = Campo("Nombre(s) *", 24, y, 186);
             txtNombre.MaxLength = 80;
-            txtPaterno = Campo("Apellido paterno *", 225, y, 190);
+            txtPaterno = Campo("Apellido paterno *", 227, y, 186);
             txtPaterno.MaxLength = 80;
-            txtMaterno = Campo("Apellido materno", 426, y, 190);
+            txtMaterno = Campo("Apellido materno", 430, y, 186);
             txtMaterno.MaxLength = 80;
-            y += 62;
+            y += 66;
 
             if (EsAlumno)
             {
                 Controls.Add(EstiloHorarios.CrearEtiqueta("Carrera *", new Point(24, y)));
-                cboCarrera = EstiloHorarios.CrearCombo(new Point(24, y + 23), 360);
+                cboCarrera = EstiloHorarios.CrearCombo(new Point(24, y + 26), 360);
                 cboCarrera.SelectedIndexChanged += (s, e) => Limpiar(cboCarrera);
                 Controls.Add(cboCarrera);
 
                 Controls.Add(EstiloHorarios.CrearEtiqueta("Semestre", new Point(400, y)));
-                cboSemestre = EstiloHorarios.CrearCombo(new Point(400, y + 23), 120);
+                cboSemestre = EstiloHorarios.CrearCombo(new Point(400, y + 26), 120);
                 Controls.Add(cboSemestre);
-                y += 62;
+                y += 66;
             }
             else if (conCodigo)
             {
@@ -698,7 +906,7 @@ namespace DigBit
                     lblAvisoCodigo.Visible = codigoOriginal.Length > 0 && txtCodigo.Text.Trim() != codigoOriginal;
                 };
 
-                Button proponer = EstiloHorarios.CrearBoton("Proponer otro", new Point(184, y + 19), new Size(130, 32));
+                Button proponer = EstiloHorarios.CrearBoton("Proponer otro", new Point(184, y + 23), new Size(130, 32));
                 proponer.Font = new DrawingFont("Century Gothic", 9F, FontStyle.Bold);
                 proponer.Click += (s, e) => ProponerCodigo();
                 Controls.Add(proponer);
@@ -708,7 +916,7 @@ namespace DigBit
                     AutoSize = false,
                     Font = new DrawingFont("Century Gothic", 9F),
                     ForeColor = Color.FromArgb(90, 90, 90),
-                    Location = new Point(330, y + 4),
+                    Location = new Point(330, y + 6),
                     Size = new Size(286, 50),
                     Text = "Lo teclean sus estudiantes en el laboratorio. Vale para todas sus clases."
                 });
@@ -718,12 +926,12 @@ namespace DigBit
                     AutoSize = true,
                     Font = new DrawingFont("Century Gothic", 9F, FontStyle.Bold),
                     ForeColor = Color.FromArgb(190, 85, 0),
-                    Location = new Point(24, y + 56),
+                    Location = new Point(24, y + 60),
                     Text = "Sus estudiantes tendrán que usar el código nuevo desde que lo guardes.",
                     Visible = false
                 };
                 Controls.Add(lblAvisoCodigo);
-                y += 84;
+                y += 88;
             }
 
             if (EsProfesor)
@@ -738,40 +946,30 @@ namespace DigBit
                 y += SelectorColorProfesor.Alto + 6;
             }
 
-            // Al dar de alta, obligatoria; al editar, opcional: en blanco no se cambia.
-            txtContrasena = Campo(EsNuevo ? "Contraseña *" : "Contraseña nueva", 24, y, 190);
-            txtContrasena.UseSystemPasswordChar = true;
-            txtConfirmar = Campo(EsNuevo ? "Repite la contraseña *" : "Repítela", 225, y, 190);
-            txtConfirmar.UseSystemPasswordChar = true;
-            CheckBox mostrar = new CheckBox
+            if (contrasenaDelSiia)
             {
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 9.5F),
-                Location = new Point(428, y + 26),
-                Text = "Mostrar"
-            };
-            mostrar.CheckedChanged += (s, e) =>
-            {
-                txtContrasena.UseSystemPasswordChar = !mostrar.Checked;
-                txtConfirmar.UseSystemPasswordChar = !mostrar.Checked;
-            };
-            Controls.Add(mostrar);
-            if (!EsNuevo)
-            {
-                ayuda.SetToolTip(txtContrasena, "Déjala en blanco para no cambiarla. Si la escribes, podrá entrar con ella en cuanto guardes.");
+                // Sin cajas en el dialogo: en blanco, Guardar no cambia la contrasena.
+                txtContrasena = new TextBox();
+                txtConfirmar = new TextBox();
+                Controls.Add(new Label
+                {
+                    AutoSize = false,
+                    Font = new DrawingFont("Century Gothic", 9.5F),
+                    ForeColor = Color.FromArgb(95, 99, 96),
+                    Location = new Point(24, y),
+                    Size = new Size(592, AltoNotaSiia - 8),
+                    Text = EsProfesor
+                        ? "Sin contraseña de DigBit: entra con su número de empleado, su contraseña y su NIP del SIIA. "
+                          + "La primera vez, la administración enlaza su número con esta cuenta (Docentes, «Enlazar...»)."
+                        : "Su contraseña es la del SIIA del TESCHI: se cambia o se recupera en el SIIA, no aquí."
+                });
+                y += AltoNotaSiia;
             }
-
-            // La regla antes del error, debajo de la contrasena.
-            Controls.Add(new Label
+            else
             {
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 8.5F),
-                ForeColor = Color.FromArgb(90, 90, 90),
-                Location = new Point(24, y + 52),
-                Text = ReglasCuenta.TextoLargoMinimo + (EsNuevo ? "" : " En blanco, no se cambia.")
-            });
-
-            y += 70;
+                AgregarContrasena(y);
+                y += 74;
+            }
 
             if (ConAvisoPrivacidad)
             {
@@ -791,24 +989,60 @@ namespace DigBit
                 Location = new Point(24, ClientSize.Height - 40),
                 Text = "* obligatorio"
             });
+            TerminarDialogo();
+        }
+
+        /// <summary>La contrasena y su confirmacion, con "Mostrar" y la regla debajo.</summary>
+        private void AgregarContrasena(int y)
+        {
+            // Al dar de alta, obligatoria; al editar, opcional: en blanco no se cambia.
+            txtContrasena = Campo(EsNuevo ? "Contraseña *" : "Contraseña nueva", 24, y, 186);
+            txtContrasena.UseSystemPasswordChar = true;
+            txtConfirmar = Campo(EsNuevo ? "Repite la contraseña *" : "Repítela", 227, y, 186);
+            txtConfirmar.UseSystemPasswordChar = true;
+            CheckBox mostrar = new CheckBox
+            {
+                AutoSize = true,
+                Font = new DrawingFont("Century Gothic", 9.5F),
+                Location = new Point(430, y + 29),
+                Text = "Mostrar"
+            };
+            mostrar.CheckedChanged += (s, e) =>
+            {
+                txtContrasena.UseSystemPasswordChar = !mostrar.Checked;
+                txtConfirmar.UseSystemPasswordChar = !mostrar.Checked;
+            };
+            Controls.Add(mostrar);
+            if (!EsNuevo)
+            {
+                ayuda.SetToolTip(txtContrasena, "Déjala en blanco para no cambiarla. Si la escribes, podrá entrar con ella en cuanto guardes.");
+            }
+
+            // La regla antes del error, debajo de la contrasena.
+            Controls.Add(new Label
+            {
+                AutoSize = true,
+                Font = new DrawingFont("Century Gothic", 8.5F),
+                ForeColor = Color.FromArgb(90, 90, 90),
+                Location = new Point(24, y + 57),
+                Text = ReglasCuenta.TextoLargoMinimo + (EsNuevo ? "" : " En blanco, no se cambia.")
+            });
+        }
+
+        /// <summary>Guardar y Cancelar (y "Ver su horario" de un docente), y los datos de quien se edita.</summary>
+        private void TerminarDialogo()
+        {
             btnGuardar = EstiloAdmin.BotonesDialogo(this, autoregistro ? "Crear cuenta" : "Guardar", Guardar);
             if (ConAvisoPrivacidad)
             {
-                // Apagado se ve gris, como "Registrar mi bitacora": el verde con la letra
-                // gris parecia pulsable. Lo enciende la casilla del aviso.
-                btnGuardar.EnabledChanged += (s, e) =>
-                {
-                    Color fondo = btnGuardar.Enabled ? Color.DarkGreen : Color.FromArgb(205, 210, 205);
-                    btnGuardar.BackColor = fondo;
-                    btnGuardar.FlatAppearance.BorderColor = fondo;
-                };
+                // Apagado se ve gris (BotonesApagados, como todos). Lo enciende la casilla del aviso.
                 btnGuardar.Enabled = false;
             }
 
             if (EsProfesor && !EsNuevo)
             {
                 // Su horario semanal, solo para verlo (se cambia en Horarios).
-                Button verHorario = EstiloHorarios.CrearBoton("Ver su horario", new Point(132, ClientSize.Height - 56), new Size(150, 40));
+                Button verHorario = EstiloHorarios.CrearBoton("Ver su horario", new Point(132, btnGuardar.Top), new Size(150, 40));
                 verHorario.Font = new DrawingFont("Century Gothic", 9.5F, FontStyle.Bold);
                 verHorario.Click += (s, e) =>
                 {
@@ -867,7 +1101,7 @@ namespace DigBit
                 BackColor = Color.White,
                 ForeColor = Color.FromArgb(50, 50, 50),
                 Font = new DrawingFont("Century Gothic", 9F),
-                Location = new Point(24, y + 23),
+                Location = new Point(24, y + 26),
                 // Cinco renglones a la vista; el resto, con la barra.
                 Size = new Size(592, 88),
                 Text = avisoPrivacidad.Texto,
@@ -880,7 +1114,7 @@ namespace DigBit
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 9.5F, FontStyle.Bold),
                 ForeColor = Color.FromArgb(30, 30, 30),
-                Location = new Point(24, y + 119),
+                Location = new Point(24, y + 122),
                 Text = "Leí el aviso de privacidad"
             };
             chkAvisoLeido.CheckedChanged += (s, e) =>
@@ -898,7 +1132,7 @@ namespace DigBit
             {
                 LinkLabel completo = avisoPrivacidad.CrearEnlace(this);
                 Controls.Add(completo);
-                completo.Location = new Point(616 - completo.PreferredWidth, y + 121);
+                completo.Location = new Point(616 - completo.PreferredWidth, y + 124);
             }
         }
 
@@ -912,7 +1146,7 @@ namespace DigBit
         private TextBox Campo(string etiqueta, int x, int y, int ancho)
         {
             Controls.Add(EstiloHorarios.CrearEtiqueta(etiqueta, new Point(x, y)));
-            TextBox texto = EstiloHorarios.CrearTexto(new Point(x, y + 23), ancho);
+            TextBox texto = EstiloHorarios.CrearTexto(new Point(x, y + 26), ancho);
             texto.TextChanged += (s, e) => Limpiar(texto);
             Controls.Add(texto);
             return texto;
@@ -1040,7 +1274,7 @@ namespace DigBit
             }
 
             // Al editar, solo si se escribio una: en blanco no se cambia.
-            if (EsNuevo || txtContrasena.Text.Length > 0 || txtConfirmar.Text.Length > 0)
+            if (!contrasenaDelSiia && (EsNuevo || txtContrasena.Text.Length > 0 || txtConfirmar.Text.Length > 0))
             {
                 // Las mismas reglas que el inicio de sesion (ReglasCuenta): una
                 // contrasena de solo espacios no dejaria entrar nunca.
@@ -1110,7 +1344,8 @@ namespace DigBit
             {
                 if (EsNuevo)
                 {
-                    datos.Crear(nuevos, txtContrasena.Text);
+                    // Con el SIIA, sin contrasena de DigBit (UsuariosDatos.Crear).
+                    datos.Crear(nuevos, contrasenaDelSiia ? null : txtContrasena.Text);
                 }
                 else
                 {
@@ -1231,15 +1466,15 @@ namespace DigBit
         public DialogoGrupo(int carreraInicial)
         {
             // 300 de alto: el error, con su causa y que hacer, ocupa hasta tres lineas.
-            EstiloHorarios.PrepararDialogo(this, "Nuevo grupo", new Size(460, 300));
+            EstiloHorarios.PrepararDialogo(this, "Nuevo grupo", new Size(460, 312));
             Controls.Add(EstiloAdmin.TituloDialogo("Nuevo grupo", 412));
 
             Controls.Add(EstiloHorarios.CrearEtiqueta("Carrera *", new Point(24, 60)));
-            cboCarrera = EstiloHorarios.CrearCombo(new Point(24, 83), 412);
+            cboCarrera = EstiloHorarios.CrearCombo(new Point(24, 86), 412);
             Controls.Add(cboCarrera);
 
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Nombre del grupo *", new Point(24, 120)));
-            txtNombre = EstiloHorarios.CrearTexto(new Point(24, 143), 200);
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Nombre del grupo *", new Point(24, 126)));
+            txtNombre = EstiloHorarios.CrearTexto(new Point(24, 152), 200);
             txtNombre.MaxLength = 60;
             Controls.Add(txtNombre);
             Controls.Add(new Label
@@ -1247,11 +1482,11 @@ namespace DigBit
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 9F),
                 ForeColor = Color.FromArgb(90, 90, 90),
-                Location = new Point(236, 147),
+                Location = new Point(236, 156),
                 Text = "Por ejemplo, ISC-5001"
             });
 
-            lblError = EstiloAdmin.LineaError(new Point(24, 178), 412, 56);
+            lblError = EstiloAdmin.LineaError(new Point(24, 188), 412, 56);
             Controls.Add(lblError);
             EstiloAdmin.BotonesDialogo(this, "Crear grupo", Guardar);
 
@@ -1332,12 +1567,12 @@ namespace DigBit
             });
 
             Controls.Add(EstiloHorarios.CrearEtiqueta("Contraseña nueva", new Point(24, 68)));
-            txtContrasena = EstiloHorarios.CrearTexto(new Point(24, 91), 200);
+            txtContrasena = EstiloHorarios.CrearTexto(new Point(24, 94), 200);
             txtContrasena.UseSystemPasswordChar = true;
             Controls.Add(txtContrasena);
 
             Controls.Add(EstiloHorarios.CrearEtiqueta("Repítela", new Point(236, 68)));
-            txtConfirmar = EstiloHorarios.CrearTexto(new Point(236, 91), 200);
+            txtConfirmar = EstiloHorarios.CrearTexto(new Point(236, 94), 200);
             txtConfirmar.UseSystemPasswordChar = true;
             Controls.Add(txtConfirmar);
 
@@ -1347,7 +1582,7 @@ namespace DigBit
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 8.5F),
                 ForeColor = Color.FromArgb(90, 90, 90),
-                Location = new Point(24, 124),
+                Location = new Point(24, 128),
                 Text = ReglasCuenta.TextoLargoMinimo
             });
 
@@ -1355,7 +1590,7 @@ namespace DigBit
             {
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 9.5F),
-                Location = new Point(236, 122),
+                Location = new Point(236, 126),
                 Text = "Mostrar"
             };
             mostrar.CheckedChanged += (s, e) =>
@@ -1370,12 +1605,12 @@ namespace DigBit
                 AutoSize = false,
                 Font = new DrawingFont("Century Gothic", 9F),
                 ForeColor = Color.FromArgb(90, 90, 90),
-                Location = new Point(24, 156),
+                Location = new Point(24, 162),
                 Size = new Size(412, 36),
                 Text = "Podrá entrar con ella en cuanto la guardes. Dásela en persona; no se envía por correo."
             });
 
-            lblError = EstiloAdmin.LineaError(new Point(24, 196), 412, 22);
+            lblError = EstiloAdmin.LineaError(new Point(24, 202), 412, 22);
             Controls.Add(lblError);
             EstiloAdmin.BotonesDialogo(this, "Guardar", Guardar);
         }
@@ -1458,8 +1693,8 @@ namespace DigBit
             Button hacer = EstiloAdmin.BotonesDialogo(this, accion, () => { DialogResult = DialogResult.OK; });
             if (peligrosa)
             {
-                hacer.BackColor = Color.FromArgb(170, 50, 30);
-                hacer.FlatAppearance.BorderColor = Color.FromArgb(170, 50, 30);
+                // En rojo, tambien al pasar el raton (no el verde del boton principal).
+                EstiloAdmin.Peligroso(hacer);
                 // Enter no confirma: la accion que quita algo se pulsa a proposito.
                 AcceptButton = CancelButton as Button;
                 ActiveControl = CancelButton as Button;

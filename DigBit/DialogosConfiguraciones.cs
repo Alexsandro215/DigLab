@@ -79,6 +79,20 @@ namespace DigBit
             return clases == 0 ? "Se borra (no tiene clases)" : clases == 1 ? "Se borra con su única clase" : "Se borra con sus " + clases + " clases";
         }
 
+        /// <summary>
+        /// Un aviso ambar (negrita de 9.5 con su margen) de ese ancho y del alto que
+        /// pide su texto: nunca se corta. Con 44 y 64 px fijos, el de "Ya hay un
+        /// horario en preparacion" perdia justo lo importante ("...plantilla nueva...").
+        /// </summary>
+        public static Label AvisoAmbar(string texto, Point posicion, int ancho)
+        {
+            Label aviso = Texto(texto, posicion, new Size(ancho, 20), 9.5F, TextoAmbar, FontStyle.Bold);
+            aviso.BackColor = FondoAmbar;
+            aviso.Padding = new Padding(6, 4, 6, 2);
+            aviso.Height = AltoDe(texto, aviso.Font, ancho - aviso.Padding.Horizontal) + aviso.Padding.Vertical;
+            return aviso;
+        }
+
         /// <summary>Un texto de una o varias lineas, sin negrita salvo que se pida.</summary>
         public static Label Texto(string texto, Point posicion, Size tamano, float puntos, Color color, FontStyle estilo = FontStyle.Regular)
         {
@@ -674,9 +688,9 @@ namespace DigBit
             this.borrador = borrador;
             configuraciones = configuraciones ?? new List<CicloPreliminar>();
 
-            // Alto: la linea de error cabe en 4 renglones; con el aviso ambar, 630 (cabe a 1366x768).
-            int alto = borrador == null ? 580 : 630;
-            EstiloHorarios.PrepararDialogo(this, "Preparar el próximo ciclo", new Size(600, alto));
+            // Alto: la linea de error cabe en 4 renglones; con el aviso ambar, lo que este
+            // pida (unos 650: cabe a 1366x768). Se ajusta abajo.
+            EstiloHorarios.PrepararDialogo(this, "Preparar el próximo ciclo", new Size(600, 580));
             Controls.Add(EstiloAdmin.TituloDialogo("Preparar el próximo ciclo", 552));
             Controls.Add(PiezasConfiguracion.Texto(
                 "Prepara el horario del próximo ciclo sin tocar el que se usa. Cada cambio se guarda al momento y nadie lo ve hasta que lo apliques.",
@@ -710,16 +724,18 @@ namespace DigBit
             int yError = 448;
             if (borrador != null)
             {
-                Label aviso = PiezasConfiguracion.Texto(
+                // Del alto que pide (un nombre largo lo hace de tres renglones) y el
+                // dialogo crece con el: la parte importante ("...plantilla nueva...") se cortaba.
+                Label aviso = PiezasConfiguracion.AvisoAmbar(
                     "Ya hay un horario en preparación («" + borrador.Nombre + "», " + RevisionCiclo.TextoClases(borrador.Clases)
                     + "). Si sigues, se descarta; para conservarlo, cancela y usa «Más acciones», «Guardar como plantilla nueva...».",
-                    new Point(24, 446), new Size(552, 44), 9.5F, PiezasConfiguracion.TextoAmbar, FontStyle.Bold);
-                aviso.BackColor = PiezasConfiguracion.FondoAmbar;
-                aviso.Padding = new Padding(6, 4, 6, 2);
+                    new Point(24, 446), 552);
                 Controls.Add(aviso);
-                yError = 496;
+                yError = aviso.Bottom + 6;
             }
 
+            // La linea de error (cuatro renglones) y los botones, debajo.
+            ClientSize = new Size(600, yError + 132);
             lblError = EstiloAdmin.LineaError(new Point(24, yError), 552, 70);
             lblError.AutoEllipsis = true;
             Controls.Add(lblError);
@@ -849,6 +865,190 @@ namespace DigBit
     }
 
     // =========================================================================
+    // C2b. Crear plantilla nueva
+    // =========================================================================
+
+    /// <summary>
+    /// C2b. "Crear plantilla nueva...": el horario del proximo ciclo desde cero.
+    /// Pregunta si se usan los docentes y sus clases (docente, materia y grupo)
+    /// de una plantilla ya hecha, sin sus horas, que se acomodan de nuevo en la
+    /// cuadricula; si no, empieza vacia (CicloPreliminarDatos.Preparar con
+    /// FuentePreparacion.ClasesDeConfiguracion o EnBlanco).
+    /// </summary>
+    internal class DialogoCrearPlantilla : Form
+    {
+        private readonly CicloPreliminarDatos datos;
+        private readonly Func<int> idAdministrador;
+        private readonly CicloPreliminar borrador;
+        private readonly RadioButton rbClases;
+        private readonly RadioButton rbVacia;
+        private readonly ComboBox cboConfiguracion;
+        private readonly TextBox txtNombre;
+        private readonly Label lblError;
+
+        private sealed class ItemDeConfiguracion
+        {
+            public CicloPreliminar Ciclo;
+
+            public override string ToString()
+            {
+                return Ciclo.Nombre + " (" + (Ciclo.Aplicada ? "horario aplicado" : "plantilla guardada") + ", " + RevisionCiclo.TextoClases(Ciclo.Clases) + ")";
+            }
+        }
+
+        /// <summary>Lo que quedo en preparacion.</summary>
+        public ResultadoEmpezar Resultado { get; private set; }
+
+        /// <summary>De donde salieron las clases, para el estado: "de <<2026-1>>", o null si empezo vacia.</summary>
+        public string DeDonde { get; private set; }
+
+        /// <summary>Fallo al crear (se dijo aqui): al cancelar, la pestana vuelve a leer.</summary>
+        public bool HuboFallo { get; private set; }
+
+        /// <param name="configuraciones">Las guardadas y las aplicadas, de donde se toman las clases.</param>
+        /// <param name="borrador">La que ya esta en preparacion, o null: si hay una, se descarta (lo pregunta).</param>
+        public DialogoCrearPlantilla(CicloPreliminarDatos datos, List<CicloPreliminar> configuraciones, CicloPreliminar borrador, Func<int> idAdministrador)
+        {
+            this.datos = datos;
+            this.idAdministrador = idAdministrador;
+            this.borrador = borrador;
+            configuraciones = configuraciones ?? new List<CicloPreliminar>();
+
+            // El alto se ajusta abajo (con el aviso ambar, lo que este pida).
+            EstiloHorarios.PrepararDialogo(this, "Crear plantilla nueva", new Size(600, 440));
+            Controls.Add(EstiloAdmin.TituloDialogo("Crear plantilla nueva", 552));
+            Controls.Add(PiezasConfiguracion.Texto(
+                "Un horario nuevo para el próximo ciclo, que se arma desde cero. Cada cambio se guarda al momento y nadie lo ve hasta que lo apliques.",
+                new Point(24, 50), new Size(552, 38), 9.5F, PiezasConfiguracion.TextoGris));
+            Controls.Add(PiezasConfiguracion.Texto("¿Usar los docentes y sus clases de una plantilla ya hecha?",
+                new Point(24, 94), new Size(552, 22), 10F, Color.DarkGreen, FontStyle.Bold));
+
+            DrawingFont fuenteOpcion = new DrawingFont("Century Gothic", 10F);
+            rbClases = new RadioButton { AutoSize = true, Font = fuenteOpcion, Location = new Point(24, 124), Text = "Sí, los de esta plantilla:" };
+            cboConfiguracion = EstiloHorarios.CrearCombo(new Point(44, 150), 470);
+            cboConfiguracion.MaxDropDownItems = 16;
+            foreach (CicloPreliminar ciclo in configuraciones)
+            {
+                cboConfiguracion.Items.Add(new ItemDeConfiguracion { Ciclo = ciclo });
+            }
+
+            Label nota = PiezasConfiguracion.Texto(
+                "Se copian el docente, la materia y el grupo de cada clase, sin sus horas: las acomodas tú en la cuadrícula.",
+                new Point(44, 182), new Size(532, 40), 9F, PiezasConfiguracion.TextoGris);
+            rbVacia = new RadioButton { AutoSize = true, Font = fuenteOpcion, Location = new Point(24, 230), Text = "No, empezar vacía" };
+            Controls.Add(rbClases);
+            Controls.Add(cboConfiguracion);
+            Controls.Add(nota);
+            Controls.Add(rbVacia);
+
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Nombre", new Point(24, 270)));
+            txtNombre = EstiloHorarios.CrearTexto(new Point(24, 292), 300);
+            txtNombre.MaxLength = CicloPreliminarDatos.LargoNombre;
+            txtNombre.Text = CicloPreliminarDatos.NombrePreparacion;
+            Controls.Add(txtNombre);
+
+            int yError = 330;
+            if (borrador != null)
+            {
+                // Del alto que pide su texto, como en Preparar el proximo ciclo.
+                Label aviso = PiezasConfiguracion.AvisoAmbar(
+                    "Ya hay un horario en preparación («" + borrador.Nombre + "», " + RevisionCiclo.TextoClases(borrador.Clases)
+                    + "). Si sigues, se descarta; para conservarlo, cancela y usa «Más acciones», «Guardar como plantilla nueva...».",
+                    new Point(24, 328), 552);
+                Controls.Add(aviso);
+                yError = aviso.Bottom + 6;
+            }
+
+            // La linea de error (dos renglones) y los botones, debajo.
+            ClientSize = new Size(600, yError + 110);
+            lblError = EstiloAdmin.LineaError(new Point(24, yError), 552, 48);
+            lblError.AutoEllipsis = true;
+            Controls.Add(lblError);
+            EstiloAdmin.BotonesDialogo(this, borrador == null ? "Crear" : "Descartar el otro y crear", Crear);
+
+            rbClases.CheckedChanged += (s, e) => cboConfiguracion.Enabled = rbClases.Checked;
+            rbClases.Enabled = cboConfiguracion.Items.Count > 0;
+            if (cboConfiguracion.Items.Count > 0)
+            {
+                cboConfiguracion.SelectedIndex = 0;
+                rbClases.Checked = true;
+            }
+            else
+            {
+                rbVacia.Checked = true;
+                cboConfiguracion.Enabled = false;
+            }
+
+            ActiveControl = rbClases.Checked ? (Control)cboConfiguracion : txtNombre;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            List<DrawingFont> letras = disposing ? PiezasConfiguracion.LetrasDe(this, Font) : new List<DrawingFont>();
+            base.Dispose(disposing);
+            foreach (DrawingFont letra in letras)
+            {
+                letra.Dispose();
+            }
+        }
+
+        private void Crear()
+        {
+            lblError.Text = "";
+            string error = CicloPreliminarDatos.ErrorDeNombre(txtNombre.Text);
+            if (error != null)
+            {
+                lblError.Text = error;
+                txtNombre.Focus();
+                return;
+            }
+
+            FuentePreparacion fuente;
+            string deDonde = null;
+            if (rbClases.Checked)
+            {
+                ItemDeConfiguracion item = cboConfiguracion.SelectedItem as ItemDeConfiguracion;
+                if (item == null)
+                {
+                    lblError.Text = "Elige la plantilla de la que se toman las clases.";
+                    cboConfiguracion.Focus();
+                    return;
+                }
+
+                fuente = FuentePreparacion.ClasesDeConfiguracion(item.Ciclo.Id);
+                deDonde = "de «" + item.Ciclo.Nombre + "»";
+            }
+            else
+            {
+                fuente = FuentePreparacion.EnBlanco();
+            }
+
+            if (borrador != null && !DialogoConfirmacion.Preguntar(this, "Descartar el horario en preparación", "¿Descartar «" + borrador.Nombre + "»?",
+                PiezasConfiguracion.SeBorraCon(borrador.Clases) + ". Las plantillas guardadas y el horario que se usa no cambian.", "Descartar"))
+            {
+                return;
+            }
+
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                Resultado = datos.Preparar(txtNombre.Text.Trim(), fuente, borrador != null, idAdministrador());
+                DeDonde = deDonde;
+                DialogResult = DialogResult.OK;
+            }
+            catch (Exception ex)
+            {
+                HuboFallo = true;
+                lblError.Text = PiezasConfiguracion.TextoDeFallo("DialogoCrearPlantilla.Crear", "No se pudo crear la plantilla", ex);
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+        }
+    }
+
+    // =========================================================================
     // C3. Nombre
     // =========================================================================
 
@@ -936,7 +1136,10 @@ namespace DigBit
     /// laboratorios, con los choques en vivo (RevisionCiclo.ChoquesSi). Sirve
     /// para una clase nueva (AgregarClase), para cambiar una (CambiarClase) y,
     /// desde cuadros libres, para agregar esas horas a una que ya esta
-    /// (PonerHoras). Los choques no impiden guardar: impiden aplicar.
+    /// (PonerHoras). Encima de otra clase del mismo laboratorio, al guardar
+    /// pregunta si la reemplaza (ConfirmarReemplazoEnPreparacion: se le quita
+    /// solo lo que se cruza). Los choques (docente o grupo en otro laboratorio)
+    /// no impiden guardar: impiden aplicar.
     /// </summary>
     internal class DialogoClaseDelHorario : Form
     {
@@ -950,6 +1153,8 @@ namespace DigBit
         private const int LineasDeChoques = 4;
         // La linea de error: un fallo con su causa y que hacer ocupa hasta 4 renglones de 592.
         private const int AltoError = 66;
+        // La nota gris de debajo de los choques: dos renglones de 592.
+        private const int AltoNota = 38;
         // Laboratorio (230), dia (110), de y a (90 cada uno) y "Quitar": caben en los 592 del dialogo.
         private static readonly int[] Columnas = { 0, 236, 352, 448 };
 
@@ -1141,8 +1346,9 @@ namespace DigBit
             panelRenglones.Controls.Add(lnkAgregar);
 
             lblChoques = PiezasConfiguracion.Texto("", Point.Empty, new Size(Ancho - 48, 0), 9F, PiezasConfiguracion.TextoError);
-            lblNota = PiezasConfiguracion.Texto("Se guarda aunque choque: el choque sale en rojo y no deja aplicar hasta resolverlo.",
-                Point.Empty, new Size(Ancho - 48, 18), 8.5F, Color.Gray);
+            lblNota = PiezasConfiguracion.Texto("Encima de otra clase de este laboratorio, pregunta si la reemplaza: se le quita solo lo que se cruza. "
+                + "Se guarda aunque choque (docente o grupo en otro laboratorio): sale en rojo y no deja aplicar.",
+                Point.Empty, new Size(Ancho - 48, AltoNota - 4), 8.5F, Color.Gray);
             lblError = EstiloAdmin.LineaError(Point.Empty, Ancho - 48, AltoError - 4);
             lblError.AutoEllipsis = true;
 
@@ -1574,7 +1780,7 @@ namespace DigBit
                 // Los choques, en las lineas que pidan (hasta 4).
                 int altoChoques = string.IsNullOrEmpty(lblChoques.Text) ? 0
                     : Math.Min(PiezasConfiguracion.AltoDe(lblChoques.Text, lblChoques.Font, lblChoques.Width) + 2, LineasDeChoques * (lblChoques.Font.Height + 1) + 2);
-                int pie = (altoChoques > 0 ? altoChoques + 6 : 0) + 22 + AltoError + 56;
+                int pie = (altoChoques > 0 ? altoChoques + 6 : 0) + AltoNota + AltoError + 56;
 
                 // El panel de horarios: todo su contenido, salvo que pase de 6 renglones o del alto maximo.
                 int maximoPanel = RenglonesSinBarra * AltoRenglon + AltoLibre + AltoAgregar;
@@ -1593,7 +1799,7 @@ namespace DigBit
                 lblChoques.SetBounds(x, y, Ancho - 48, altoChoques);
                 y += altoChoques > 0 ? altoChoques + 6 : 0;
                 lblNota.Location = new Point(x, y);
-                y += 22;
+                y += AltoNota;
                 lblError.Location = new Point(x, y);
                 y += AltoError;
 
@@ -1847,6 +2053,12 @@ namespace DigBit
 
                     // Que no se crucen con las que ya tiene (lo revisa tambien PonerHoras).
                     CicloPreliminarDatos.ValidarFranjas(item.Carga.Franjas.Concat(franjas).ToList());
+                    // Encima de otras clases del mismo laboratorio: las reemplaza, si se confirma.
+                    if (!ConfirmarReemplazoEnPreparacion.Preguntar(this, leido, item.Carga.Id, franjas, null))
+                    {
+                        return;
+                    }
+
                     datos.PonerHoras(item.Carga.Id, franjas, administrador);
                     IdCarga = item.Carga.Id;
                 }
@@ -1868,6 +2080,12 @@ namespace DigBit
                     }
 
                     CicloPreliminarDatos.ValidarFranjas(franjas);
+                    // Encima de otras clases del mismo laboratorio: las reemplaza, si se confirma.
+                    if (!ConfirmarReemplazoEnPreparacion.Preguntar(this, leido, carga != null ? carga.Id : 0, franjas, null))
+                    {
+                        return;
+                    }
+
                     int? profesor = docente.Id == 0 ? (int?)null : docente.Id;
                     if (carga != null)
                     {

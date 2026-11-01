@@ -109,6 +109,23 @@ namespace DigBit.conexion
             "La base no tiene la tabla recuperacion_contrasena: falta db/13_recuperacion_contrasena.sql. "
             + "Sin ella no hay codigos de recuperacion por correo que anular al cambiar un correo o una contrasena.");
 
+        private static readonly Columna ColumnaEnlaceSiia = new Columna("usuarios", "siia_enlazado_en",
+            "La base no tiene usuarios.siia_enlazado_en: falta db/24_docentes_siia.sql. "
+            + "Hasta aplicarla no se enlazan docentes con el SIIA y el inicio de sesion de docentes con el SIIA queda apagado.");
+
+        private static readonly Columna TablaSolicitudesSiia = new Columna("siia_solicitudes", "estado",
+            "La base no tiene la tabla siia_solicitudes (o este usuario no puede leerla): falta db/24_docentes_siia.sql. "
+            + "Hasta aplicarla no se enlazan docentes con el SIIA y el inicio de sesion de docentes con el SIIA queda apagado.");
+
+        /// <summary>
+        /// True si la base guarda que docente esta enlazado con su numero de
+        /// empleado del SIIA y quien espera que lo enlacen (db/24_docentes_siia.sql).
+        /// </summary>
+        public static bool EnlacesSiia(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return ColumnaEnlaceSiia.Existe(conexion, transaccion) && TablaSolicitudesSiia.Existe(conexion, transaccion);
+        }
+
         /// <summary>True si la base guarda los codigos de "Olvidaste tu contrasena?" (db/13_recuperacion_contrasena.sql).</summary>
         public static bool Recuperacion(MySqlConnection conexion, MySqlTransaction transaccion = null)
         {
@@ -221,6 +238,23 @@ namespace DigBit.conexion
         public static bool HistorialDeCambios(MySqlConnection conexion, MySqlTransaction transaccion = null)
         {
             return TablaHistorial.Existe(conexion, transaccion);
+        }
+
+        // Solo la ven el administrador (digbit_admin) y el encargado (digbit_consulta,
+        // solo leerla, db/25 o la 18 nueva): los equipos no la usan. Sin ella todo
+        // sigue como antes: sin reemplazo ni "Falta asignar".
+        private static readonly Columna TablaPorAsignar = new Columna("horas_por_asignar", "resuelta_por",
+            "La base no tiene la tabla horas_por_asignar (o este usuario no puede leerla): falta db/25_horas_por_asignar.sql. "
+            + "Hasta aplicarla, en Horario semanal poner una clase o cambiarle las horas encima de otra del mismo laboratorio "
+            + "no se guarda (como antes), \"Quitar horas\" no pregunta si se dara en otro horario y no sale \"Falta asignar\".");
+
+        /// <summary>
+        /// True si la base guarda las horas que faltan por asignar en el horario en
+        /// uso (db/25_horas_por_asignar.sql): reemplazar una clase y "Falta asignar".
+        /// </summary>
+        public static bool HorasPorAsignar(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablaPorAsignar.Existe(conexion, transaccion);
         }
 
         private static bool usoLibre;

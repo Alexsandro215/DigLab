@@ -28,6 +28,28 @@ namespace DigBit.conexion
             }
         }
 
+        /// <summary>
+        /// "Arias Mora Gisela": el nombre de un estudiante en pantalla, como en la
+        /// lista oficial de su grupo (ComoEnLaLista). El PDF de bitacoras no cambia.
+        /// </summary>
+        public string NombreComoEnLaLista
+        {
+            get { return ComoEnLaLista(Nombre, ApellidoPaterno, ApellidoMaterno); }
+        }
+
+        /// <summary>
+        /// "Apellido paterno Apellido materno Nombre", sin coma, como la lista oficial
+        /// ("Arias Mora Gisela"): el mismo estudiante se lee igual en todas las
+        /// pantallas (Estudiantes, Bitacoras, la Bitacora de la clase, Mis grupos) y
+        /// se cruza con la lista sin leerlo dos veces. Lo que falte se salta. El PDF
+        /// de bitacoras sigue con "Nombre Apellidos" (ya hay PDF entregados asi).
+        /// </summary>
+        public static string ComoEnLaLista(string nombre, string paterno, string materno)
+        {
+            return string.Join(" ", new[] { paterno, materno, nombre }
+                .Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p.Trim()));
+        }
+
         /// <summary>"Barrera Islas, Hugo": como en las listas de la escuela, y como se ordena.</summary>
         public string NombreParaLista
         {
@@ -118,10 +140,15 @@ namespace DigBit.conexion
         /// <summary>False si la base aun no tiene la migracion 08: se lista, pero no se da de baja a nadie.</summary>
         public bool BajasDisponibles { get; protected set; }
 
+        /// <param name="contrasena">
+        /// Null: sin contrasena de DigBit (EnlacesSiia.SinHuella). Es el docente o el
+        /// estudiante que entra con el SIIA: no entra hasta hacerlo con el SIIA (y,
+        /// el docente, hasta que la administracion lo enlace).
+        /// </param>
         public void Crear(DatosUsuario datos, string contrasena)
         {
             Permisos.Exigir("Dar de alta un usuario de tipo " + TipoUsuario);
-            string hash = Contrasenas.Hash(contrasena);
+            string hash = contrasena == null ? EnlacesSiia.SinHuella : Contrasenas.Hash(contrasena);
             using (MySqlConnection conexion = mconexion.GetConexion())
             using (MySqlTransaction transaccion = conexion.BeginTransaction())
             {

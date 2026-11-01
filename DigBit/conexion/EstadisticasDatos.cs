@@ -16,25 +16,31 @@ namespace DigBit.conexion
     // ultima lectura (10 minutos, misma cuenta y mismo dia del servidor); Calcular
     // no consulta nada: cambiar laboratorio, docente o grupo nunca vuelve a la
     // base. La asistencia se cuenta con el mismo codigo que Mis grupos
-    // (AsistenciaDatos.LeerEnLote, CalcularTodas y ResumenAsistencia.De) y
-    // "Clases con bitacoras" como la pestana Faltas (LeerCalendario y ResumenDia).
+    // (AsistenciaDatos.LeerClasesEnLote, LeerElRestoEnLote, CalcularTodas y
+    // ResumenAsistencia.De) y "Clases con bitacoras" como la pestana Faltas
+    // (LeerCalendario y ResumenDia).
     // =========================================================================
 
     /// <summary>Los periodos del combo, en este orden (R2).</summary>
     internal enum TipoPeriodo
     {
-        /// <summary>"Este ciclo": de ciclo_desde (clases vigentes hoy) a hoy.</summary>
+        /// <summary>"Este ciclo": de ciclo_desde (clases vigentes hoy) a hoy; entre ciclos, el ultimo que termino.</summary>
         Ciclo,
-        /// <summary>Entre ciclos: las clases que terminaron hace 30 dias o menos.</summary>
-        CicloAnterior,
+        /// <summary>Un ciclo que ya termino (LecturaEstadisticas.CiclosPasados): del primer al ultimo dia, solo sus clases.</summary>
+        CicloPasado = 1,
         Mes,
         Semana,
         Ultimos30,
-        /// <summary>"Elegir fechas...": los dos dias que eligio (de los ultimos 400).</summary>
-        Fechas
+        /// <summary>"Elegir fechas...": dos dias cualesquiera hasta hoy, con como mucho 400 entre ellos, o desde un dia hasta hoy (HastaHoy).</summary>
+        Fechas,
+        /// <summary>
+        /// Una plantilla de horario aplicada que ya empezo (LecturaEstadisticas.Plantillas): solo los
+        /// dias en que valio su horario, contados como unas fechas elegidas, con su nombre (2026-11-01).
+        /// </summary>
+        Plantilla
     }
 
-    /// <summary>Las seis pestanas, en su orden.</summary>
+    /// <summary>Las siete pestanas, en su orden.</summary>
     internal enum PestanaEstadisticas
     {
         Estudiantes,
@@ -42,45 +48,308 @@ namespace DigBit.conexion
         Grupos,
         Docentes,
         Laboratorios,
-        Equipos
+        Equipos,
+        /// <summary>Las cuatro secciones con graficas y el reporte para auditoria (2026-10-31).</summary>
+        Graficas
+    }
+
+    /// <summary>Como se agrupan en el tiempo las graficas y el reporte para auditoria.</summary>
+    internal enum AgrupacionGraficas
+    {
+        /// <summary>De lunes a domingo; la primera y la ultima, recortadas al periodo.</summary>
+        Semana,
+        /// <summary>Del dia 1 al ultimo del mes; el primero y el ultimo, recortados al periodo.</summary>
+        Mes
     }
 
     /// <summary>
-    /// El periodo que se pide. Con Fechas lleva sus dos dias; con los demas, los
-    /// dias salen del reloj del servidor y de E0 al leer (EstadisticasDatos.Resolver).
+    /// Una semana o un mes del periodo (las graficas de Graficas y el reporte para
+    /// auditoria). Las clases se cuentan como Faltas y "Clases que se dieron" (con
+    /// los mismos estados del calendario); la asistencia, dia por dia como C1 (los
+    /// dias de cada lista que caen en el tramo). Sumados todos los tramos dan las
+    /// cifras grandes del mismo filtro.
+    /// </summary>
+    internal sealed class TramoDelPeriodo
+    {
+        /// <summary>El primer y el ultimo dia del tramo dentro del periodo.</summary>
+        public DateTime Desde;
+        public DateTime Hasta;
+        /// <summary>"05/10" (semana: su primer dia en el periodo) u "oct 2026".</summary>
+        public string Etiqueta = "";
+        /// <summary>"Del 05/10 al 11/10/2026" u "Octubre de 2026" (con sus dias si esta recortado).</summary>
+        public string EtiquetaLarga = "";
+        public int ConBitacoras;
+        /// <summary>Sin bitacoras, con asistencias que dio su docente (ambar en Faltas): se dieron.</summary>
+        public int ConDadas;
+        /// <summary>Ni bitacoras ni asistencias dadas (rojo en Faltas).</summary>
+        public int SinRegistro;
+        public int Canceladas;
+        /// <summary>Las horas de esas clases: las que contaban, las que se dieron y las canceladas.</summary>
+        public double HorasDelHorario;
+        public double HorasUsadas;
+        public double HorasCanceladas;
+        /// <summary>Asistencia de los estudiantes: entraron X de N veces en los dias del tramo.</summary>
+        public int Entraron;
+        public int Veces;
+
+        public int QueContaban
+        {
+            get { return ConBitacoras + ConDadas + SinRegistro; }
+        }
+
+        public int SeDieron
+        {
+            get { return ConBitacoras + ConDadas; }
+        }
+
+        /// <summary>Horas usadas de las del horario (0 a 100), o null sin horas del horario.</summary>
+        public double? Ocupacion
+        {
+            get { return HorasDelHorario <= 0 ? (double?)null : 100.0 * HorasUsadas / HorasDelHorario; }
+        }
+
+        public double? Asistencia
+        {
+            get { return Veces == 0 ? (double?)null : 100.0 * Entraron / Veces; }
+        }
+
+        /// <summary>Una clase-dia del calendario, con el mismo reparto que ResumenDia.Contar.</summary>
+        internal void Contar(EstadoEnCalendario estado, double horas)
+        {
+            switch (estado)
+            {
+                case EstadoEnCalendario.ConBitacoras:
+                    ConBitacoras++;
+                    HorasDelHorario += horas;
+                    HorasUsadas += horas;
+                    break;
+                case EstadoEnCalendario.SinBitacorasConAsistencia:
+                    ConDadas++;
+                    HorasDelHorario += horas;
+                    HorasUsadas += horas;
+                    break;
+                case EstadoEnCalendario.SinSesion:
+                case EstadoEnCalendario.SesionVacia:
+                    SinRegistro++;
+                    HorasDelHorario += horas;
+                    break;
+                case EstadoEnCalendario.Cancelada:
+                    Canceladas++;
+                    HorasCanceladas += horas;
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// El uso del horario de un laboratorio en el periodo y los filtros (seccion 1 de
+    /// Graficas): sus clases como la pestana Laboratorios (Se dieron X de N) y sus
+    /// horas. Sale del mismo acumulado que FilaLaboratorio.
+    /// </summary>
+    internal sealed class UsoDeLaboratorio
+    {
+        /// <summary>0 en el total (todos los laboratorios del filtro).</summary>
+        public int LaboratorioId;
+        public string Laboratorio = "";
+        /// <summary>Sin EmpezoEl: aun no registra sus clases con DigBit (sus clases sin bitacoras no cuentan, como en Faltas).</summary>
+        public bool AunNo;
+        public int ConBitacoras;
+        public int ConDadas;
+        public int SinRegistro;
+        public int Canceladas;
+        public double HorasDelHorario;
+        public double HorasUsadas;
+        public double HorasCanceladas;
+
+        public int QueContaban
+        {
+            get { return ConBitacoras + ConDadas + SinRegistro; }
+        }
+
+        public int SeDieron
+        {
+            get { return ConBitacoras + ConDadas; }
+        }
+
+        public double? Ocupacion
+        {
+            get { return HorasDelHorario <= 0 ? (double?)null : 100.0 * HorasUsadas / HorasDelHorario; }
+        }
+    }
+
+    /// <summary>Lo que solo usan las graficas (pestana Graficas y el reporte para auditoria).</summary>
+    internal sealed class GraficasEstadisticas
+    {
+        /// <summary>Por semana hasta 16 semanas de periodo; mas largo, por mes.</summary>
+        public AgrupacionGraficas Sugerida;
+        public List<TramoDelPeriodo> PorSemana = new List<TramoDelPeriodo>();
+        public List<TramoDelPeriodo> PorMes = new List<TramoDelPeriodo>();
+        /// <summary>Los laboratorios con clases del horario en el periodo (con el filtro de laboratorio, solo ese), de mas a menos horas.</summary>
+        public List<UsoDeLaboratorio> Laboratorios = new List<UsoDeLaboratorio>();
+        /// <summary>Los mismos sumados: el de C2 (todos o el laboratorio elegido).</summary>
+        public UsoDeLaboratorio Total = new UsoDeLaboratorio();
+        /// <summary>Activos que aun no registran sus clases con DigBit (con el filtro, solo ese): sus clases no cuentan.</summary>
+        public List<string> SinDigBit = new List<string>();
+
+        public List<TramoDelPeriodo> Tramos(AgrupacionGraficas agrupacion)
+        {
+            return agrupacion == AgrupacionGraficas.Mes ? PorMes : PorSemana;
+        }
+    }
+
+    /// <summary>
+    /// Un ciclo escolar (EstadisticasDatos.ArmarCiclos, sin base): uno que ya termino
+    /// (LecturaEstadisticas.CiclosPasados) o el que esta en curso (CicloEnCurso). Sale
+    /// de las fechas de las clases; de los ciclos aplicados en Horarios > Aplicacion
+    /// solo se toma el nombre.
+    /// </summary>
+    internal sealed class CicloEscolar
+    {
+        /// <summary>El que se le puso en Horarios > Aplicacion (NombreAplicado) o el de sus meses ("Septiembre 2026-febrero 2027", CicloPreliminarDatos.NombrePropuesto).</summary>
+        public string Nombre = "";
+        /// <summary>El nombre es el del ciclo aplicado con ese primer dia (db/16 y db/23), no el de sus meses.</summary>
+        public bool NombreAplicado;
+        /// <summary>Otro ciclo pasado se llama igual (sin distinguir mayusculas): el combo le pone "(desde el ...)".</summary>
+        public bool NombreRepetido;
+        /// <summary>El primer dia: el de su primera clase con horario.</summary>
+        public DateTime Desde;
+        /// <summary>El ultimo dia: el vigente_hasta que mas se repite en sus clases con horario (con empate, el mas tardio).</summary>
+        public DateTime Hasta;
+        /// <summary>El ultimo dia de sus clases (con SiguenDespues, despues de Hasta).</summary>
+        public DateTime HastaDeSusClases;
+        /// <summary>Sus clases que siguieron despues de Hasta: esos dias no entran en ningun ciclo.</summary>
+        public int SiguenDespues;
+        /// <summary>Solo en "Este ciclo" (CicloEnCursoDe): sus clases que siguen hoy (vigente_hasta >= hoy); 0 en los pasados.</summary>
+        public int SiguenHoy;
+        /// <summary>Sus clases (idclases): las que empezaron desde Desde y antes del ciclo siguiente.</summary>
+        public HashSet<int> Clases = new HashSet<int>();
+    }
+
+    /// <summary>
+    /// Una plantilla de horario aplicada en Horarios > Aplicacion (ciclos_preliminares con
+    /// estado 'publicado', db/16 y db/23) que ya empezo, como periodo propio (2026-11-01): al
+    /// sustituir la plantilla entera todo empieza de cero (clases nuevas). Sus dias son solo
+    /// los de esa plantilla (EstadisticasDatos.ArmarPlantillas, sin base): de su desde al
+    /// menor de su hasta, el fin_anterior de la aplicada siguiente (el dia en que dejo de
+    /// valer porque la sustituyeron) y hoy. Una que se deshizo vuelve a 'borrador': no cuenta.
+    /// </summary>
+    internal sealed class PlantillaAplicada
+    {
+        /// <summary>ciclos_preliminares.idciclo: la identifica en una lectura nueva (el nombre se puede cambiar).</summary>
+        public int Id;
+        /// <summary>El nombre con que quedo en el registro (unico entre las aplicadas).</summary>
+        public string Nombre = "";
+        /// <summary>Su primer dia (desde).</summary>
+        public DateTime Desde;
+        /// <summary>El ultimo dia que cuenta: UltimoDia, o hoy si aun no llega.</summary>
+        public DateTime Hasta;
+        /// <summary>El ultimo dia de su horario: su hasta o, si otra la sustituyo antes, el fin_anterior de esa (puede ser despues de hoy).</summary>
+        public DateTime UltimoDia;
+        /// <summary>El hasta de sus clases al aplicarla.</summary>
+        public DateTime HastaDelHorario;
+        /// <summary>La aplicada que la sustituyo antes de su hasta (tambien una que aun no empieza); "" si nadie la corto.</summary>
+        public string SustituidaPor = "";
+
+        /// <summary>Su horario sigue valiendo hoy (UltimoDia >= hoy): el periodo llega a hoy y avanza solo.</summary>
+        public bool EnCurso;
+    }
+
+    /// <summary>
+    /// El periodo que se pide. No cambia despues de crearlo (De, EntreFechas,
+    /// DesdeHastaHoy, DelCiclo o DePlantilla). Con Fechas lleva sus dias; con un ciclo
+    /// pasado, Desde identifica al ciclo en una lectura nueva y Nombre es el texto del
+    /// combo mientras se lee; con una plantilla, la identifica Plantilla (su idciclo) y sus
+    /// dias salen de la lectura; con los demas, los dias salen del reloj del servidor y de
+    /// E0 al leer (EstadisticasDatos.Resolver).
     /// </summary>
     internal sealed class PeriodoElegido
     {
-        public TipoPeriodo Tipo;
-        /// <summary>Solo con Fechas: el primero y el ultimo dia, incluidos.</summary>
-        public DateTime Desde;
-        public DateTime Hasta;
+        public readonly TipoPeriodo Tipo;
+        /// <summary>Con Fechas, el primero y el ultimo dia, incluidos (con HastaHoy, Hasta = Desde: el ultimo es hoy). Con CicloPasado o Plantilla, los suyos al elegirlo.</summary>
+        public readonly DateTime Desde;
+        public readonly DateTime Hasta;
+        /// <summary>Con Fechas: el ultimo dia es siempre hoy (avanza solo cada dia).</summary>
+        public readonly bool HastaHoy;
+        /// <summary>Con CicloPasado o Plantilla: el texto del combo al elegirlo (TextoDeCiclo o TextoDePlantilla); "" en los demas.</summary>
+        public readonly string Nombre;
+        /// <summary>Con Plantilla: su idciclo (ciclos_preliminares); 0 en los demas.</summary>
+        public readonly int Plantilla;
+
+        private PeriodoElegido(TipoPeriodo tipo, DateTime desde, DateTime hasta, bool hastaHoy, string nombre)
+            : this(tipo, desde, hasta, hastaHoy, nombre, 0)
+        {
+        }
+
+        private PeriodoElegido(TipoPeriodo tipo, DateTime desde, DateTime hasta, bool hastaHoy, string nombre, int plantilla)
+        {
+            Tipo = tipo;
+            Desde = desde.Date;
+            Hasta = hasta.Date;
+            HastaHoy = hastaHoy;
+            Nombre = nombre ?? "";
+            Plantilla = plantilla;
+        }
 
         public static PeriodoElegido De(TipoPeriodo tipo)
         {
-            return new PeriodoElegido { Tipo = tipo };
+            return new PeriodoElegido(tipo, DateTime.MinValue, DateTime.MinValue, false, "");
         }
 
         public static PeriodoElegido EntreFechas(DateTime desde, DateTime hasta)
         {
-            return new PeriodoElegido { Tipo = TipoPeriodo.Fechas, Desde = desde.Date, Hasta = hasta.Date };
+            return new PeriodoElegido(TipoPeriodo.Fechas, desde, hasta, false, "");
+        }
+
+        /// <summary>"Del 01/10/2026 a hoy": desde ese dia y hasta hoy, que avanza solo.</summary>
+        public static PeriodoElegido DesdeHastaHoy(DateTime desde)
+        {
+            return new PeriodoElegido(TipoPeriodo.Fechas, desde, desde, true, "");
+        }
+
+        /// <summary>Un ciclo que ya termino, del primer al ultimo dia y solo con sus clases.</summary>
+        public static PeriodoElegido DelCiclo(CicloEscolar ciclo)
+        {
+            if (ciclo == null)
+            {
+                throw new ArgumentNullException("ciclo");
+            }
+
+            return new PeriodoElegido(TipoPeriodo.CicloPasado, ciclo.Desde, ciclo.Hasta, false, EstadisticasDatos.TextoDeCiclo(ciclo));
+        }
+
+        /// <summary>Una plantilla aplicada: los dias en que valio su horario, contados como unas fechas elegidas.</summary>
+        public static PeriodoElegido DePlantilla(PlantillaAplicada plantilla)
+        {
+            if (plantilla == null)
+            {
+                throw new ArgumentNullException("plantilla");
+            }
+
+            return new PeriodoElegido(TipoPeriodo.Plantilla, plantilla.Desde, plantilla.Hasta, false, EstadisticasDatos.TextoDePlantilla(plantilla), plantilla.Id);
         }
     }
 
     /// <summary>
     /// El periodo y los filtros con que se calcula (EstadisticasDatos.Resolver). Desde
-    /// es el del periodo sin recortar: con un ciclo de mas de 400 dias los dias que
-    /// cuentan empiezan en hoy - 399 (DesdeDeLosDias), pero las clases del ciclo se
-    /// eligen con el (revision de E1, punto 5).
+    /// es el del periodo sin recortar: con un periodo de mas de 400 dias los dias que
+    /// cuentan empiezan en su ultimo dia - 399 (Calculo). Las clases de un ciclo se
+    /// eligen con el (revision de E1, punto 5); las de unas fechas, con el primer dia
+    /// que cuenta (EstadisticasDatos.DesdeDeLasClases).
     /// </summary>
     internal sealed class FiltroEstadisticas
     {
-        /// <summary>El que quedo: "Este ciclo" sin clases vigentes hoy pasa a "Ciclo anterior" o a "Ultimos 30 dias".</summary>
+        /// <summary>El que quedo: "Este ciclo" sin clases vigentes hoy pasa al ultimo ciclo que termino o a "Ultimos 30 dias".</summary>
         public TipoPeriodo Tipo;
         public DateTime Desde;
         public DateTime Hasta;
-        /// <summary>"Este ciclo" o "Ciclo anterior": solo son del periodo las clases que empezaron en el (R2).</summary>
+        /// <summary>"Este ciclo" o un ciclo pasado: solo son del periodo las clases del ciclo (R2).</summary>
         public bool EsCiclo;
+        /// <summary>Solo con CicloPasado: el ciclo (sus clases son SoloEstas); null en lo demas.</summary>
+        public CicloEscolar Ciclo;
+        /// <summary>Solo con Plantilla: la plantilla aplicada (sus dias son Desde y Hasta; se calcula como unas fechas); null en lo demas.</summary>
+        public PlantillaAplicada Plantilla;
+        /// <summary>Con Fechas: el ultimo dia es siempre hoy.</summary>
+        public bool HastaHoy;
         /// <summary>0 = todos.</summary>
         public int Laboratorio;
         public int Docente;
@@ -89,6 +358,18 @@ namespace DigBit.conexion
         public bool SoloConsulta;
         /// <summary>El docente o el grupo elegido no tiene clases en el periodo y se volvio a "Todos": lo que dice lblResumen, o null.</summary>
         public string Aviso;
+        /// <summary>
+        /// Lo que dice lblResumen del periodo, antes del Aviso: que se ve otro ("Hoy no hay
+        /// ningun ciclo en curso...", "Ese ciclo ya no esta en la lista...") o que unas fechas
+        /// son las de un ciclo; o null.
+        /// </summary>
+        public string AvisoDelPeriodo;
+
+        /// <summary>Las clases del ciclo pasado, o null: con "Este ciclo" las del ciclo salen por fechas (R2).</summary>
+        public ISet<int> SoloEstas
+        {
+            get { return Ciclo == null ? null : Ciclo.Clases; }
+        }
     }
 
     /// <summary>Un laboratorio (E5) y desde cuando registra sus clases con DigBit (LeerCalendario.EmpezoEl).</summary>
@@ -151,7 +432,11 @@ namespace DigBit.conexion
         public LecturaDeAsistencia Asistencia;
         /// <summary>CalcularTodas, con los tramos de hoy de cada clase (TramosDeHoy).</summary>
         public Dictionary<int, AsistenciaDeClase> Listas = new Dictionary<int, AsistenciaDeClase>();
-        /// <summary>LeerCalendario(conexion, max(DesdeLectura, hoy - 399), hoy, false), como Faltas con la casilla sin marcar.</summary>
+        /// <summary>
+        /// LeerCalendario(conexion, desde, hasta, false), como Faltas con la casilla sin marcar:
+        /// con los periodos que llegan a hoy, de max(DesdeLectura, hoy - 399) a hoy; con uno que
+        /// termino antes, hasta HastaLectura (o su ultimo dia), con 400 dias como mucho.
+        /// </summary>
         public CalendarioBitacoras Calendario;
         /// <summary>E5 con EmpezoEl.</summary>
         public Dictionary<int, LaboratorioLeido> Laboratorios = new Dictionary<int, LaboratorioLeido>();
@@ -159,11 +444,18 @@ namespace DigBit.conexion
         public List<ReporteDeDocente> ReportesDocentes = new List<ReporteDeDocente>();
         /// <summary>E10 por id de bitacora.</summary>
         public Dictionary<int, DetalleDeReporte> Detalles = new Dictionary<int, DetalleDeReporte>();
-        /// <summary>E0: las clases activas vigentes hoy (ciclo) y, entre ciclos, las que terminaron hace 30 dias o menos.</summary>
+        /// <summary>E0: el primer y el ultimo dia de las clases activas vigentes hoy ("Este ciclo"); null entre ciclos.</summary>
         public DateTime? CicloDesde;
         public DateTime? CicloHasta;
-        public DateTime? AnteriorDesde;
-        public DateTime? AnteriorHasta;
+        /// <summary>Los ciclos que ya terminaron (EstadisticasDatos.ArmarCiclos), del mas reciente al mas viejo.</summary>
+        public List<CicloEscolar> CiclosPasados = new List<CicloEscolar>();
+        /// <summary>"Este ciclo" (EstadisticasDatos.CicloEnCursoDe), o null sin ciclo hoy.</summary>
+        public CicloEscolar CicloEnCurso;
+        /// <summary>
+        /// Las plantillas aplicadas que ya empezaron (EstadisticasDatos.ArmarPlantillas), de la mas
+        /// reciente a la mas vieja; vacia sin db/16 y db/23 o si la cuenta no puede leerlas.
+        /// </summary>
+        public List<PlantillaAplicada> Plantillas = new List<PlantillaAplicada>();
         /// <summary>Esquema.ReportesDeProfesor (db/15) y Esquema.EquiposSinInternet (db/10).</summary>
         public bool ConReportesDocentes;
         public bool ConAvisos;
@@ -189,10 +481,16 @@ namespace DigBit.conexion
             get { return Asistencia.ConDadas; }
         }
 
-        /// <summary>Lo leido empieza aqui (R3); acaba hoy.</summary>
+        /// <summary>Lo leido empieza aqui (R3); acaba en HastaLectura.</summary>
         public DateTime DesdeLectura
         {
             get { return Asistencia.DesdeLectura; }
+        }
+
+        /// <summary>Lo leido acaba aqui: hoy, o el ultimo dia de las clases de un periodo que termino antes (AsistenciaDatos.HastaLecturaDe).</summary>
+        public DateTime HastaLectura
+        {
+            get { return Asistencia.HastaLectura; }
         }
     }
 
@@ -462,6 +760,11 @@ namespace DigBit.conexion
         public string Docente = "";
         /// <summary>Los laboratorios de sus franjas y extras: "Laboratorio de Computo 1 y MULTIDICIPLINARIO".</summary>
         public string Laboratorios = "";
+        /// <summary>
+        /// Los mismos, cada uno aparte y por nombre (para juntar los de varias clases sin repetir: el PDF
+        /// de la ficha del docente). Interno: no va en los volcados ni en los CSV, que siguen igual.
+        /// </summary>
+        internal List<string> NombresDeLaboratorios = new List<string>();
         /// <summary>Clases con bitacoras X de N (C2 de la clase), sin bitacoras, con asistencia dada y canceladas.</summary>
         public int ConBitacoras;
         public int QueContaban;
@@ -647,6 +950,12 @@ namespace DigBit.conexion
         /// <summary>Estudiantes que registraron (en su sesion o, si no, en la otra) y asistencias que dio su docente (db/22).</summary>
         public int Bitacoras;
         public int AsistenciasDadas;
+        /// <summary>
+        /// La clase-dia del calendario de la que sale (Faltas): el motivo de la cancelacion
+        /// (Calendario.Motivo) y la sesion que se abre (PestanaCalendario.SesionQueAbrir). La
+        /// usa la ficha del docente; interna, para que no cuente como dato de la fila.
+        /// </summary>
+        internal ClaseDelCalendario Calendario;
 
         /// <summary>Se dio: con bitacoras o, sin ellas, con asistencias que dio su docente (ambar en Faltas).</summary>
         public bool SeDio
@@ -664,6 +973,61 @@ namespace DigBit.conexion
         {
             get { return Estado == EstadoEnCalendario.Cancelada; }
         }
+    }
+
+    /// <summary>
+    /// Un reporte de falla de un docente desde su panel (db/15) en una sesion del filtro, con
+    /// su clase: la ficha del docente ("Lo que reporto desde su panel"). Se llena donde se
+    /// cuenta SusReportes (Calculo.ContarBitacorasYReportes): la lista y su cuenta cuadran.
+    /// </summary>
+    internal sealed class FilaReporteDocente
+    {
+        public int Id;
+        public int SesionId;
+        /// <summary>Quien lo reporto (reportes_profesor.fk_usuario).</summary>
+        public int DocenteId;
+        /// <summary>El dia de su sesion.</summary>
+        public DateTime Dia;
+        public DateTime? RegistradoEn;
+        public int LaboratorioId;
+        public string Laboratorio = "";
+        /// <summary>La clase de su sesion (misma terna y vigencia), o null fuera del horario.</summary>
+        public int? ClaseId;
+        /// <summary>"Redes (5A)" o "Fuera del horario".</summary>
+        public string Clase = "";
+        /// <summary>El equipo que nombra, o null: todo el laboratorio.</summary>
+        public string Equipo;
+        /// <summary>red, hardware, software u otro.</summary>
+        public string Area = "";
+        public string Falla = "";
+    }
+
+    /// <summary>
+    /// Una asistencia que dio un docente sin bitacora (db/22), activa, en sus clases del
+    /// filtro y en sus dias: la ficha del docente ("Asistencias que dio"). Se llena donde se
+    /// cuenta AsistenciasQueDio (Calculo.ArmarDocentes). Las anuladas no estan.
+    /// </summary>
+    internal sealed class FilaAsistenciaDada
+    {
+        public int Id;
+        /// <summary>Quien la dio (asistencias_dadas.fk_profesor).</summary>
+        public int DocenteId;
+        public int ClaseId;
+        /// <summary>"Redes (5A)".</summary>
+        public string Clase = "";
+        /// <summary>El dia en que cuenta.</summary>
+        public DateTime Fecha;
+        /// <summary>Cuando la dio (reloj del servidor).</summary>
+        public DateTime DadaEn;
+        public int AlumnoId;
+        public string Matricula = "";
+        /// <summary>"Apellidos Nombre" (E7).</summary>
+        public string Nombre = "";
+        public string Motivo = "";
+        public string Equipo;
+        public string Comentario;
+        public int SesionId;
+        public int LaboratorioId;
     }
 
     /// <summary>Una fila de la pestana Laboratorios (sec. 3.5). La primera es "Todos los laboratorios".</summary>
@@ -776,6 +1140,23 @@ namespace DigBit.conexion
     internal sealed class ResultadoEstadisticas
     {
         public FiltroEstadisticas Filtro;
+        /// <summary>Los dias que de verdad cuentan (los del Calculo: hasta hoy y con 400 como mucho).</summary>
+        public DateTime Desde;
+        public DateTime Hasta;
+        /// <summary>El ciclo: el pasado con CicloPasado, "Este ciclo" (LecturaEstadisticas.CicloEnCurso) con Ciclo; null en lo demas.</summary>
+        public CicloEscolar Ciclo;
+        /// <summary>Un ciclo que ya termino (CicloPasado): se calcula con los datos de hoy, no es un cierre congelado.</summary>
+        public bool CicloCerrado;
+        /// <summary>Con Plantilla: la plantilla aplicada (su nombre en el combo, el PDF, el CSV y Graficas); null en lo demas.</summary>
+        public PlantillaAplicada Plantilla;
+        /// <summary>Las clases del periodo con todos los docentes y grupos (R2; con un ciclo pasado, las suyas que tocan sus dias).</summary>
+        public int ClasesDelPeriodo;
+        /// <summary>
+        /// El periodo pasa de 400 dias: los dias que cuentan empiezan en Desde (su ultimo dia
+        /// - 399), despues de su primer dia (Filtro.Desde). Lo dicen lblResumen, la ayuda del
+        /// combo, el PDF y el CSV, que entonces no dicen "completo".
+        /// </summary>
+        public bool Recortado;
         public CifrasEstadisticas Cifras = new CifrasEstadisticas();
         public List<FilaEstudiante> Estudiantes = new List<FilaEstudiante>();
         public List<FilaClase> Clases = new List<FilaClase>();
@@ -783,6 +1164,12 @@ namespace DigBit.conexion
         public List<FilaDocente> Docentes = new List<FilaDocente>();
         public List<FilaLaboratorio> Laboratorios = new List<FilaLaboratorio>();
         public List<FilaEquipo> Equipos = new List<FilaEquipo>();
+        /// <summary>Los reportes de docentes de las sesiones del filtro (db/15; vacia sin ella), con su clase: los que cuentan en SusReportes.</summary>
+        public List<FilaReporteDocente> ReportesDocentes = new List<FilaReporteDocente>();
+        /// <summary>Las asistencias que dieron los docentes en las clases del filtro (db/22; vacia sin ella): las que cuentan en AsistenciasQueDio.</summary>
+        public List<FilaAsistenciaDada> AsistenciasDadas = new List<FilaAsistenciaDada>();
+        /// <summary>Semanas, meses y horas de cada laboratorio (pestana Graficas).</summary>
+        public GraficasEstadisticas Graficas = new GraficasEstadisticas();
         /// <summary>Por prioridad (sec. 6.5).</summary>
         public List<NotaEstadisticas> Notas = new List<NotaEstadisticas>();
 
@@ -803,7 +1190,7 @@ namespace DigBit.conexion
         public List<OpcionCombo> OpcionesDocente = new List<OpcionCombo>();
         public List<OpcionCombo> OpcionesGrupo = new List<OpcionCombo>();
 
-        /// <summary>"Este ciclo" o "Ciclo anterior" con todos los laboratorios: la columna del 80 % es el derecho a evaluacion.</summary>
+        /// <summary>"Este ciclo" o un ciclo pasado, con todos los laboratorios: la columna del 80 % es el derecho a evaluacion.</summary>
         public bool CicloEntero;
         /// <summary>"Derecho a evaluacion (80 %)" o "80 % o mas en el periodo", y sus cortos ("Derecho (80 %)" o "80 % o mas").</summary>
         public string TituloDerecho = "";
@@ -836,8 +1223,23 @@ namespace DigBit.conexion
         private static readonly StringComparer PorNombre = StringComparer.Create(CultureInfo.GetCultureInfo("es-MX"), true);
         private static readonly string[] DiasCortos = { "dom", "lun", "mar", "mié", "jue", "vie", "sáb" };
 
+        // Las cuentas de los ciclos (ArmarCiclos, sec. 2 de la especificacion de periodos):
+        // un dia a menos de 14 del inicio del ciclo no abre otro; un bloque nuevo que termina
+        // 28 dias o mas despues del fin abre otro si es grande (3 clases o mas y al menos la
+        // mitad de las que seguian) o si empieza en las ultimas 3 semanas del ciclo.
+        private const int VentanaDeInicio = 14;
+        private const int TerminaDespues = 28;
+        private const int UltimasSemanas = 21;
+        private const int MinimoDeUnBloque = 3;
+        private static readonly CultureInfo Espanol = CultureInfo.GetCultureInfo("es-MX");
+
         private static readonly object candado = new object();
+        // La ultima lectura que llega a hoy y la ultima de un periodo que termino antes (un
+        // ciclo pasado o unas fechas viejas): se va y se vuelve entre las dos sin leer otra vez.
         private static LecturaEstadisticas guardada;
+        private static LecturaEstadisticas guardadaPasada;
+        // Sin permiso sobre ciclos_preliminares (o sin db/16 y db/23), el aviso del log, una vez.
+        private static bool avisadoSinNombres;
 
         // Sube con cada Olvidar. Una lectura que empezo antes (y acaba despues de
         // cerrar el panel o de "Actualizar") no se guarda: si no, volvia a dejar en
@@ -849,17 +1251,19 @@ namespace DigBit.conexion
         // =====================================================================
 
         /// <summary>
-        /// Lo que hace falta para el periodo, en una conexion: E0; LeerEnLote (E1,
-        /// DesdeLectura, E2 a E4, modos, E6, E7 y E11); LeerCalendario; CalcularTodas
-        /// con los tramos de hoy; E5, E8 y E10. Reutiliza la ultima lectura si es de la
-        /// misma cuenta, del mismo dia del servidor, de hace menos de 10 minutos y
-        /// cubre el periodo (Cubre); entonces ni abre la conexion. Va en segundo
-        /// plano (LeerEnSegundoPlano): no toca la pantalla. Lanza si tiene que ir a
-        /// la base y no hay conexion: quien llama lo ensena y sigue con la lectura
-        /// de antes (y con su periodo: Calcular no acepta un periodo que esa
-        /// lectura no cubre).
+        /// Lo que hace falta para el periodo, en una conexion: E0; LeerClasesEnLote
+        /// (E1 y E3); los ciclos (ArmarCiclos, con los nombres de los aplicados);
+        /// LeerElRestoEnLote (E2, E4, modos, E6, E7 y E11 de [DesdeLectura,
+        /// HastaLectura]); LeerCalendario; CalcularTodas con los tramos de hoy; E5, E8 y
+        /// E10. Reutiliza una de las dos ultimas lecturas (la que llega a hoy y la de un
+        /// periodo que termino antes) si es de la misma cuenta, del mismo dia del
+        /// servidor, de hace menos de 10 minutos y cubre el periodo (Cubre); entonces ni
+        /// abre la conexion. Va en segundo plano (LeerEnSegundoPlano): no toca la
+        /// pantalla. Lanza si tiene que ir a la base y no hay conexion: quien llama lo
+        /// ensena y sigue con la lectura de antes (y con su periodo: Calcular no acepta
+        /// un periodo que esa lectura no cubre).
         /// </summary>
-        /// <param name="forzar">"Actualizar" (F5): olvida la lectura guardada.</param>
+        /// <param name="forzar">"Actualizar" (F5): olvida las lecturas guardadas.</param>
         public static LecturaEstadisticas Leer(PeriodoElegido periodo, bool forzar)
         {
             if (periodo == null)
@@ -872,29 +1276,35 @@ namespace DigBit.conexion
                 Olvidar();
             }
 
-            // Si la guardada sirve, sin abrir la conexion: con la base remota son 3
+            // Si una guardada sirve, sin abrir la conexion: con la base remota son 3
             // viajes menos por cada cambio de periodo, y sin red se sigue pudiendo
             // cambiar a un periodo que ya esta leido. La cuenta se sabe sin abrirla.
             string sinAbrir = CuentaSinConexion();
-            LecturaEstadisticas previa;
+            LecturaEstadisticas[] previas;
             int olvidadaAlEmpezar;
             lock (candado)
             {
-                previa = guardada;
+                previas = new[] { guardada, guardadaPasada };
                 olvidadaAlEmpezar = vecesOlvidada;
             }
 
-            if (previa != null && sinAbrir != null && previa.CuentaSinConexion == sinAbrir && Vigente(previa) && Cubre(previa, periodo))
+            foreach (LecturaEstadisticas previa in previas)
             {
-                return previa;
+                if (previa != null && sinAbrir != null && previa.CuentaSinConexion == sinAbrir && Vigente(previa) && Cubre(previa, periodo))
+                {
+                    return previa;
+                }
             }
 
             using (MySqlConnection conexion = new Conexion().GetConexion())
             {
                 string cuenta = Esquema.CuentaDe(conexion);
-                if (previa != null && previa.Cuenta == cuenta && Vigente(previa) && Cubre(previa, periodo))
+                foreach (LecturaEstadisticas previa in previas)
                 {
-                    return previa;
+                    if (previa != null && previa.Cuenta == cuenta && Vigente(previa) && Cubre(previa, periodo))
+                    {
+                        return previa;
+                    }
                 }
 
                 LecturaEstadisticas leida = LeerDeLaBase(conexion, cuenta, periodo);
@@ -905,7 +1315,14 @@ namespace DigBit.conexion
                     // la pidio pero no se guarda.
                     if (vecesOlvidada == olvidadaAlEmpezar)
                     {
-                        guardada = leida;
+                        if (leida.HastaLectura == leida.Hoy && leida.Calendario.Hasta == leida.Hoy)
+                        {
+                            guardada = leida;
+                        }
+                        else
+                        {
+                            guardadaPasada = leida;
+                        }
                     }
                 }
 
@@ -941,8 +1358,8 @@ namespace DigBit.conexion
         }
 
         /// <summary>
-        /// Olvida la lectura guardada: "Actualizar" y al cerrar el panel de la
-        /// administracion (otra cuenta no la reutiliza y no quedan datos de
+        /// Olvida las lecturas guardadas: "Actualizar" y al cerrar el panel de la
+        /// administracion (otra cuenta no las reutiliza y no quedan datos de
         /// estudiantes en memoria). Las lecturas que ya estaban en camino tampoco
         /// se guardan al terminar.
         /// </summary>
@@ -951,6 +1368,7 @@ namespace DigBit.conexion
             lock (candado)
             {
                 guardada = null;
+                guardadaPasada = null;
                 vecesOlvidada++;
             }
         }
@@ -966,17 +1384,54 @@ namespace DigBit.conexion
         }
 
         /// <summary>
-        /// La lectura sirve para ese periodo: la lista de cada clase del periodo sale
-        /// entera de lo leido (su DesdeLectura, calculado con E1, no es anterior al de
-        /// la lectura). Las clases del periodo se eligen con el esCiclo del periodo nuevo.
+        /// La lectura sirve para ese periodo (resuelto con ella: ResolverPeriodo): la lista
+        /// de cada clase del periodo sale entera de lo leido y el calendario tiene sus dias
+        /// (CubreElPeriodo). Las clases del periodo se eligen con el del periodo nuevo.
         /// </summary>
         public static bool Cubre(LecturaEstadisticas lectura, PeriodoElegido periodo)
         {
-            TipoPeriodo tipo;
-            DateTime desde, hasta;
-            Fechas(periodo, lectura.Hoy, lectura.CicloDesde, lectura.AnteriorDesde, lectura.AnteriorHasta, out tipo, out desde, out hasta);
-            bool esCiclo = tipo == TipoPeriodo.Ciclo || tipo == TipoPeriodo.CicloAnterior;
-            return AsistenciaDatos.DesdeLecturaDe(lectura.Asistencia.Clases, desde, hasta, esCiclo) >= lectura.DesdeLectura;
+            PeriodoResuelto p = ResolverPeriodo(periodo, lectura);
+            return CubreElPeriodo(lectura, p.Desde, p.Hasta, p.EsCiclo, p.SoloEstas);
+        }
+
+        /// <summary>
+        /// La comprobacion de cobertura de la cache (Cubre) y de Calcular: lo leido empieza
+        /// antes que la lista de cada clase del periodo (DesdeLecturaDe) y acaba despues
+        /// (HastaLecturaDe), y el calendario va del primer dia que cuenta (400 como mucho,
+        /// desde el ultimo) al ultimo que cuenta. Con los periodos que llegan a hoy da lo
+        /// mismo que antes; una lectura de un periodo que termino antes nunca cubre "Este
+        /// ciclo" ni otro que llegue a hoy.
+        /// </summary>
+        internal static bool CubreElPeriodo(LecturaEstadisticas l, DateTime desde, DateTime hasta, bool esCiclo, ISet<int> soloEstas)
+        {
+            DateTime hoy = l.Hoy;
+            DateTime hastaVisto = hasta.Date < hoy ? hasta.Date : hoy;
+            DateTime primero = PrimerDiaQueCuenta(desde, hasta, hoy);
+            DateTime desdeClases = DesdeDeLasClases(desde, hasta, esCiclo, hoy);
+            return AsistenciaDatos.DesdeLecturaDe(l.Asistencia.Clases, desdeClases, hasta, esCiclo, soloEstas) >= l.Asistencia.DesdeLectura
+                && AsistenciaDatos.HastaLecturaDe(l.Asistencia.Clases, desdeClases, hasta, esCiclo, soloEstas, hoy) <= l.Asistencia.HastaLectura
+                && l.Calendario.Desde <= primero
+                && l.Calendario.Hasta >= hastaVisto;
+        }
+
+        /// <summary>El primer dia que cuenta: el del periodo o, si pasa de 400 dias, su ultimo dia (hoy como mucho) - 399 (Calculo).</summary>
+        private static DateTime PrimerDiaQueCuenta(DateTime desde, DateTime hasta, DateTime hoy)
+        {
+            DateTime hastaVisto = hasta.Date < hoy.Date ? hasta.Date : hoy.Date;
+            DateTime primero = hastaVisto.AddDays(-(DiasLeidos - 1));
+            return desde.Date < primero ? primero : desde.Date;
+        }
+
+        /// <summary>
+        /// El primer dia con que se eligen las clases del periodo (DelPeriodo, DesdeLecturaDe y
+        /// HastaLecturaDe): con un ciclo, el suyo (sus clases son las que empezaron en el,
+        /// aunque pase de 400 dias); con lo demas, el primero que cuenta (PrimerDiaQueCuenta),
+        /// para que unas fechas de mas de 400 dias (un "Del ... a hoy" que crecio con DigBit
+        /// abierto) no traigan clases ni docentes de dias que no cuentan.
+        /// </summary>
+        private static DateTime DesdeDeLasClases(DateTime desde, DateTime hasta, bool esCiclo, DateTime hoy)
+        {
+            return esCiclo ? desde.Date : PrimerDiaQueCuenta(desde, hasta, hoy);
         }
 
         private static LecturaEstadisticas LeerDeLaBase(MySqlConnection conexion, string cuenta, PeriodoElegido periodo)
@@ -988,20 +1443,40 @@ namespace DigBit.conexion
             {
                 LecturaEstadisticas lectura = new LecturaEstadisticas { Cuenta = cuenta };
                 DateTime ahoraE0 = LeerReloj(conexion, lectura);
-                TipoPeriodo tipo;
-                DateTime desde, hasta;
-                Fechas(periodo, ahoraE0.Date, lectura.CicloDesde, lectura.AnteriorDesde, lectura.AnteriorHasta, out tipo, out desde, out hasta);
-                bool esCiclo = tipo == TipoPeriodo.Ciclo || tipo == TipoPeriodo.CicloAnterior;
-
-                lectura.Asistencia = AsistenciaDatos.LeerEnLote(conexion, desde, hasta, esCiclo);
+                lectura.Asistencia = AsistenciaDatos.LeerClasesEnLote(conexion);
                 DateTime hoy = lectura.Hoy;
-                DateTime desdeCalendario = lectura.DesdeLectura > hoy.AddDays(-(DiasLeidos - 1)) ? lectura.DesdeLectura : hoy.AddDays(-(DiasLeidos - 1));
-                lectura.Calendario = HorariosDatos.LeerCalendario(conexion, desdeCalendario, hoy, false);
+
+                // Los ciclos, de E1 y E3 (las clases con franjas) y del nombre de los aplicados; las
+                // plantillas aplicadas que ya empezaron, de la misma consulta.
+                HashSet<int> conHorario = new HashSet<int>(lectura.Asistencia.FranjasPorDocente.Values.SelectMany(f => f).Select(f => f.ClaseId));
+                List<CicloPreliminar> aplicadas = LeerAplicadas(conexion);
+                Dictionary<DateTime, string> nombres = NombresAplicados(aplicadas);
+                lectura.CiclosPasados = ArmarCiclos(lectura.Asistencia.Clases, conHorario, lectura.CicloDesde, hoy, nombres);
+                lectura.CicloEnCurso = lectura.CicloDesde.HasValue
+                    ? CicloEnCursoDe(lectura.Asistencia.Clases, conHorario, lectura.CicloDesde.Value, lectura.CicloHasta, hoy, nombres)
+                    : null;
+                lectura.Plantillas = ArmarPlantillas(aplicadas, hoy);
+
+                // Lo demas, solo de los dias que hacen falta para ese periodo.
+                PeriodoResuelto p = ResolverPeriodo(periodo, lectura);
+                DateTime desdeClases = DesdeDeLasClases(p.Desde, p.Hasta, p.EsCiclo, hoy);
+                DateTime desdeLectura = AsistenciaDatos.DesdeLecturaDe(lectura.Asistencia.Clases, desdeClases, p.Hasta, p.EsCiclo, p.SoloEstas);
+                DateTime hastaLectura = AsistenciaDatos.HastaLecturaDe(lectura.Asistencia.Clases, desdeClases, p.Hasta, p.EsCiclo, p.SoloEstas, hoy);
+                AsistenciaDatos.LeerElRestoEnLote(conexion, lectura.Asistencia, desdeLectura, hastaLectura);
+
+                // El calendario: los dias que cuentan (400 como mucho, desde el ultimo) y, si
+                // cabe, hasta HastaLectura (con los periodos de hoy, de max(DesdeLectura, hoy - 399) a hoy).
+                DateTime hastaVisto = p.Hasta < hoy ? p.Hasta : hoy;
+                DateTime primero = PrimerDiaQueCuenta(p.Desde, p.Hasta, hoy);
+                DateTime calHasta = (hastaLectura - primero).TotalDays < DiasLeidos ? hastaLectura : hastaVisto;
+                DateTime calDesde = desdeLectura > calHasta.AddDays(-(DiasLeidos - 1)) ? desdeLectura : calHasta.AddDays(-(DiasLeidos - 1));
+                lectura.Calendario = HorariosDatos.LeerCalendario(conexion, calDesde, calHasta, false);
                 if (vuelta == 0 && (ahoraE0.Date != hoy || lectura.Calendario.Ahora.Date != hoy))
                 {
                     continue;
                 }
 
+                // Si el calendario no llega a hoy, los tramos de hoy salen vacios (ninguna clase del periodo es de hoy).
                 lectura.Listas = AsistenciaDatos.CalcularTodas(lectura.Asistencia, TramosDeHoy(lectura.Calendario, hoy));
 
                 // Cada Esquema.* una vez por lectura (lo que falta se vuelve a preguntar cada vez).
@@ -1011,20 +1486,22 @@ namespace DigBit.conexion
                 LeerLaboratorios(conexion, lectura, Esquema.LaboratoriosDesactivables(conexion));
                 if (lectura.ConReportesDocentes)
                 {
-                    LeerReportesDocentes(conexion, lectura, hoy);
+                    LeerReportesDocentes(conexion, lectura);
                 }
 
-                LeerDetalles(conexion, lectura, hoy, conLlegada);
+                LeerDetalles(conexion, lectura, conLlegada);
                 lectura.LeidaUtc = DateTime.UtcNow;
                 lectura.Duracion = reloj.Elapsed;
-                Log.Info("Estadisticas: leido de " + lectura.DesdeLectura.ToString("yyyy-MM-dd", Inv) + " a " + hoy.ToString("yyyy-MM-dd", Inv)
+                Log.Info("Estadisticas: leido de " + lectura.DesdeLectura.ToString("yyyy-MM-dd", Inv) + " a " + lectura.HastaLectura.ToString("yyyy-MM-dd", Inv)
+                    + " (calendario de " + lectura.Calendario.Desde.ToString("yyyy-MM-dd", Inv) + " a " + lectura.Calendario.Hasta.ToString("yyyy-MM-dd", Inv) + ")"
                     + " en " + (int)reloj.ElapsedMilliseconds + " ms: " + lectura.Asistencia.Clases.Count + " clases, "
-                    + lectura.Asistencia.SesionPorId.Count + " sesiones, " + lectura.Asistencia.BitacorasPorSesion.Values.Sum(l => l.Count) + " bitacoras.");
+                    + lectura.Asistencia.SesionPorId.Count + " sesiones, " + lectura.Asistencia.BitacorasPorSesion.Values.Sum(l => l.Count) + " bitacoras, "
+                    + lectura.CiclosPasados.Count + " ciclos pasados, " + lectura.Plantillas.Count + " plantillas aplicadas.");
                 return lectura;
             }
         }
 
-        /// <summary>E0: el reloj del servidor y el ciclo (e0_reloj_ciclo_rev.sql). Devuelve NOW().</summary>
+        /// <summary>E0: el reloj del servidor y "Este ciclo" (e0_reloj_ciclo_rev.sql). Devuelve NOW().</summary>
         private static DateTime LeerReloj(MySqlConnection conexion, LecturaEstadisticas lectura)
         {
             using (MySqlCommand comando = new MySqlCommand(@"
@@ -1032,20 +1509,109 @@ namespace DigBit.conexion
                        (SELECT MIN(c.vigente_desde) FROM clases c
                          WHERE c.activa = 1 AND c.vigente_desde <= CURDATE() AND c.vigente_hasta >= CURDATE()) AS ciclo_desde,
                        (SELECT MAX(c.vigente_hasta) FROM clases c
-                         WHERE c.activa = 1 AND c.vigente_desde <= CURDATE() AND c.vigente_hasta >= CURDATE()) AS ciclo_hasta,
-                       (SELECT MIN(c.vigente_desde) FROM clases c
-                         WHERE c.activa = 1 AND c.vigente_hasta < CURDATE() AND c.vigente_hasta >= CURDATE() - INTERVAL 30 DAY) AS anterior_desde,
-                       (SELECT MAX(c.vigente_hasta) FROM clases c
-                         WHERE c.activa = 1 AND c.vigente_hasta < CURDATE() AND c.vigente_hasta >= CURDATE() - INTERVAL 30 DAY) AS anterior_hasta", conexion))
+                         WHERE c.activa = 1 AND c.vigente_desde <= CURDATE() AND c.vigente_hasta >= CURDATE()) AS ciclo_hasta", conexion))
             using (MySqlDataReader reader = comando.ExecuteReader())
             {
                 reader.Read();
                 lectura.CicloDesde = FechaONula(reader["ciclo_desde"]);
                 lectura.CicloHasta = FechaONula(reader["ciclo_hasta"]);
-                lectura.AnteriorDesde = FechaONula(reader["anterior_desde"]);
-                lectura.AnteriorHasta = FechaONula(reader["anterior_hasta"]);
                 return Convert.ToDateTime(reader["ahora"], Inv);
             }
+        }
+
+        /// <summary>
+        /// Las plantillas aplicadas en Horarios > Aplicacion (db/16 y db/23: ciclos_preliminares
+        /// con estado 'publicado' y su primer dia), en el orden en que se aplicaron, con su
+        /// nombre, su vigencia y el ultimo dia que dieron al horario de antes (fin_anterior). Una
+        /// que se deshizo vuelve a 'borrador' y una guardada es 'guardado': no salen. Vacia sin
+        /// esas migraciones o si la cuenta no puede leerlas (digbit_equipo nunca; digbit_consulta
+        /// solo con db/23): entonces los ciclos se llaman por sus meses y Periodo no ensena
+        /// plantillas, sin ningun error.
+        /// </summary>
+        private static List<CicloPreliminar> LeerAplicadas(MySqlConnection conexion)
+        {
+            List<CicloPreliminar> aplicadas = new List<CicloPreliminar>();
+            if (!Esquema.CicloPreliminar(conexion) || !Esquema.HorariosGuardados(conexion))
+            {
+                return aplicadas;
+            }
+
+            try
+            {
+                using (MySqlCommand comando = new MySqlCommand(@"
+                    SELECT cp.idciclo, cp.nombre, DATE_FORMAT(cp.desde, '%Y-%m-%d') AS desde, DATE_FORMAT(cp.hasta, '%Y-%m-%d') AS hasta,
+                           DATE_FORMAT(cp.fin_anterior, '%Y-%m-%d') AS fin_anterior
+                    FROM ciclos_preliminares cp
+                    WHERE cp.estado = 'publicado' AND cp.desde IS NOT NULL
+                    ORDER BY cp.publicado_en, cp.idciclo", conexion))
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        DateTime? desde = DiaONulo(reader["desde"]);
+                        if (!desde.HasValue || reader.IsDBNull(1))
+                        {
+                            continue;
+                        }
+
+                        aplicadas.Add(new CicloPreliminar
+                        {
+                            Id = Convert.ToInt32(reader["idciclo"], Inv),
+                            Nombre = Convert.ToString(reader["nombre"], Inv).Trim(),
+                            Estado = EstadoConfiguracion.Aplicada,
+                            Desde = desde,
+                            Hasta = DiaONulo(reader["hasta"]),
+                            FinAnterior = DiaONulo(reader["fin_anterior"])
+                        });
+                    }
+                }
+            }
+            catch (MySqlException ex)
+            {
+                bool avisar;
+                lock (candado)
+                {
+                    avisar = !avisadoSinNombres;
+                    avisadoSinNombres = true;
+                }
+
+                if (avisar)
+                {
+                    Log.Aviso("Estadisticas: no se pudieron leer las plantillas aplicadas (" + ex.Number.ToString(Inv) + "): los ciclos se llaman por sus meses y Periodo no las ensena.");
+                }
+
+                aplicadas.Clear();
+            }
+
+            return aplicadas;
+        }
+
+        /// <summary>"2026-10-11" (DATE_FORMAT) como dia, o null.</summary>
+        private static DateTime? DiaONulo(object valor)
+        {
+            DateTime dia;
+            return valor != null && valor != DBNull.Value
+                && DateTime.TryParseExact(Convert.ToString(valor, Inv), "yyyy-MM-dd", Inv, DateTimeStyles.None, out dia)
+                ? dia.Date : (DateTime?)null;
+        }
+
+        /// <summary>
+        /// Los nombres de las plantillas aplicadas por su primer dia (el vigente_desde de sus
+        /// clases al aplicarlas), para los ciclos (ArmarCiclos y CicloEnCursoDe): si dos tienen el
+        /// mismo, gana la ultima aplicada.
+        /// </summary>
+        private static Dictionary<DateTime, string> NombresAplicados(IEnumerable<CicloPreliminar> aplicadas)
+        {
+            Dictionary<DateTime, string> nombres = new Dictionary<DateTime, string>();
+            foreach (CicloPreliminar aplicada in aplicadas)
+            {
+                if (aplicada.Desde.HasValue && aplicada.Nombre.Length > 0)
+                {
+                    nombres[aplicada.Desde.Value.Date] = aplicada.Nombre;
+                }
+            }
+
+            return nombres;
         }
 
         private static DateTime? FechaONula(object valor)
@@ -1111,8 +1677,8 @@ namespace DigBit.conexion
             }
         }
 
-        /// <summary>E8: los reportes de docentes de [DesdeLectura, hoy] (db/15).</summary>
-        private static void LeerReportesDocentes(MySqlConnection conexion, LecturaEstadisticas lectura, DateTime hoy)
+        /// <summary>E8: los reportes de docentes de [DesdeLectura, HastaLectura] (db/15).</summary>
+        private static void LeerReportesDocentes(MySqlConnection conexion, LecturaEstadisticas lectura)
         {
             using (MySqlCommand comando = new MySqlCommand(@"
                 SELECT rp.idreportes_profesor, rp.fk_codigo_accesos, rp.fk_usuario,
@@ -1123,8 +1689,9 @@ namespace DigBit.conexion
                 INNER JOIN codigos_accesos ca ON ca.idcodigos_accesos = rp.fk_codigo_accesos
                 WHERE " + VigenciaFranjas.DiaDeSesion("ca") + " BETWEEN @Desde AND @Hasta", conexion))
             {
+                comando.CommandTimeout = 60;
                 comando.Parameters.AddWithValue("@Desde", lectura.DesdeLectura.Date);
-                comando.Parameters.AddWithValue("@Hasta", hoy.Date);
+                comando.Parameters.AddWithValue("@Hasta", lectura.HastaLectura.Date);
                 using (MySqlDataReader reader = comando.ExecuteReader())
                 {
                     while (reader.Read())
@@ -1156,7 +1723,7 @@ namespace DigBit.conexion
         /// los seis textos (para "Lo ultimo que reportaron"), la lista y cuando. Sin
         /// db/10, sin la lista ni el OR, y la hora es solo registrado_en.
         /// </summary>
-        private static void LeerDetalles(MySqlConnection conexion, LecturaEstadisticas lectura, DateTime hoy, bool conLlegada)
+        private static void LeerDetalles(MySqlConnection conexion, LecturaEstadisticas lectura, bool conLlegada)
         {
             string falla = "(" + Consultas.CondicionConFalla + ")";
             using (MySqlCommand comando = new MySqlCommand(
@@ -1172,7 +1739,7 @@ namespace DigBit.conexion
             {
                 comando.CommandTimeout = 60;
                 comando.Parameters.AddWithValue("@Desde", lectura.DesdeLectura.Date);
-                comando.Parameters.AddWithValue("@Hasta", hoy.Date);
+                comando.Parameters.AddWithValue("@Hasta", lectura.HastaLectura.Date);
                 DataTable tabla = new DataTable();
                 using (MySqlDataAdapter adaptador = new MySqlDataAdapter(comando))
                 {
@@ -1212,79 +1779,168 @@ namespace DigBit.conexion
         // =====================================================================
 
         /// <summary>
-        /// Los dias del periodo con el reloj del servidor (R2). "Este ciclo" sin
-        /// clases vigentes hoy pasa a "Ciclo anterior" y, sin ese, a "Ultimos 30
-        /// dias". Con Fechas, recortadas a hoy y a los ultimos 400 dias.
+        /// El periodo resuelto con una lectura (ResolverPeriodo): el que quedo, los dias que
+        /// pide (sin recortar a 400: eso es de Calculo) y, con un ciclo pasado, sus clases.
         /// </summary>
-        private static void Fechas(PeriodoElegido periodo, DateTime hoy, DateTime? cicloDesde, DateTime? anteriorDesde, DateTime? anteriorHasta,
-            out TipoPeriodo tipo, out DateTime desde, out DateTime hasta)
+        private sealed class PeriodoResuelto
         {
-            hoy = hoy.Date;
-            tipo = periodo.Tipo;
-            if (tipo == TipoPeriodo.Ciclo && !cicloDesde.HasValue)
-            {
-                tipo = anteriorDesde.HasValue ? TipoPeriodo.CicloAnterior : TipoPeriodo.Ultimos30;
-            }
-            else if (tipo == TipoPeriodo.CicloAnterior && !anteriorDesde.HasValue)
-            {
-                tipo = cicloDesde.HasValue ? TipoPeriodo.Ciclo : TipoPeriodo.Ultimos30;
-            }
+            public TipoPeriodo Tipo;
+            public DateTime Desde;
+            public DateTime Hasta;
+            public bool EsCiclo;
+            /// <summary>Solo con CicloPasado; null en lo demas.</summary>
+            public CicloEscolar Ciclo;
+            /// <summary>Solo con Plantilla; null en lo demas.</summary>
+            public PlantillaAplicada Plantilla;
+            public bool HastaHoy;
+            /// <summary>Que se ve otro periodo que el pedido (FiltroEstadisticas.AvisoDelPeriodo), o null.</summary>
+            public string Aviso;
 
-            hasta = hoy;
-            switch (tipo)
+            /// <summary>Las clases del ciclo pasado, o null.</summary>
+            public ISet<int> SoloEstas
             {
-                case TipoPeriodo.Ciclo:
-                    desde = cicloDesde.Value;
-                    break;
-                case TipoPeriodo.CicloAnterior:
-                    desde = anteriorDesde.Value;
-                    hasta = anteriorHasta.HasValue && anteriorHasta.Value < hoy ? anteriorHasta.Value : hoy;
-                    break;
-                case TipoPeriodo.Mes:
-                    desde = new DateTime(hoy.Year, hoy.Month, 1);
-                    break;
-                case TipoPeriodo.Semana:
-                    desde = hoy.AddDays(-(((int)hoy.DayOfWeek + 6) % 7));
-                    break;
-                case TipoPeriodo.Fechas:
-                    hasta = periodo.Hasta.Date > hoy ? hoy : periodo.Hasta.Date;
-                    desde = periodo.Desde.Date < hoy.AddDays(-(DiasLeidos - 1)) ? hoy.AddDays(-(DiasLeidos - 1)) : periodo.Desde.Date;
-                    if (desde > hasta)
-                    {
-                        desde = hasta;
-                    }
-
-                    break;
-                default:
-                    desde = hoy.AddDays(-29);
-                    break;
+                get { return Ciclo == null ? null : Ciclo.Clases; }
             }
         }
 
         /// <summary>
-        /// El filtro con que se calcula: los dias del periodo (con el reloj y E0 de la
-        /// lectura) y los combos. Si el docente o el grupo elegido no tiene clases en
+        /// Los dias del periodo con el reloj del servidor y lo leido (R2). Un ciclo pasado
+        /// se busca por su primer dia y, si cambiaron las fechas de sus clases, por el ciclo
+        /// que contiene ese dia; si ya no esta, "Este ciclo". "Este ciclo" sin clases
+        /// vigentes hoy pasa al ultimo ciclo que termino y, sin ninguno, a "Ultimos 30
+        /// dias". Con Fechas, el ultimo dia llega a hoy como mucho (con HastaHoy, siempre
+        /// hoy) y el primero no se recorta: los 400 dias se cuentan desde el ultimo (Calculo).
+        /// Una plantilla aplicada se busca por su idciclo y da sus dias (los de la lectura), que
+        /// se cuentan como unas fechas elegidas (EsCiclo en false); si ya no esta, "Este ciclo".
+        /// </summary>
+        private static PeriodoResuelto ResolverPeriodo(PeriodoElegido periodo, LecturaEstadisticas lectura)
+        {
+            DateTime hoy = lectura.Hoy;
+            PeriodoResuelto p = new PeriodoResuelto { Tipo = periodo.Tipo, Hasta = hoy };
+            CicloEscolar ciclo = null;
+            PlantillaAplicada plantilla = null;
+            // Lo pedido ya no esta en la lista: el principio del aviso, o null.
+            string yaNoEsta = null;
+            if (p.Tipo == TipoPeriodo.CicloPasado)
+            {
+                ciclo = lectura.CiclosPasados.FirstOrDefault(c => c.Desde == periodo.Desde)
+                    ?? lectura.CiclosPasados.FirstOrDefault(c => c.Desde <= periodo.Desde && periodo.Desde <= c.Hasta);
+                if (ciclo == null)
+                {
+                    p.Tipo = TipoPeriodo.Ciclo;
+                    yaNoEsta = "Ese ciclo ya no está en la lista (cambiaron las fechas de sus clases): ";
+                }
+            }
+            else if (p.Tipo == TipoPeriodo.Plantilla)
+            {
+                plantilla = lectura.Plantillas.FirstOrDefault(x => x.Id == periodo.Plantilla);
+                if (plantilla == null)
+                {
+                    p.Tipo = TipoPeriodo.Ciclo;
+                    yaNoEsta = "Ese horario aplicado ya no está en la lista: ";
+                }
+            }
+
+            if (p.Tipo == TipoPeriodo.Ciclo && !lectura.CicloDesde.HasValue)
+            {
+                if (lectura.CiclosPasados.Count > 0)
+                {
+                    // Entre ciclos: el ultimo que termino (y se sigue pidiendo "Este ciclo").
+                    p.Tipo = TipoPeriodo.CicloPasado;
+                    ciclo = lectura.CiclosPasados[0];
+                    p.Aviso = yaNoEsta != null ? yaNoEsta + "se ve el último que terminó." : "Hoy no hay ningún ciclo en curso: se ve el último que terminó.";
+                }
+                else
+                {
+                    p.Tipo = TipoPeriodo.Ultimos30;
+                    p.Aviso = yaNoEsta != null ? yaNoEsta + "se ven los últimos 30 días." : null;
+                }
+            }
+            else if (yaNoEsta != null)
+            {
+                p.Aviso = yaNoEsta + "se ve este ciclo.";
+            }
+
+            switch (p.Tipo)
+            {
+                case TipoPeriodo.Ciclo:
+                    p.Desde = lectura.CicloDesde.Value;
+                    break;
+                case TipoPeriodo.CicloPasado:
+                    p.Ciclo = ciclo;
+                    p.Desde = ciclo.Desde;
+                    p.Hasta = ciclo.Hasta < hoy ? ciclo.Hasta : hoy;
+                    break;
+                case TipoPeriodo.Mes:
+                    p.Desde = new DateTime(hoy.Year, hoy.Month, 1);
+                    break;
+                case TipoPeriodo.Semana:
+                    p.Desde = hoy.AddDays(-(((int)hoy.DayOfWeek + 6) % 7));
+                    break;
+                case TipoPeriodo.Fechas:
+                    p.HastaHoy = periodo.HastaHoy;
+                    p.Hasta = periodo.HastaHoy || periodo.Hasta > hoy ? hoy : periodo.Hasta;
+                    p.Desde = periodo.Desde > p.Hasta ? p.Hasta : periodo.Desde;
+                    break;
+                case TipoPeriodo.Plantilla:
+                    // Como EntreFechas con sus dias (ya llegan a hoy como mucho).
+                    p.Plantilla = plantilla;
+                    p.Hasta = plantilla.Hasta < hoy ? plantilla.Hasta : hoy;
+                    p.Desde = plantilla.Desde > p.Hasta ? p.Hasta : plantilla.Desde;
+                    break;
+                default:
+                    p.Desde = hoy.AddDays(-29);
+                    break;
+            }
+
+            p.EsCiclo = p.Tipo == TipoPeriodo.Ciclo || p.Tipo == TipoPeriodo.CicloPasado;
+            return p;
+        }
+
+        /// <summary>
+        /// El filtro con que se calcula: los dias del periodo (con el reloj, E0 y los ciclos
+        /// de la lectura) y los combos. Si el docente o el grupo elegido no tiene clases en
         /// el periodo, vuelve a "Todos" y Aviso lo dice (sec. 6.5). Un laboratorio que ya
-        /// no existe, tambien a "Todos".
+        /// no existe, tambien a "Todos". AvisoDelPeriodo dice si se ve otro periodo o si unas
+        /// fechas son las de un ciclo (para el derecho a evaluacion hay que elegir el ciclo).
         /// </summary>
         public static FiltroEstadisticas Resolver(PeriodoElegido periodo, LecturaEstadisticas lectura, int laboratorio, int docente, int grupo)
         {
+            return Resolver(periodo, lectura, laboratorio, docente, grupo, false);
+        }
+
+        /// <summary>
+        /// Como Resolver; con docenteFijo (la ficha del docente) el docente nunca vuelve a
+        /// "Todo el personal docente" aunque no tenga clases en el periodo: se calcula solo lo
+        /// suyo (sus sesiones, sin clases), sin Aviso. Estadisticas no lo usa.
+        /// </summary>
+        public static FiltroEstadisticas Resolver(PeriodoElegido periodo, LecturaEstadisticas lectura, int laboratorio, int docente, int grupo, bool docenteFijo)
+        {
+            PeriodoResuelto p = ResolverPeriodo(periodo, lectura);
             FiltroEstadisticas filtro = new FiltroEstadisticas
             {
+                Tipo = p.Tipo,
+                Desde = p.Desde,
+                Hasta = p.Hasta,
+                EsCiclo = p.EsCiclo,
+                Ciclo = p.Ciclo,
+                Plantilla = p.Plantilla,
+                HastaHoy = p.HastaHoy,
+                AvisoDelPeriodo = p.Aviso ?? AvisoDeFechasDeUnCiclo(p, lectura),
                 Laboratorio = laboratorio,
                 Docente = docente,
                 Grupo = grupo,
                 SoloConsulta = Permisos.SoloConsulta
             };
-            Fechas(periodo, lectura.Hoy, lectura.CicloDesde, lectura.AnteriorDesde, lectura.AnteriorHasta, out filtro.Tipo, out filtro.Desde, out filtro.Hasta);
-            filtro.EsCiclo = filtro.Tipo == TipoPeriodo.Ciclo || filtro.Tipo == TipoPeriodo.CicloAnterior;
             if (filtro.Laboratorio != 0 && !lectura.Laboratorios.ContainsKey(filtro.Laboratorio))
             {
                 filtro.Laboratorio = 0;
             }
 
-            List<ClaseLeida> delPeriodo = lectura.Asistencia.Clases.Where(c => AsistenciaDatos.DelPeriodo(c, filtro.Desde, filtro.Hasta, filtro.EsCiclo)).ToList();
-            bool sinDocente = filtro.Docente != 0 && !delPeriodo.Any(c => c.ProfesorId == filtro.Docente);
+            DateTime desdeClases = DesdeDeLasClases(filtro.Desde, filtro.Hasta, filtro.EsCiclo, lectura.Hoy);
+            List<ClaseLeida> delPeriodo = lectura.Asistencia.Clases
+                .Where(c => AsistenciaDatos.DelPeriodo(c, desdeClases, filtro.Hasta, filtro.EsCiclo, filtro.SoloEstas)).ToList();
+            bool sinDocente = !docenteFijo && filtro.Docente != 0 && !delPeriodo.Any(c => c.ProfesorId == filtro.Docente);
             bool sinGrupo = filtro.Grupo != 0 && !delPeriodo.Any(c => c.GrupoId == filtro.Grupo);
             if (sinDocente)
             {
@@ -1296,43 +1952,97 @@ namespace DigBit.conexion
                 filtro.Grupo = 0;
             }
 
-            filtro.Aviso = sinDocente && sinGrupo ? "Ese docente y ese grupo no tienen clases en estas fechas: se ve todo."
-                : sinDocente ? "Ese docente no tiene clases en estas fechas: se ve todo el personal."
-                : sinGrupo ? "Ese grupo no tiene clases en estas fechas: se ven todos."
+            string enElPeriodo = filtro.EsCiclo ? "en este ciclo" : "en estas fechas";
+            filtro.Aviso = sinDocente && sinGrupo ? "Ese docente y ese grupo no tienen clases " + enElPeriodo + ": se ve todo."
+                : sinDocente ? "Ese docente no tiene clases " + enElPeriodo + ": se ve todo el personal."
+                : sinGrupo ? "Ese grupo no tiene clases " + enElPeriodo + ": se ven todos."
                 : null;
             return filtro;
         }
 
-        /// <summary>Las opciones del combo Periodo, en orden: "Este ciclo" (o, entre ciclos, "Ciclo anterior" si lo hay) y las demas.</summary>
-        public static List<TipoPeriodo> OpcionesDePeriodo(LecturaEstadisticas lectura)
+        /// <summary>Con Fechas iguales a las de "Este ciclo" (hasta hoy) o a las de un ciclo pasado, que el derecho a evaluacion sale eligiendo el ciclo; o null.</summary>
+        private static string AvisoDeFechasDeUnCiclo(PeriodoResuelto p, LecturaEstadisticas lectura)
         {
-            List<TipoPeriodo> opciones = new List<TipoPeriodo>();
-            if (lectura == null || lectura.CicloDesde.HasValue)
+            const string ParaElDerecho = ": para el derecho a evaluación (80 %), elígelo en Periodo.";
+            if (p.Tipo != TipoPeriodo.Fechas)
             {
-                opciones.Add(TipoPeriodo.Ciclo);
-            }
-            else if (lectura.AnteriorDesde.HasValue)
-            {
-                opciones.Add(TipoPeriodo.CicloAnterior);
+                return null;
             }
 
-            opciones.AddRange(new[] { TipoPeriodo.Mes, TipoPeriodo.Semana, TipoPeriodo.Ultimos30, TipoPeriodo.Fechas });
+            if (lectura.CicloDesde.HasValue && p.Desde == lectura.CicloDesde.Value && p.Hasta == lectura.Hoy)
+            {
+                return "Son las fechas de «" + NombreDeEsteCiclo(lectura.CicloEnCurso) + "»" + ParaElDerecho;
+            }
+
+            CicloEscolar igual = lectura.CiclosPasados.FirstOrDefault(c => c.Desde == p.Desde && c.Hasta == p.Hasta);
+            return igual == null ? null : "Son las fechas del " + CicloEnLaFrase(TextoDeCiclo(igual)) + ParaElDerecho;
+        }
+
+        /// <summary>
+        /// TextoDeCiclo dentro de una frase ("Son las fechas del ..."): "Ciclo abril-septiembre
+        /// 2026" pasa a "ciclo abril-septiembre 2026"; un nombre aplicado escrito de otra forma
+        /// ("CICLO ESCOLAR 2026-1"), tal cual.
+        /// </summary>
+        private static string CicloEnLaFrase(string texto)
+        {
+            return texto.StartsWith("Ciclo ", StringComparison.Ordinal) ? MinusculaInicial(texto) : texto;
+        }
+
+        /// <summary>
+        /// Las opciones del combo Periodo, en orden: "Este ciclo" (sin lectura, o si hoy vale
+        /// alguna clase), un renglon por cada ciclo que ya termino (del mas reciente al mas
+        /// viejo), un renglon por cada plantilla aplicada que ya empezo (de la mas reciente a
+        /// la mas vieja; sin db/16 y db/23, ninguno), "Este mes", "Esta semana" y "Ultimos 30
+        /// dias". Las fechas elegidas y "Elegir fechas..." las pone SelectorDePeriodo.Llenar.
+        /// </summary>
+        public static List<PeriodoElegido> OpcionesDePeriodo(LecturaEstadisticas lectura)
+        {
+            List<PeriodoElegido> opciones = new List<PeriodoElegido>();
+            if (lectura == null || lectura.CicloDesde.HasValue)
+            {
+                opciones.Add(PeriodoElegido.De(TipoPeriodo.Ciclo));
+            }
+
+            if (lectura != null)
+            {
+                opciones.AddRange(lectura.CiclosPasados.Select(PeriodoElegido.DelCiclo));
+                opciones.AddRange(lectura.Plantillas.Select(PeriodoElegido.DePlantilla));
+            }
+
+            opciones.Add(PeriodoElegido.De(TipoPeriodo.Mes));
+            opciones.Add(PeriodoElegido.De(TipoPeriodo.Semana));
+            opciones.Add(PeriodoElegido.De(TipoPeriodo.Ultimos30));
             return opciones;
         }
 
         /// <summary>
-        /// El texto del combo: "Este ciclo (desde el 30/09/2026)", "Ciclo anterior (del
-        /// 30/09/2026)", "Este mes", "Esta semana", "Ultimos 30 dias", "Del 05/10/2026 al
-        /// 11/10/2026" o "Elegir fechas...". Sin lectura todavia, "Este ciclo".
+        /// El texto del combo: "Este ciclo (desde el 30/09/2026)" (con el nombre del ciclo
+        /// aplicado, "Este ciclo: 2027-1 (desde el 30/09/2026)"), "Ciclo abril-septiembre
+        /// 2026", "Horario «2026-2»: desde el 11/10/2026 (en curso)", "Este mes", "Esta
+        /// semana", "Ultimos 30 dias", "Del 01/10/2026 al 15/10/2026" o "Del 01/10/2026 a hoy".
+        /// Sin lectura todavia, "Este ciclo" (y un ciclo pasado o una plantilla con su nombre de
+        /// cuando se eligio).
         /// </summary>
-        public static string TextoDePeriodo(TipoPeriodo tipo, LecturaEstadisticas lectura, FiltroEstadisticas filtro)
+        public static string TextoDePeriodo(PeriodoElegido p, LecturaEstadisticas lectura)
         {
-            switch (tipo)
+            switch (p.Tipo)
             {
                 case TipoPeriodo.Ciclo:
-                    return lectura != null && lectura.CicloDesde.HasValue ? "Este ciclo (desde el " + Fecha(lectura.CicloDesde.Value) + ")" : "Este ciclo";
-                case TipoPeriodo.CicloAnterior:
-                    return lectura != null && lectura.AnteriorDesde.HasValue ? "Ciclo anterior (del " + Fecha(lectura.AnteriorDesde.Value) + ")" : "Ciclo anterior";
+                    return lectura != null && lectura.CicloDesde.HasValue
+                        ? NombreDeEsteCiclo(lectura.CicloEnCurso) + " (desde el " + Fecha(lectura.CicloDesde.Value) + ")"
+                        : "Este ciclo";
+                case TipoPeriodo.CicloPasado:
+                    {
+                        CicloEscolar ciclo = lectura == null ? null : lectura.CiclosPasados.FirstOrDefault(c => c.Desde == p.Desde);
+                        return ciclo != null ? TextoDeCiclo(ciclo) : p.Nombre;
+                    }
+
+                case TipoPeriodo.Plantilla:
+                    {
+                        PlantillaAplicada plantilla = lectura == null ? null : lectura.Plantillas.FirstOrDefault(x => x.Id == p.Plantilla);
+                        return plantilla != null ? TextoDePlantilla(plantilla) : p.Nombre;
+                    }
+
                 case TipoPeriodo.Mes:
                     return "Este mes";
                 case TipoPeriodo.Semana:
@@ -1340,7 +2050,7 @@ namespace DigBit.conexion
                 case TipoPeriodo.Ultimos30:
                     return "Últimos 30 días";
                 default:
-                    return filtro != null && filtro.Tipo == TipoPeriodo.Fechas ? DelAl(filtro.Desde, filtro.Hasta) : "Elegir fechas...";
+                    return p.HastaHoy ? DelAHoy(p.Desde) : DelAl(p.Desde, p.Hasta);
             }
         }
 
@@ -1350,13 +2060,243 @@ namespace DigBit.conexion
             return "Del " + Fecha(desde) + " al " + Fecha(hasta);
         }
 
-        /// <summary>El primer dia que se puede elegir en "Elegir fechas" (hoy - 399).</summary>
-        public static DateTime PrimerDiaElegible(DateTime hoy)
+        /// <summary>"Del 01/10/2026 a hoy" (unas fechas con "Hasta hoy").</summary>
+        public static string DelAHoy(DateTime desde)
         {
-            return hoy.Date.AddDays(-(DiasLeidos - 1));
+            return "Del " + Fecha(desde) + " a hoy";
         }
 
-        /// <summary>Lo que dice el dialogo "Elegir fechas" si no valen (sec. 6.4), o null.</summary>
+        /// <summary>
+        /// El renglon de una plantilla aplicada en el combo: "Horario «2026-1»: del 01/09/2026 al
+        /// 02/11/2026" o, si su horario sigue valiendo, "Horario «2026-2»: desde el 03/11/2026 (en curso)".
+        /// </summary>
+        internal static string TextoDePlantilla(PlantillaAplicada p)
+        {
+            return NombreDePlantilla(p) + ": " + (p.EnCurso ? "desde el " + Fecha(p.Desde) + " (en curso)" : "del " + Fecha(p.Desde) + " al " + Fecha(p.Hasta));
+        }
+
+        /// <summary>"Horario «2026-1»" (null: "Horario aplicado").</summary>
+        internal static string NombreDePlantilla(PlantillaAplicada p)
+        {
+            return p == null ? "Horario aplicado" : "Horario «" + p.Nombre + "»";
+        }
+
+        /// <summary>
+        /// Por que termina una plantilla que ya no sigue (sin parentesis ni punto): "despues se
+        /// aplico «2026-2»" si otra la sustituyo, o "completo" si su horario acabo solo; "" en curso.
+        /// </summary>
+        private static string FinDePlantilla(PlantillaAplicada p)
+        {
+            return p == null || p.EnCurso ? "" : p.SustituidaPor.Length > 0 ? "después se aplicó «" + p.SustituidaPor + "»" : "completo";
+        }
+
+        /// <summary>"Este ciclo" o, si se aplico con una plantilla de Horarios > Aplicacion, "Este ciclo: 2027-1".</summary>
+        private static string NombreDeEsteCiclo(CicloEscolar enCurso)
+        {
+            return enCurso != null && enCurso.NombreAplicado ? "Este ciclo: " + NombreAplicadoComoSeLee(enCurso.Nombre) : "Este ciclo";
+        }
+
+        /// <summary>
+        /// El fin de "Este ciclo" (la ayuda del combo y el PDF), sin punto final: "el ciclo
+        /// termina el 28/02/2027" o, si ese dia ya paso porque alguna clase se alargo, "la
+        /// mayoria de sus clases terminaron el 20/10/2026 y 1 clase sigue hasta el 01/02/2027".
+        /// </summary>
+        internal static string FinDeEsteCiclo(CicloEscolar c, DateTime hoy)
+        {
+            if (c.Hasta >= hoy.Date)
+            {
+                return "el ciclo termina el " + Fecha(c.Hasta);
+            }
+
+            return "la mayoría de sus clases terminaron el " + Fecha(c.Hasta) + " y "
+                + (c.SiguenHoy > 1 ? Miles(c.SiguenHoy) + " clases siguen (la última, hasta el " + Fecha(c.HastaDeSusClases) + ")"
+                    : c.SiguenHoy == 1 ? "1 clase sigue hasta el " + Fecha(c.HastaDeSusClases)
+                    : "otras siguieron hasta el " + Fecha(c.HastaDeSusClases));
+        }
+
+        /// <summary>
+        /// La ayuda del combo Periodo (sec. 1.2): "Del 30/09/2026 al 31/10/2026 (hoy): todo
+        /// este ciclo hasta hoy. El ciclo termina el 28/02/2027.", "Ciclo septiembre
+        /// 2026-febrero 2027: del 30/09/2026 al 28/02/2027, completo (68 clases).", "Del ...
+        /// al ... (hoy): el ultimo dia avanza solo." o "Del ... al ... (hoy).". Con los dias
+        /// que de verdad cuentan; null sin nada calculado.
+        /// </summary>
+        public static string AyudaDelPeriodo(ResultadoEstadisticas r, LecturaEstadisticas l)
+        {
+            if (r == null || l == null)
+            {
+                return null;
+            }
+
+            string dias = DelAl(r.Desde, r.Hasta);
+            // Mas de 400 dias: solo cuentan los ultimos 400 (lo dice tambien lblResumen).
+            string empezo = " Empezó el " + Fecha(r.Filtro.Desde) + ", pero DigBit cuenta como mucho " + DiasLeidos + " días seguidos.";
+            switch (r.Filtro.Tipo)
+            {
+                case TipoPeriodo.Ciclo:
+                    return (r.Ciclo != null && r.Ciclo.NombreAplicado
+                            ? NombreDeEsteCiclo(r.Ciclo) + " (el nombre que se le puso en Horarios > Aplicación). " : "")
+                        + dias + (r.Recortado ? " (hoy): los últimos " + DiasLeidos + " días de este ciclo." + empezo : " (hoy): todo este ciclo hasta hoy.")
+                        + (r.Ciclo != null ? " " + MayusculaInicial(FinDeEsteCiclo(r.Ciclo, l.Hoy)) + "." : "")
+                        + (l.CiclosPasados.Count == 0 ? " Los ciclos que terminen saldrán en esta lista." : "");
+                case TipoPeriodo.CicloPasado:
+                    {
+                        CicloEscolar c = r.Ciclo;
+                        // Con filtros (la ficha del docente: Docente = el), las clases son las suyas y no
+                        // las del ciclo en toda la escuela, como en las definiciones del PDF (ClasesDeLaDefinicion).
+                        // Estadisticas la pide con lo general: ahi no cambia.
+                        bool conFiltros = r.Filtro.Laboratorio != 0 || r.Filtro.Docente != 0 || r.Filtro.Grupo != 0;
+                        bool deUnDocente = r.Filtro.Docente != 0 && r.Filtro.Laboratorio == 0 && r.Filtro.Grupo == 0;
+                        string cuantas = !conFiltros ? Contar(r.ClasesDelPeriodo, "clase", "clases")
+                            : deUnDocente ? Contar(r.Clases.Count, "clase suya", "clases suyas") + " de " + Miles(r.ClasesDelPeriodo) + " del ciclo"
+                            : Contar(r.Clases.Count, "clase", "clases") + " con estos filtros, de " + Miles(r.ClasesDelPeriodo);
+                        string ayuda = TextoDeCiclo(c) + ": del " + Fecha(r.Desde) + " al " + Fecha(r.Hasta)
+                            + (r.Recortado ? ", sus últimos " + DiasLeidos + " días (" : ", completo (")
+                            + cuantas + ")."
+                            + (r.Recortado ? empezo : "");
+                        int siguen = c.SiguenDespues;
+                        DateTime hastaSiguen = c.HastaDeSusClases;
+                        if (conFiltros)
+                        {
+                            // Las de esos filtros que siguieron despues del fin del ciclo.
+                            HashSet<int> filtradas = new HashSet<int>(r.Clases.Select(x => x.ClaseId));
+                            List<ClaseLeida> siguieron = l.Asistencia.Clases.Where(x => filtradas.Contains(x.Id) && x.VigenteHasta > c.Hasta).ToList();
+                            siguen = siguieron.Count;
+                            hastaSiguen = siguen == 0 ? c.HastaDeSusClases : siguieron.Max(x => x.VigenteHasta);
+                        }
+
+                        if (siguen > 0)
+                        {
+                            ayuda += " " + (siguen == 1 ? (deUnDocente ? "1 clase suya siguió" : "1 clase siguió")
+                                    : Miles(siguen) + (deUnDocente ? " clases suyas siguieron" : " clases siguieron"))
+                                + " hasta el " + Fecha(hastaSiguen) + ": esos días no entran; para verlos, elige fechas.";
+                        }
+
+                        return ayuda;
+                    }
+
+                case TipoPeriodo.Plantilla:
+                    {
+                        PlantillaAplicada p = r.Plantilla;
+                        string delAl = "del " + Fecha(r.Desde) + " al " + Fecha(r.Hasta);
+                        string cuando = p == null ? delAl + "."
+                            : p.EnCurso ? delAl + " (hoy), los días en que vale hasta hoy"
+                                + (p.UltimoDia == DateTime.MaxValue.Date ? "."
+                                    : "; su horario termina el " + Fecha(p.UltimoDia) + (p.SustituidaPor.Length > 0 ? ", cuando lo sustituye «" + p.SustituidaPor + "»." : "."))
+                            : p.SustituidaPor.Length > 0 ? delAl + ", los días en que valió: después se aplicó «" + p.SustituidaPor + "»."
+                            : delAl + (r.Recortado ? "." : ", completo.");
+                        return NombreDePlantilla(p) + ", aplicado en Horarios > Aplicación: " + cuando
+                            + " Se cuenta como unas fechas elegidas: todas las clases del horario que tocan esos días, y el 80 % es el de esos días, no el derecho a evaluación de un ciclo."
+                            + (r.Recortado ? empezo : "");
+                    }
+
+                case TipoPeriodo.Fechas:
+                    {
+                        // Un "Del ... a hoy" que crecio con DigBit abierto puede pasar de 400 dias.
+                        string recorte = r.Recortado ? " Elegiste desde el " + Fecha(r.Filtro.Desde) + ", pero DigBit cuenta como mucho " + DiasLeidos + " días seguidos." : "";
+                        return r.Filtro.HastaHoy ? dias + " (hoy): el último día avanza solo." + recorte
+                            : dias + (r.Hasta == l.Hoy ? " (hoy)." : ".") + recorte;
+                    }
+            }
+
+            return dias + (r.Hasta == l.Hoy ? " (hoy)." : ".");
+        }
+
+        /// <summary>
+        /// El nombre del periodo sin sus fechas (el renglon Periodo del reporte y del CSV):
+        /// "Este ciclo (septiembre 2026-febrero 2027), en curso hasta hoy" (con una plantilla
+        /// aplicada, "Este ciclo: 2027-1, en curso hasta hoy"), "Ciclo septiembre
+        /// 2026-febrero 2027, completo", "Horario «2026-2», en curso hasta hoy" (o "Horario
+        /// «2026-1», hasta que se aplico «2026-2»", o ", completo"), "Este mes, hasta hoy", "Esta
+        /// semana, hasta hoy", "Ultimos 30 dias, hasta hoy", "Fechas elegidas" o "Fechas elegidas, hasta hoy". Si
+        /// pasa de 400 dias (Recortado), en vez de "completo" o "en curso hasta hoy", "sus
+        /// ultimos 400 dias" ("Este ciclo (...), en curso, sus ultimos 400 dias hasta hoy").
+        /// </summary>
+        public static string NombreDelPeriodo(ResultadoEstadisticas r)
+        {
+            // Mas de 400 dias: no es "completo" ni todo el ciclo, solo sus ultimos 400 dias.
+            string ultimos = "sus últimos " + DiasLeidos + " días";
+            switch (r.Filtro.Tipo)
+            {
+                case TipoPeriodo.Ciclo:
+                    {
+                        string enCurso = r.Recortado ? ", en curso, " + ultimos + " hasta hoy" : ", en curso hasta hoy";
+                        if (r.Ciclo == null)
+                        {
+                            return "Este ciclo" + enCurso;
+                        }
+
+                        return r.Ciclo.NombreAplicado
+                            ? NombreDeEsteCiclo(r.Ciclo) + enCurso
+                            : "Este ciclo (" + MinusculaInicial(r.Ciclo.Nombre) + ")" + enCurso;
+                    }
+
+                case TipoPeriodo.CicloPasado:
+                    return (r.Ciclo == null ? "Ciclo" : TextoDeCiclo(r.Ciclo)) + (r.Recortado ? ", " + ultimos : ", completo");
+                case TipoPeriodo.Plantilla:
+                    {
+                        // "Horario «2026-2», en curso hasta hoy", "Horario «2026-1», hasta que se aplicó «2026-2»" o "Horario «2026-1», completo".
+                        PlantillaAplicada p = r.Plantilla;
+                        bool enCurso = p != null && p.EnCurso;
+                        bool sustituida = p != null && !enCurso && p.SustituidaPor.Length > 0;
+                        return NombreDePlantilla(p)
+                            + (r.Recortado ? ", " + ultimos + (enCurso ? " hasta hoy" : "")
+                                : enCurso ? ", en curso hasta hoy"
+                                : sustituida ? ", hasta que se aplicó «" + p.SustituidaPor + "»"
+                                : ", completo");
+                    }
+
+                case TipoPeriodo.Mes:
+                    return "Este mes, hasta hoy";
+                case TipoPeriodo.Semana:
+                    return "Esta semana, hasta hoy";
+                case TipoPeriodo.Ultimos30:
+                    return "Últimos 30 días, hasta hoy";
+                default:
+                    return (r.Filtro.HastaHoy ? "Fechas elegidas, hasta hoy" : "Fechas elegidas") + (r.Recortado ? ", " + ultimos : "");
+            }
+        }
+
+        /// <summary>"Este ciclo (en curso)" (o "Este ciclo: 2027-1 (en curso)"), el de un ciclo pasado ("Ciclo septiembre 2026-febrero 2027"), el de una plantilla ("Horario «2026-2» (en curso)") o "".</summary>
+        public static string NombreCortoDelPeriodo(ResultadoEstadisticas r)
+        {
+            switch (r.Filtro.Tipo)
+            {
+                case TipoPeriodo.Ciclo:
+                    return NombreDeEsteCiclo(r.Ciclo) + " (en curso)";
+                case TipoPeriodo.CicloPasado:
+                    return r.Ciclo == null ? "" : TextoDeCiclo(r.Ciclo);
+                case TipoPeriodo.Plantilla:
+                    return NombreDePlantilla(r.Plantilla) + (r.Plantilla != null && r.Plantilla.EnCurso ? " (en curso)" : "");
+                default:
+                    return "";
+            }
+        }
+
+        /// <summary>"Ciclo septiembre 2026-febrero 2027, del 30/09/2026 al 28/02/2027", "Este ciclo (en curso), del ..." o "Del ... al ...": la linea de Graficas.</summary>
+        public static string CabezaDelPeriodo(ResultadoEstadisticas r)
+        {
+            string corto = NombreCortoDelPeriodo(r);
+            return corto.Length > 0 ? corto + ", del " + Fecha(r.Desde) + " al " + Fecha(r.Hasta) : DelAl(r.Desde, r.Hasta);
+        }
+
+        /// <summary>Con un ciclo pasado, lo que va al final del renglon "Generado el" del reporte; null en lo demas.</summary>
+        public static string NotaDelPeriodoParaElReporte(ResultadoEstadisticas r)
+        {
+            return r != null && r.CicloCerrado
+                ? " Es un cálculo de hoy, no el cierre oficial del ciclo: si se corrigen datos de esas fechas, las cifras cambian."
+                : null;
+        }
+
+        /// <summary>Con un ciclo pasado, la nota del membrete del CSV (despues de "Nota: ").</summary>
+        public const string NotaDeCicloCerrado = "se calcula con los datos de hoy (bajas, nombres y el grupo de cada estudiante como están ahora); "
+            + "no es un cierre congelado del ciclo.";
+
+        /// <summary>
+        /// Lo que dice el dialogo "Elegir fechas" si no valen (sec. 1.5), o null: cualquier dia
+        /// hasta hoy, con como mucho 400 dias entre los dos (como Faltas: LeerCalendario lee
+        /// 400 como mucho).
+        /// </summary>
         public static string ValidarFechas(DateTime desde, DateTime hasta, DateTime hoy)
         {
             if (desde.Date > hasta.Date)
@@ -1369,12 +2309,254 @@ namespace DigBit.conexion
                 return "El último día no puede ser después de hoy.";
             }
 
-            if (desde.Date < PrimerDiaElegible(hoy))
+            if ((hasta.Date - desde.Date).TotalDays >= HorariosDatos.DiasMaximosCalendario)
             {
-                return "Elige fechas de los últimos 400 días: desde el " + Fecha(PrimerDiaElegible(hoy)) + ".";
+                return "Elige como mucho " + HorariosDatos.DiasMaximosCalendario + " días (un poco más de un año). Si hace falta más, hazlo en varias veces.";
             }
 
             return null;
+        }
+
+        // =====================================================================
+        // Ciclos (sin base)
+        // =====================================================================
+
+        /// <summary>
+        /// Los ciclos que ya terminaron, del mas reciente al mas viejo, de las clases activas
+        /// que ya empezaron (E1), las que tienen franjas (E3) y los nombres de los aplicados
+        /// (sec. 2 de la especificacion de periodos). Las clases pasadas son las que empezaron
+        /// antes de "Este ciclo" (cicloDesde); solo las que tienen horario abren un ciclo. Un
+        /// dia de inicio d de una de ellas, a 14 dias o mas del ultimo inicio, abre un ciclo
+        /// si es despues del fin del ciclo (el vigente_hasta que mas se repite en sus clases
+        /// con horario) o si las que empiezan en [d, d + 14) terminan 28 dias o mas despues
+        /// de ese fin y, ademas, son 3 o mas y al menos la mitad de las que seguian, o d cae
+        /// en las ultimas 3 semanas del ciclo. Cada clase es del ciclo en que empezo; una sin
+        /// horario de antes del primer inicio no es de ninguno (solo sale con fechas).
+        /// </summary>
+        internal static List<CicloEscolar> ArmarCiclos(IList<ClaseLeida> clases, ISet<int> conHorario, DateTime? cicloDesde, DateTime hoy,
+            IDictionary<DateTime, string> nombresAplicados)
+        {
+            hoy = hoy.Date;
+            List<ClaseLeida> pasadas = clases
+                .Where(c => c.VigenteDesde <= hoy && (!cicloDesde.HasValue || c.VigenteDesde < cicloDesde.Value.Date))
+                .OrderBy(c => c.VigenteDesde).ThenBy(c => c.Id)
+                .ToList();
+            List<ClaseLeida> fuertes = pasadas.Where(c => conHorario.Contains(c.Id)).ToList();
+
+            List<DateTime> inicios = new List<DateTime>();
+            foreach (DateTime d in fuertes.Select(c => c.VigenteDesde).Distinct().OrderBy(x => x))
+            {
+                if (inicios.Count == 0)
+                {
+                    inicios.Add(d);
+                    continue;
+                }
+
+                DateTime inicio = inicios[inicios.Count - 1];
+                if (d < inicio.AddDays(VentanaDeInicio))
+                {
+                    continue;
+                }
+
+                // El ciclo hasta d (sus clases con horario que empezaron en [inicio, d)) y el bloque que empieza en d.
+                DateTime fin = FinMasComun(fuertes.Where(c => c.VigenteDesde >= inicio && c.VigenteDesde < d)).Value;
+                List<ClaseLeida> nuevas = fuertes.Where(c => c.VigenteDesde >= d && c.VigenteDesde < d.AddDays(VentanaDeInicio)).ToList();
+                int seguian = fuertes.Count(c => c.VigenteDesde < d && c.VigenteHasta >= d.AddDays(-1));
+                bool despues = d > fin;
+                bool masLargo = FinMasComun(nuevas).Value >= fin.AddDays(TerminaDespues);
+                bool grande = nuevas.Count >= MinimoDeUnBloque && 2 * nuevas.Count >= seguian;
+                bool alFinal = d >= fin.AddDays(-UltimasSemanas);
+                if (despues || (masLargo && (grande || alFinal)))
+                {
+                    inicios.Add(d);
+                }
+            }
+
+            List<CicloEscolar> ciclos = new List<CicloEscolar>();
+            for (int i = 0; i < inicios.Count; i++)
+            {
+                DateTime desde = inicios[i];
+                DateTime? siguiente = i + 1 < inicios.Count ? inicios[i + 1] : (DateTime?)null;
+                List<ClaseLeida> suyas = pasadas.Where(c => c.VigenteDesde >= desde && (!siguiente.HasValue || c.VigenteDesde < siguiente.Value)).ToList();
+                DateTime hasta = FinMasComun(suyas.Where(c => conHorario.Contains(c.Id))).Value;
+                CicloEscolar ciclo = new CicloEscolar
+                {
+                    Desde = desde,
+                    Hasta = hasta,
+                    HastaDeSusClases = suyas.Max(c => c.VigenteHasta),
+                    SiguenDespues = suyas.Count(c => c.VigenteHasta > hasta),
+                    Clases = new HashSet<int>(suyas.Select(c => c.Id))
+                };
+                PonerNombre(ciclo, nombresAplicados);
+                ciclos.Add(ciclo);
+            }
+
+            ciclos.Reverse();
+            foreach (IGrouping<string, CicloEscolar> mismos in ciclos.GroupBy(TextoBaseDeCiclo, PorNombre))
+            {
+                if (mismos.Count() > 1)
+                {
+                    foreach (CicloEscolar ciclo in mismos)
+                    {
+                        ciclo.NombreRepetido = true;
+                    }
+                }
+            }
+
+            return ciclos;
+        }
+
+        /// <summary>
+        /// "Este ciclo" como ciclo (para su nombre, su fin y sus clases): las clases que
+        /// empezaron de cicloDesde a hoy; su fin, el vigente_hasta que mas se repite en las
+        /// que tienen horario (sin ninguna, ciclo_hasta de E0). El nombre, como el de los pasados.
+        /// </summary>
+        internal static CicloEscolar CicloEnCursoDe(IList<ClaseLeida> clases, ISet<int> conHorario, DateTime cicloDesde, DateTime? cicloHasta, DateTime hoy,
+            IDictionary<DateTime, string> nombresAplicados)
+        {
+            List<ClaseLeida> suyas = clases.Where(c => c.VigenteDesde >= cicloDesde.Date && c.VigenteDesde <= hoy.Date).ToList();
+            DateTime hasta = FinMasComun(suyas.Where(c => conHorario.Contains(c.Id))) ?? (cicloHasta ?? hoy).Date;
+            CicloEscolar ciclo = new CicloEscolar
+            {
+                Desde = cicloDesde.Date,
+                Hasta = hasta,
+                HastaDeSusClases = suyas.Count == 0 ? hasta : suyas.Max(c => c.VigenteHasta),
+                SiguenDespues = suyas.Count(c => c.VigenteHasta > hasta),
+                SiguenHoy = suyas.Count(c => c.VigenteHasta >= hoy.Date),
+                Clases = new HashSet<int>(suyas.Select(c => c.Id))
+            };
+            PonerNombre(ciclo, nombresAplicados);
+            return ciclo;
+        }
+
+        /// <summary>El vigente_hasta que mas se repite (con empate, el mas tardio), o null sin clases.</summary>
+        private static DateTime? FinMasComun(IEnumerable<ClaseLeida> clases)
+        {
+            IGrouping<DateTime, ClaseLeida> mas = clases.GroupBy(c => c.VigenteHasta)
+                .OrderByDescending(g => g.Count()).ThenByDescending(g => g.Key)
+                .FirstOrDefault();
+            return mas == null ? (DateTime?)null : mas.Key;
+        }
+
+        /// <summary>El del ciclo aplicado con ese primer dia (NombreAplicado) o el de sus meses (CicloPreliminarDatos.NombrePropuesto).</summary>
+        private static void PonerNombre(CicloEscolar ciclo, IDictionary<DateTime, string> nombresAplicados)
+        {
+            string aplicado;
+            if (nombresAplicados != null && nombresAplicados.TryGetValue(ciclo.Desde, out aplicado) && !string.IsNullOrWhiteSpace(aplicado))
+            {
+                ciclo.Nombre = aplicado.Trim();
+                ciclo.NombreAplicado = true;
+                return;
+            }
+
+            ciclo.Nombre = CicloPreliminarDatos.NombrePropuesto(ciclo.Desde, ciclo.Hasta);
+            ciclo.NombreAplicado = false;
+        }
+
+        /// <summary>La primera letra en minuscula (es-MX): "Ciclo abril-septiembre 2026" pasa a "ciclo abril-septiembre 2026".</summary>
+        internal static string MinusculaInicial(string texto)
+        {
+            return string.IsNullOrEmpty(texto) ? "" : Espanol.TextInfo.ToLower(texto[0]) + texto.Substring(1);
+        }
+
+        private static string MayusculaInicial(string texto)
+        {
+            return string.IsNullOrEmpty(texto) ? "" : Espanol.TextInfo.ToUpper(texto[0]) + texto.Substring(1);
+        }
+
+        /// <summary>
+        /// "Ciclo septiembre 2026-febrero 2027" (de sus meses) o el nombre aplicado
+        /// (NombreAplicadoComoSeLee): tal cual si ya empieza con "Ciclo" (sin mirar
+        /// mayusculas) y, si no, "Ciclo " y el nombre.
+        /// </summary>
+        private static string TextoBaseDeCiclo(CicloEscolar c)
+        {
+            string nombre = c.NombreAplicado ? NombreAplicadoComoSeLee(c.Nombre) : MinusculaInicial(c.Nombre);
+            return nombre.StartsWith("ciclo ", StringComparison.OrdinalIgnoreCase) ? MayusculaInicial(nombre) : "Ciclo " + nombre;
+        }
+
+        /// <summary>
+        /// Un nombre aplicado como se lee detras de "Ciclo " o de "Este ciclo: ". El que propone
+        /// Horarios > Aplicacion (CicloPreliminarDatos.NombrePropuesto, "Abril-septiembre 2026")
+        /// lleva el mes en minuscula, como los de sus meses: "Ciclo abril-septiembre 2026". Solo
+        /// si empieza con un mes y no tiene otra mayuscula; los demas ("2027-1", "Agosto-Diciembre
+        /// 2026", "CICLO ESCOLAR 2026-1"), tal cual.
+        /// </summary>
+        private static string NombreAplicadoComoSeLee(string nombre)
+        {
+            nombre = (nombre ?? "").Trim();
+            int largo = 0;
+            while (largo < nombre.Length && char.IsLetter(nombre[largo]))
+            {
+                largo++;
+            }
+
+            string palabra = nombre.Substring(0, largo);
+            bool esMes = largo > 0 && Espanol.DateTimeFormat.MonthNames.Any(m => m.Length > 0 && string.Compare(m, palabra, Espanol, CompareOptions.IgnoreCase) == 0);
+            bool otraMayuscula = nombre.Skip(1).Any(char.IsUpper);
+            return esMes && !otraMayuscula ? MinusculaInicial(nombre) : nombre;
+        }
+
+        /// <summary>Como sale un ciclo pasado en el combo: TextoBaseDeCiclo y, si otro se llama igual, " (desde el 05/06/2027)".</summary>
+        internal static string TextoDeCiclo(CicloEscolar c)
+        {
+            return TextoBaseDeCiclo(c) + (c.NombreRepetido ? " (desde el " + Fecha(c.Desde) + ")" : "");
+        }
+
+        /// <summary>
+        /// Las plantillas aplicadas que ya empezaron (su desde, hoy o antes), de la mas reciente a
+        /// la mas vieja, con SOLO los dias en que valio cada una: de su desde al menor de su
+        /// hasta, el fin_anterior de la aplicada siguiente (por desde; tambien una que aun no
+        /// empieza: ese dia dejo de valer porque la sustituyeron) y hoy. Solo cuentan las de
+        /// estado 'publicado' con desde (CicloPreliminar.Aplicada): una que se deshizo vuelve a
+        /// 'borrador' y no corta a nadie. Sin fin_anterior en la siguiente, el dia antes de su
+        /// desde. Una que se quedo sin dias (cortada antes de empezar) no sale.
+        /// </summary>
+        internal static List<PlantillaAplicada> ArmarPlantillas(IEnumerable<CicloPreliminar> configuraciones, DateTime hoy)
+        {
+            hoy = hoy.Date;
+            List<CicloPreliminar> aplicadas = (configuraciones ?? Enumerable.Empty<CicloPreliminar>())
+                .Where(c => c != null && c.Aplicada && c.Desde.HasValue)
+                .OrderBy(c => c.Desde.Value).ThenBy(c => c.Id)
+                .ToList();
+            List<PlantillaAplicada> plantillas = new List<PlantillaAplicada>();
+            for (int i = 0; i < aplicadas.Count; i++)
+            {
+                CicloPreliminar esta = aplicadas[i];
+                DateTime desde = esta.Desde.Value.Date;
+                if (desde > hoy)
+                {
+                    // Aun no empieza: no es un periodo (pero si corta a la de antes).
+                    continue;
+                }
+
+                CicloPreliminar siguiente = i + 1 < aplicadas.Count ? aplicadas[i + 1] : null;
+                DateTime? corte = siguiente == null ? (DateTime?)null : (siguiente.FinAnterior ?? siguiente.Desde.Value.AddDays(-1)).Date;
+                // Sin hasta (no deberia pasar en una aplicada), hasta su corte o, sin el, abierta.
+                DateTime hastaDelHorario = (esta.Hasta ?? corte ?? DateTime.MaxValue.Date).Date;
+                bool cortada = corte.HasValue && corte.Value < hastaDelHorario;
+                DateTime ultimo = cortada ? corte.Value : hastaDelHorario;
+                DateTime hasta = ultimo < hoy ? ultimo : hoy;
+                if (hasta < desde)
+                {
+                    continue;
+                }
+
+                plantillas.Add(new PlantillaAplicada
+                {
+                    Id = esta.Id,
+                    Nombre = (esta.Nombre ?? "").Trim(),
+                    Desde = desde,
+                    Hasta = hasta,
+                    UltimoDia = ultimo,
+                    HastaDelHorario = hastaDelHorario,
+                    SustituidaPor = cortada ? (siguiente.Nombre ?? "").Trim() : "",
+                    EnCurso = ultimo >= hoy
+                });
+            }
+
+            plantillas.Reverse();
+            return plantillas;
         }
 
         /// <summary>
@@ -1384,8 +2566,25 @@ namespace DigBit.conexion
         /// </summary>
         public static bool SeGuardaEnCsv(PestanaEstadisticas pestana, bool soloConsulta)
         {
-            return !soloConsulta || pestana == PestanaEstadisticas.Laboratorios || pestana == PestanaEstadisticas.Grupos || pestana == PestanaEstadisticas.Equipos;
+            // Graficas guarda sus semanas (o meses) y las horas de cada laboratorio: sin nombres.
+            return !soloConsulta || pestana == PestanaEstadisticas.Laboratorios || pestana == PestanaEstadisticas.Grupos || pestana == PestanaEstadisticas.Equipos
+                || pestana == PestanaEstadisticas.Graficas;
         }
+
+        /// <summary>
+        /// Si el reporte para auditoria (PDF) lleva lo de cada docente (su grafica y su
+        /// tabla): con la misma regla que el CSV de Docentes. La persona responsable del
+        /// laboratorio lo ve en pantalla, pero el archivo que se lleva sale solo con los
+        /// totales (SinDocentesEnElReporte lo dice en el PDF).
+        /// </summary>
+        public static bool ReporteConDocentes(bool soloConsulta)
+        {
+            return SeGuardaEnCsv(PestanaEstadisticas.Docentes, soloConsulta);
+        }
+
+        /// <summary>Lo que dice el reporte en lugar de lo de cada docente (ReporteConDocentes en false).</summary>
+        public const string SinDocentesEnElReporte = "Este reporte no lleva lo de cada docente: como la pestaña Docentes, que no se guarda en Excel desde una cuenta "
+            + "de responsable de laboratorio, sus nombres solo se ven en pantalla. Si lo necesitas, pídeselo a la administración de DigBit.";
 
         // =====================================================================
         // Formatos (R8)
@@ -1470,7 +2669,7 @@ namespace DigBit.conexion
 
             // Con una lectura que no cubre el periodo, las listas de sus clases saldrian
             // a medias sin que nadie lo note: quien llama tiene que leerlo antes (Leer).
-            if (AsistenciaDatos.DesdeLecturaDe(lectura.Asistencia.Clases, filtro.Desde, filtro.Hasta, filtro.EsCiclo) < lectura.DesdeLectura)
+            if (!CubreElPeriodo(lectura, filtro.Desde, filtro.Hasta, filtro.EsCiclo, filtro.SoloEstas))
             {
                 throw new ArgumentException("Esa lectura no cubre el periodo elegido: léelo antes con EstadisticasDatos.Leer.", "filtro");
             }
@@ -1498,17 +2697,21 @@ namespace DigBit.conexion
             private readonly FiltroEstadisticas F;
             private readonly ResultadoEstadisticas R = new ResultadoEstadisticas();
             private readonly DateTime hoy;
-            /// <summary>Los dias que cuentan: de desde (recortado a hoy - 399) a hasta.</summary>
+            /// <summary>Los dias que cuentan: de desde (recortado al ultimo dia - 399) a hasta (hoy como mucho).</summary>
             private readonly DateTime desde;
             private readonly DateTime hasta;
             private readonly bool recortado;
             private readonly int lab;
             /// <summary>
-            /// Desde donde leeria una lectura hecha para este periodo (DesdeLecturaDe).
-            /// La de la cache puede venir de antes (otro periodo): lo que se mira fuera
-            /// del periodo se corta aqui, para que salga lo mismo que leido desde cero.
+            /// Desde donde y hasta donde leeria una lectura hecha para este periodo
+            /// (DesdeLecturaDe y HastaLecturaDe). La de la cache puede venir de otro
+            /// periodo y traer mas dias: lo que se mira fuera del periodo se corta aqui,
+            /// para que salga lo mismo que leido desde cero.
             /// </summary>
             private readonly DateTime desdeLeido;
+            private readonly DateTime hastaLeido;
+            /// <summary>Con que primer dia se eligen las clases (DesdeDeLasClases): el del ciclo o, con lo demas, desde.</summary>
+            private readonly DateTime desdeDeClases;
 
             // Las clases del periodo (R2): todas (para los combos) y con docente y grupo.
             private List<ClaseLeida> delPeriodo;
@@ -1532,10 +2735,16 @@ namespace DigBit.conexion
             private readonly Dictionary<int, List<ClaseDelCalendario>> entradasDeLaClase = new Dictionary<int, List<ClaseDelCalendario>>();
             private readonly Dictionary<int, int> reportesPorDocente = new Dictionary<int, int>();
             private List<FilaEquipo> equipos;
+            // Las semanas y los meses del periodo (Graficas), con el filtro de laboratorio.
+            private readonly List<TramoDelPeriodo> semanas = new List<TramoDelPeriodo>();
+            private readonly List<TramoDelPeriodo> meses = new List<TramoDelPeriodo>();
+            private DateTime lunesDelPrimero;
 
             private sealed class Acumulado
             {
                 public readonly ResumenDia Clases = new ResumenDia();
+                // Las horas de sus clases del calendario (Graficas), con los estados de Clases.
+                public readonly TramoDelPeriodo Horas = new TramoDelPeriodo();
                 public int Bitacoras;
                 public readonly HashSet<int> Estudiantes = new HashSet<int>();
                 public int FallasDeBitacoras;
@@ -1585,12 +2794,16 @@ namespace DigBit.conexion
                 A = lectura.Asistencia;
                 F = filtro;
                 hoy = lectura.Hoy;
-                DateTime primero = PrimerDiaElegible(hoy);
+                // Como mucho 400 dias seguidos (LeerCalendario), contados desde el ultimo que cuenta.
+                DateTime hastaVisto = filtro.Hasta.Date > hoy ? hoy : filtro.Hasta.Date;
+                DateTime primero = hastaVisto.AddDays(-(DiasLeidos - 1));
                 recortado = filtro.Desde.Date < primero;
                 desde = recortado ? primero : filtro.Desde.Date;
-                hasta = filtro.Hasta.Date > hoy ? hoy : filtro.Hasta.Date;
+                hasta = hastaVisto;
                 lab = filtro.Laboratorio;
-                desdeLeido = AsistenciaDatos.DesdeLecturaDe(A.Clases, filtro.Desde, filtro.Hasta, filtro.EsCiclo);
+                desdeDeClases = DesdeDeLasClases(filtro.Desde, filtro.Hasta, filtro.EsCiclo, hoy);
+                desdeLeido = AsistenciaDatos.DesdeLecturaDe(A.Clases, desdeDeClases, filtro.Hasta, filtro.EsCiclo, filtro.SoloEstas);
+                hastaLeido = AsistenciaDatos.HastaLecturaDe(A.Clases, desdeDeClases, filtro.Hasta, filtro.EsCiclo, filtro.SoloEstas, hoy);
             }
 
             private bool EnElFiltroDeLaboratorio(int? laboratorio)
@@ -1601,6 +2814,12 @@ namespace DigBit.conexion
             public ResultadoEstadisticas Hacer()
             {
                 R.Filtro = F;
+                R.Desde = desde;
+                R.Hasta = hasta;
+                R.Recortado = recortado;
+                R.CicloCerrado = F.Tipo == TipoPeriodo.CicloPasado;
+                R.Ciclo = F.Tipo == TipoPeriodo.CicloPasado ? F.Ciclo : F.Tipo == TipoPeriodo.Ciclo ? L.CicloEnCurso : null;
+                R.Plantilla = F.Tipo == TipoPeriodo.Plantilla ? F.Plantilla : null;
                 R.ConAvisos = L.ConAvisos;
                 R.ConReportesDocentes = L.ConReportesDocentes;
                 R.ConDadas = L.ConDadas;
@@ -1610,11 +2829,14 @@ namespace DigBit.conexion
                 R.TituloDerechoCorto = R.CicloEntero ? "Derecho (80 %)" : "80 % o más";
 
                 ElegirClasesYSesiones();
+                R.ClasesDelPeriodo = delPeriodo.Count;
+                ArmarTramos();
                 ContarBitacorasYReportes();
                 ContarCalendario();
                 ContarAsistencia();
                 equipos = ArmarEquipos();
                 ArmarLaboratorios();
+                ArmarGraficas();
                 ArmarCifras();
                 ArmarEstudiantes();
                 ArmarClases();
@@ -1632,7 +2854,7 @@ namespace DigBit.conexion
 
             private void ElegirClasesYSesiones()
             {
-                delPeriodo = A.Clases.Where(c => AsistenciaDatos.DelPeriodo(c, F.Desde, F.Hasta, F.EsCiclo)).ToList();
+                delPeriodo = A.Clases.Where(c => AsistenciaDatos.DelPeriodo(c, desdeDeClases, F.Hasta, F.EsCiclo, F.SoloEstas)).ToList();
                 clases = delPeriodo.Where(c => (F.Docente == 0 || c.ProfesorId == F.Docente) && (F.Grupo == 0 || c.GrupoId == F.Grupo)).ToList();
                 idsDeClases = new HashSet<int>(clases.Select(c => c.Id));
                 clasesPorTerna = new Dictionary<string, List<ClaseLeida>>();
@@ -1775,6 +2997,22 @@ namespace DigBit.conexion
                         }
 
                         Sumar(reportesPorDocente, reporte.DocenteId, 1);
+                        // La misma fila que se cuenta (la ficha del docente): la lista y SusReportes no difieren.
+                        R.ReportesDocentes.Add(new FilaReporteDocente
+                        {
+                            Id = reporte.Id,
+                            SesionId = reporte.SesionId,
+                            DocenteId = reporte.DocenteId,
+                            Dia = sesion.Fecha,
+                            RegistradoEn = reporte.RegistradoEn,
+                            LaboratorioId = laboratorio,
+                            Laboratorio = NombreDeLaboratorio(L, laboratorio),
+                            ClaseId = clase == null ? (int?)null : clase.Id,
+                            Clase = clase == null ? "Fuera del horario" : clase.Materia + " (" + clase.Grupo + ")",
+                            Equipo = reporte.Equipo,
+                            Area = reporte.Area,
+                            Falla = reporte.Falla
+                        });
                     }
                 }
             }
@@ -1789,8 +3027,12 @@ namespace DigBit.conexion
                         continue;
                     }
 
+                    // Las horas del bloque (o de la sesion extra), para las graficas de uso.
+                    double horas = Math.Max(0.0, (clase.Fin - clase.Inicio).TotalHours);
                     DelLaboratorio(clase.LaboratorioId).Clases.Contar(clase.Estado);
+                    DelLaboratorio(clase.LaboratorioId).Horas.Contar(clase.Estado, horas);
                     todos.Clases.Contar(clase.Estado);
+                    todos.Horas.Contar(clase.Estado, horas);
                     if (EnElFiltroDeLaboratorio(clase.LaboratorioId))
                     {
                         ResumenDia resumen;
@@ -1802,6 +3044,8 @@ namespace DigBit.conexion
 
                         resumen.Contar(clase.Estado);
                         Agregar(entradasDeLaClase, clase.ClaseId, clase);
+                        SemanaDe(clase.Fecha).Contar(clase.Estado, horas);
+                        MesDe(clase.Fecha).Contar(clase.Estado, horas);
                     }
 
                     LaboratoriosDe(clase.ClaseId).Add(clase.LaboratorioId);
@@ -1857,6 +3101,7 @@ namespace DigBit.conexion
                     }
 
                     ResumenAsistencia resumen = ResumenAsistencia.De(lista, cuenta);
+                    ContarAsistenciaPorTramo(lista, resumen);
                     deLaClase.Estudiantes = lista.Alumnos.Count;
                     deLaClase.DiasQueCuentan = resumen.PorDia.Count(d => !d.Dia.EnCurso);
                     deLaClase.AlgunDiaEnElLaboratorio = lab != 0 && lista.Dias.Any(d => d.Fecha >= desde && d.Fecha <= hasta && d.Laboratorios.Contains(lab));
@@ -1992,13 +3237,13 @@ namespace DigBit.conexion
                     delLaboratorio.Add(nombre);
                 };
 
-                // Solo lo de [desdeLeido, hoy], lo que tendria una lectura de este
-                // periodo: la de la cache puede traer mas dias, y un "LAB-7" de antes
-                // cambiaria a que fila va "7" segun el camino por el que se llego.
+                // Solo lo de [desdeLeido, hastaLeido], lo que tendria una lectura de este
+                // periodo: la de la cache puede traer mas dias, y un "LAB-7" de antes (o de
+                // despues) cambiaria a que fila va "7" segun el camino por el que se llego.
                 foreach (KeyValuePair<int, List<BitacoraLeida>> sesion in A.BitacorasPorSesion)
                 {
                     SesionLeida leida;
-                    if (!A.SesionPorId.TryGetValue(sesion.Key, out leida) || leida.Fecha < desdeLeido)
+                    if (!A.SesionPorId.TryGetValue(sesion.Key, out leida) || leida.Fecha < desdeLeido || leida.Fecha > hastaLeido)
                     {
                         continue;
                     }
@@ -2013,7 +3258,7 @@ namespace DigBit.conexion
                 foreach (DetalleDeReporte detalle in L.Detalles.Values.Where(d => d.SinInternet != null))
                 {
                     SesionLeida leida;
-                    if (!A.SesionPorId.TryGetValue(detalle.SesionId, out leida) || leida.Fecha < desdeLeido)
+                    if (!A.SesionPorId.TryGetValue(detalle.SesionId, out leida) || leida.Fecha < desdeLeido || leida.Fecha > hastaLeido)
                     {
                         continue;
                     }
@@ -2025,7 +3270,7 @@ namespace DigBit.conexion
                     }
                 }
 
-                foreach (ReporteDeDocente reporte in L.ReportesDocentes.Where(r => r.Equipo != null && r.Dia >= desdeLeido))
+                foreach (ReporteDeDocente reporte in L.ReportesDocentes.Where(r => r.Equipo != null && r.Dia >= desdeLeido && r.Dia <= hastaLeido))
                 {
                     SesionLeida leida;
                     int laboratorio = A.SesionPorId.TryGetValue(reporte.SesionId, out leida) && leida.LaboratorioId.HasValue ? leida.LaboratorioId.Value : reporte.LaboratorioId ?? 0;
@@ -2316,6 +3561,174 @@ namespace DigBit.conexion
                 R.Laboratorios.AddRange(filas.OrderByDescending(f => f.Fallas).ThenBy(f => f.Laboratorio, PorNombre));
             }
 
+            // -----------------------------------------------------------------
+            // Graficas: semanas, meses y horas de cada laboratorio
+            // -----------------------------------------------------------------
+
+            private static readonly string[] MesesCortos = { "ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic" };
+            private static readonly string[] MesesLargos = { "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre" };
+
+            /// <summary>Las semanas (de lunes a domingo) y los meses de [desde, hasta], recortados al periodo.</summary>
+            private void ArmarTramos()
+            {
+                lunesDelPrimero = desde.AddDays(-(((int)desde.DayOfWeek + 6) % 7));
+                for (DateTime lunes = lunesDelPrimero; lunes <= hasta; lunes = lunes.AddDays(7))
+                {
+                    DateTime primero = lunes < desde ? desde : lunes;
+                    DateTime ultimo = lunes.AddDays(6) > hasta ? hasta : lunes.AddDays(6);
+                    semanas.Add(new TramoDelPeriodo
+                    {
+                        Desde = primero,
+                        Hasta = ultimo,
+                        Etiqueta = primero.ToString("dd/MM", Inv),
+                        EtiquetaLarga = DelAlCorto(primero, ultimo)
+                    });
+                }
+
+                for (DateTime uno = new DateTime(desde.Year, desde.Month, 1); uno <= hasta; uno = uno.AddMonths(1))
+                {
+                    DateTime primero = uno < desde ? desde : uno;
+                    DateTime ultimo = uno.AddMonths(1).AddDays(-1) > hasta ? hasta : uno.AddMonths(1).AddDays(-1);
+                    bool entero = primero == uno && ultimo == uno.AddMonths(1).AddDays(-1);
+                    meses.Add(new TramoDelPeriodo
+                    {
+                        Desde = primero,
+                        Hasta = ultimo,
+                        Etiqueta = MesesCortos[uno.Month - 1] + " " + uno.Year.ToString(Inv),
+                        EtiquetaLarga = MesesLargos[uno.Month - 1] + " de " + uno.Year.ToString(Inv)
+                            + (entero ? "" : " (del " + primero.ToString("dd/MM", Inv) + " al " + ultimo.ToString("dd/MM", Inv) + ")")
+                    });
+                }
+            }
+
+            /// <summary>"Del 05/10 al 11/10/2026" (con el ano de los dos si cambia).</summary>
+            private static string DelAlCorto(DateTime primero, DateTime ultimo)
+            {
+                return primero.Year == ultimo.Year
+                    ? "Del " + primero.ToString("dd/MM", Inv) + " al " + ultimo.ToString("dd/MM/yyyy", Inv)
+                    : DelAl(primero, ultimo);
+            }
+
+            /// <summary>La semana de un dia del periodo (los de fuera van a la primera o a la ultima: no pasa, las cuentas ya los filtran).</summary>
+            private TramoDelPeriodo SemanaDe(DateTime dia)
+            {
+                if (semanas.Count == 0)
+                {
+                    return new TramoDelPeriodo();
+                }
+
+                int indice = (int)Math.Floor((dia.Date - lunesDelPrimero).TotalDays / 7.0);
+                return semanas[Math.Max(0, Math.Min(semanas.Count - 1, indice))];
+            }
+
+            private TramoDelPeriodo MesDe(DateTime dia)
+            {
+                if (meses.Count == 0)
+                {
+                    return new TramoDelPeriodo();
+                }
+
+                int indice = (dia.Year - desde.Year) * 12 + dia.Month - desde.Month;
+                return meses[Math.Max(0, Math.Min(meses.Count - 1, indice))];
+            }
+
+            /// <summary>
+            /// La asistencia de una lista en cada semana y cada mes, dia por dia, con la
+            /// regla de ResumenAsistencia.De para cada estudiante: cuenta la A (tambien la
+            /// de hoy), cuenta la falta y lo pendiente de hoy (la clase sigue y aun no
+            /// registra) no cuenta. Sumado da el X de N de la clase, y todas, el de C1.
+            /// </summary>
+            private void ContarAsistenciaPorTramo(AsistenciaDeClase lista, ResumenAsistencia resumen)
+            {
+                foreach (AsistenciaDelDia delDia in resumen.PorDia)
+                {
+                    DateTime fecha = delDia.Dia.Fecha;
+                    int entraron = 0;
+                    int veces = 0;
+                    foreach (AlumnoDeAsistencia alumno in lista.Alumnos)
+                    {
+                        bool vino = alumno.Presente.Contains(fecha);
+                        if (delDia.Dia.EnCurso && !vino && !alumno.Retiradas.Contains(fecha))
+                        {
+                            continue;
+                        }
+
+                        veces++;
+                        entraron += vino ? 1 : 0;
+                    }
+
+                    foreach (TramoDelPeriodo tramo in new[] { SemanaDe(fecha), MesDe(fecha) })
+                    {
+                        tramo.Entraron += entraron;
+                        tramo.Veces += veces;
+                    }
+                }
+            }
+
+            private static UsoDeLaboratorio UsoDe(Acumulado a, int id, string nombre)
+            {
+                return new UsoDeLaboratorio
+                {
+                    LaboratorioId = id,
+                    Laboratorio = nombre,
+                    ConBitacoras = a.Clases.ConBitacoras,
+                    ConDadas = a.Clases.SinBitacorasConAsistencia,
+                    SinRegistro = a.Clases.Faltan,
+                    Canceladas = a.Clases.Canceladas,
+                    HorasDelHorario = a.Horas.HorasDelHorario,
+                    HorasUsadas = a.Horas.HorasUsadas,
+                    HorasCanceladas = a.Horas.HorasCanceladas
+                };
+            }
+
+            /// <summary>
+            /// Lo de la pestana Graficas: las semanas y los meses (con el filtro de
+            /// laboratorio) y el uso del horario de cada laboratorio, del mismo acumulado
+            /// que la pestana Laboratorios (con el filtro, solo el elegido).
+            /// </summary>
+            private void ArmarGraficas()
+            {
+                GraficasEstadisticas g = R.Graficas;
+                g.PorSemana = semanas;
+                g.PorMes = meses;
+                g.Sugerida = semanas.Count > 16 ? AgrupacionGraficas.Mes : AgrupacionGraficas.Semana;
+                Acumulado total;
+                if (lab == 0)
+                {
+                    total = todos;
+                }
+                else if (!porLaboratorio.TryGetValue(lab, out total))
+                {
+                    total = new Acumulado();
+                }
+
+                g.Total = UsoDe(total, lab, lab == 0 ? "Todos los laboratorios" : NombreDeLaboratorio(L, lab));
+                foreach (int id in L.Laboratorios.Keys.Union(porLaboratorio.Keys).Where(i => lab == 0 || i == lab))
+                {
+                    Acumulado a;
+                    porLaboratorio.TryGetValue(id, out a);
+                    a = a ?? new Acumulado();
+                    LaboratorioLeido leido;
+                    bool conocido = L.Laboratorios.TryGetValue(id, out leido);
+                    if (conocido && leido.Activo && !leido.EmpezoEl.HasValue)
+                    {
+                        g.SinDigBit.Add(leido.Nombre);
+                    }
+
+                    if (a.Horas.QueContaban == 0 && a.Horas.Canceladas == 0)
+                    {
+                        continue;
+                    }
+
+                    UsoDeLaboratorio uso = UsoDe(a, id, NombreDeLaboratorio(L, id) + (conocido && !leido.Activo ? " (desactivado)" : ""));
+                    uso.AunNo = conocido && !leido.EmpezoEl.HasValue;
+                    g.Laboratorios.Add(uso);
+                }
+
+                g.Laboratorios = g.Laboratorios.OrderByDescending(u => u.HorasDelHorario).ThenBy(u => u.Laboratorio, PorNombre).ToList();
+                g.SinDigBit = g.SinDigBit.OrderBy(n => n, PorNombre).ToList();
+            }
+
             private void ArmarCifras()
             {
                 CifrasEstadisticas c = R.Cifras;
@@ -2360,7 +3773,8 @@ namespace DigBit.conexion
                         + "Solo cuentan los días de clase de este periodo" + (lab != 0 ? " en este laboratorio" : "") + ". " + comoSeCuenta
                         + (c.Dadas > 0 ? " Incluye " + (c.Dadas == 1 ? "1 asistencia que dio un docente" : Miles(c.Dadas) + " asistencias que dieron los docentes")
                             + " a quien no pudo registrar su bitácora." : "")
-                        + (R.PeriodoPasado ? " Quien entró a la lista después del periodo cuenta con falta en sus días, como en Mis grupos: "
+                        + (R.CicloCerrado ? " Quien entró a la lista después del primer día de su clase cuenta con falta en las clases de antes, como en Mis grupos."
+                            : R.PeriodoPasado ? " Quien entró a la lista después del periodo cuenta con falta en sus días, como en Mis grupos: "
                             + "por eso estas cifras pueden bajar cuando alguien nuevo registra." : "");
                 }
 
@@ -2646,6 +4060,7 @@ namespace DigBit.conexion
                     laboratoriosDeLaClase.TryGetValue(clase.Id, out suyos);
                     int fallas;
                     fallasPorClase.TryGetValue(clase.Id, out fallas);
+                    List<string> nombres = (suyos ?? new HashSet<int>()).Where(l => l > 0).Select(l => NombreDeLaboratorio(L, l)).OrderBy(n => n, PorNombre).ToList();
                     filas.Add(new FilaClase
                     {
                         ClaseId = clase.Id,
@@ -2654,7 +4069,8 @@ namespace DigBit.conexion
                         Materia = clase.Materia,
                         Grupo = clase.Grupo,
                         Docente = clase.Docente,
-                        Laboratorios = Unir((suyos ?? new HashSet<int>()).Where(l => l > 0).Select(l => NombreDeLaboratorio(L, l)).OrderBy(n => n, PorNombre).ToList()),
+                        Laboratorios = Unir(nombres),
+                        NombresDeLaboratorios = nombres,
                         ConBitacoras = calendario.ConBitacoras,
                         QueContaban = calendario.ConBitacoras + calendario.Faltan + calendario.SinBitacorasConAsistencia,
                         SinBitacoras = calendario.Faltan,
@@ -2737,6 +4153,26 @@ namespace DigBit.conexion
                             && d.Fecha.Date >= clase.VigenteDesde && d.Fecha.Date <= clase.VigenteHasta && (lab == 0 || d.LaboratorioId == lab)))
                         {
                             Sumar(dadas, dada.ProfesorId, 1);
+                            // La misma que se cuenta (la ficha del docente): sin el correo, solo matricula y nombre.
+                            EstudianteLeido estudiante;
+                            A.Estudiantes.TryGetValue(dada.AlumnoId, out estudiante);
+                            R.AsistenciasDadas.Add(new FilaAsistenciaDada
+                            {
+                                Id = dada.Id,
+                                DocenteId = dada.ProfesorId,
+                                ClaseId = clase.Id,
+                                Clase = clase.Materia + " (" + clase.Grupo + ")",
+                                Fecha = dada.Fecha.Date,
+                                DadaEn = dada.DadaEn,
+                                AlumnoId = dada.AlumnoId,
+                                Matricula = estudiante != null ? estudiante.Matricula : dada.Matricula ?? "",
+                                Nombre = estudiante != null ? estudiante.Nombre : dada.Nombre ?? "",
+                                Motivo = dada.Motivo ?? "",
+                                Equipo = dada.Equipo,
+                                Comentario = dada.Comentario,
+                                SesionId = dada.SesionId,
+                                LaboratorioId = dada.LaboratorioId
+                            });
                         }
                     }
                 }
@@ -2816,7 +4252,8 @@ namespace DigBit.conexion
                     SesionId = c.SesionId,
                     Bitacoras = propias ? c.Bitacoras : c.BitacorasEnOtra,
                     AsistenciasDadas = c.AsistenciasDadas,
-                    SesionDeSusBitacoras = propias ? c.SesionId : c.BitacorasEnOtra > 0 && c.OtraClase != null ? c.OtraClase.SesionId : null
+                    SesionDeSusBitacoras = propias ? c.SesionId : c.BitacorasEnOtra > 0 && c.OtraClase != null ? c.OtraClase.SesionId : null,
+                    Calendario = c
                 };
                 switch (c.Estado)
                 {
@@ -2950,13 +4387,28 @@ namespace DigBit.conexion
 
             private void ArmarTextos()
             {
-                R.LineaResumen = DelAl(desde, hasta) + "."
-                    + (recortado ? " Solo se leen los últimos 400 días." : "")
+                // "Ciclo septiembre 2026-febrero 2027: del 30/09/2026 al 28/02/2027 (completo).", "Este
+                // ciclo: 2027-1, del ... al ..." (con una plantilla aplicada), "Horario «2026-2»: del ...
+                // al ... (en curso)." (una plantilla elegida en Periodo) o "Del ... al ...".
+                string fin = FinDePlantilla(R.Plantilla);
+                string cabeza = F.Tipo == TipoPeriodo.CicloPasado && R.Ciclo != null
+                    ? TextoDeCiclo(R.Ciclo) + ": del " + Fecha(desde) + " al " + Fecha(hasta) + (recortado ? "." : " (completo).")
+                    : F.Tipo == TipoPeriodo.Ciclo && R.Ciclo != null && R.Ciclo.NombreAplicado
+                        ? NombreDeEsteCiclo(R.Ciclo) + ", del " + Fecha(desde) + " al " + Fecha(hasta) + "."
+                    : F.Tipo == TipoPeriodo.Plantilla && R.Plantilla != null
+                        ? NombreDePlantilla(R.Plantilla) + ": del " + Fecha(desde) + " al " + Fecha(hasta)
+                            + (R.Plantilla.EnCurso ? " (en curso)." : recortado && fin == "completo" ? "." : " (" + fin + ").")
+                        : DelAl(desde, hasta) + ".";
+                R.LineaResumen = cabeza
+                    + (recortado ? " DigBit cuenta como mucho " + DiasLeidos + " días seguidos: se cuenta desde el " + Fecha(desde) + "." : "")
+                    + (F.AvisoDelPeriodo != null ? " " + F.AvisoDelPeriodo : "")
                     + (F.Aviso != null ? " " + F.Aviso : " Leído a las " + L.AhoraServidor.ToString("HH:mm", Inv) + " (hora del servidor).");
 
                 int enListas = R.Estudiantes.Count(e => !e.SoloFuera);
                 R.LineaEstudiantes = Contar(enListas, "estudiante", "estudiantes") + " en las listas de sus clases "
-                    + (R.PeriodoPasado ? "(quien entró a la lista después cuenta con falta en el periodo)." : "(solo quienes ya registraron: DigBit no tiene la lista oficial de cada grupo).");
+                    + (R.CicloCerrado ? "(solo quienes registraron en el ciclo: DigBit no tiene la lista oficial de cada grupo)."
+                        : R.PeriodoPasado ? "(quien entró a la lista después cuenta con falta en el periodo)."
+                        : "(solo quienes ya registraron: DigBit no tiene la lista oficial de cada grupo).");
 
                 int clasesSinNada = R.Clases.Count(c => c.SinNada);
                 R.LineaClases = Contar(R.Clases.Count, "clase", "clases") + (clasesSinNada > 0 ? "; " + Miles(clasesSinNada) + " sin nada que contar en el periodo" : "")

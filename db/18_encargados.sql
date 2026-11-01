@@ -104,7 +104,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 -- y asistencias_dadas llegan con db/15, db/17, db/21 y db/22, y las de las
 -- configuraciones de horario con db/16). Nunca: recuperacion_contrasena ni
 -- tipo_usuarios.
-SET @tablas := 'carreras,grupos,semestres,materias,laboratorios,clases,horarios,horario_excepciones,codigos_accesos,registros_bitacoras,usuarios,carrera_grupo_semestre,configuracion,reportes_profesor,asistencias_retiradas,historial_cambios,asistencias_dadas,ciclos_preliminares,ciclo_profesores,ciclo_cargas,ciclo_franjas,ciclo_recortes';
+SET @tablas := 'carreras,grupos,semestres,materias,laboratorios,clases,horarios,horario_excepciones,codigos_accesos,registros_bitacoras,usuarios,carrera_grupo_semestre,configuracion,reportes_profesor,asistencias_retiradas,historial_cambios,asistencias_dadas,ciclos_preliminares,ciclo_profesores,ciclo_cargas,ciclo_franjas,ciclo_recortes,siia_solicitudes,horas_por_asignar';
 SET @i := 0;
 SET @sql := IF(@hacer AND FIND_IN_SET('carreras', @tablas) > 0 AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'carreras') > 0,
     CONCAT('GRANT SELECT ON teschi_otru.carreras TO ', @usuario), @nada);
@@ -176,6 +176,14 @@ SET @sql := IF(@hacer AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE 
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 SET @sql := IF(@hacer AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ciclo_recortes') > 0,
     CONCAT('GRANT SELECT ON teschi_otru.ciclo_recortes TO ', @usuario), @nada);
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+-- Quien espera que lo enlacen con el SIIA (db/24): la persona responsable lo ve, no enlaza.
+SET @sql := IF(@hacer AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'siia_solicitudes') > 0,
+    CONCAT('GRANT SELECT ON teschi_otru.siia_solicitudes TO ', @usuario), @nada);
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+-- Las horas que faltan por asignar (db/25): la persona responsable ve "Falta asignar", no la cambia.
+SET @sql := IF(@hacer AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'horas_por_asignar') > 0,
+    CONCAT('GRANT SELECT ON teschi_otru.horas_por_asignar TO ', @usuario), @nada);
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 SET @sql := IF(@hacer, 'FLUSH PRIVILEGES', @nada);
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;

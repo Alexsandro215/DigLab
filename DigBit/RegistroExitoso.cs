@@ -114,15 +114,21 @@ namespace DigBit
                 TextAlign = ContentAlignment.MiddleCenter
             };
 
+            // La clase, entera: con nombres reales ("Programacion orientada a objetos,
+            // 3101, Laboratorio de redes") casi nunca cabia en un renglon de 640 y se
+            // cortaba. Se mide su alto y lo que sigue baja.
+            DrawingFont letraDetalle = new DrawingFont("Century Gothic", 10F);
+            string detalle = DescribirSesion();
+            int altoDetalle = TextRenderer.MeasureText(detalle, letraDetalle, new Size(640, int.MaxValue), TextFormatFlags.WordBreak).Height;
             Label lblDetalle = new Label
             {
                 AutoSize = false,
-                Font = new DrawingFont("Century Gothic", 10F),
+                Font = letraDetalle,
                 ForeColor = Color.FromArgb(70, 70, 70),
                 Location = new Point(30, 202),
-                Size = new Size(640, 24),
-                Text = DescribirSesion(),
-                TextAlign = ContentAlignment.MiddleCenter
+                Size = new Size(640, Math.Max(24, altoDetalle + 4)),
+                Text = detalle,
+                TextAlign = ContentAlignment.TopCenter
             };
 
             Label lblNota = new Label
@@ -130,7 +136,7 @@ namespace DigBit
                 AutoSize = false,
                 Font = new DrawingFont("Century Gothic", 10.5F),
                 ForeColor = Color.FromArgb(70, 70, 70),
-                Location = new Point(60, 240),
+                Location = new Point(60, lblDetalle.Bottom + 14),
                 Size = new Size(580, 60),
                 // Si la bitacora quedo en la cola, apagar es lo unico que puede
                 // perderla: se pide dejarlo encendido. Y, en una clase, su docente no
@@ -147,22 +153,40 @@ namespace DigBit
                       + "inicio para la siguiente persona.",
                 TextAlign = ContentAlignment.TopCenter
             };
+            lblNota.Height = TextRenderer.MeasureText(lblNota.Text, lblNota.Font, new Size(lblNota.Width, int.MaxValue), TextFormatFlags.WordBreak).Height + 6;
 
-            Button btnApagar = CrearBoton("Apagar el equipo", new Point(140, 330), new Size(190, 48));
+            // "Volver al inicio" es la salida de siempre (y el AcceptButton): el boton
+            // principal. Sin conexion, apagar puede perder la bitacora que espera en la
+            // cola (el texto pide dejar el equipo encendido): "Apagar" pasa a un
+            // secundario mas chico, que no pese lo mismo que volver.
+            int yBotones = lblNota.Bottom + 26;
+            Button btnLogin = EstiloAdmin.BotonPrincipal("Volver al inicio", Point.Empty, new Size(190, 48));
+            btnLogin.Font = new DrawingFont("Century Gothic", 11F, FontStyle.Bold);
+            btnLogin.Click += (s, e) => Elegir(Opcion.Login);
+
+            Button btnApagar = EstiloHorarios.CrearBoton("Apagar el equipo", Point.Empty, enEsteEquipo ? new Size(150, 40) : new Size(190, 48));
+            if (!enEsteEquipo)
+            {
+                btnApagar.Font = btnLogin.Font;
+            }
+
             btnApagar.Click += (s, e) => Elegir(Opcion.Apagar);
 
-            Button btnLogin = CrearBoton("Volver al inicio", new Point(370, 330), new Size(190, 48));
-            btnLogin.Click += (s, e) => Elegir(Opcion.Login);
+            const int entreBotones = 40;
+            int inicioBotones = (ClientSize.Width - btnApagar.Width - entreBotones - btnLogin.Width) / 2;
+            btnApagar.Location = new Point(inicioBotones, yBotones + (btnLogin.Height - btnApagar.Height) / 2);
+            btnLogin.Location = new Point(btnApagar.Right + entreBotones, yBotones);
 
             lblCuentaAtras = new Label
             {
                 AutoSize = false,
                 Font = new DrawingFont("Century Gothic", 9F),
                 ForeColor = Color.Gray,
-                Location = new Point(30, 400),
+                Location = new Point(30, btnLogin.Bottom + 22),
                 Size = new Size(640, 22),
                 TextAlign = ContentAlignment.MiddleCenter
             };
+            ClientSize = new Size(ClientSize.Width, lblCuentaAtras.Bottom + 30);
 
             Controls.Add(palomita);
             Controls.Add(lblTitulo);
@@ -174,6 +198,8 @@ namespace DigBit
             Controls.Add(lblCuentaAtras);
 
             AcceptButton = btnLogin;
+            // Que el foco empiece en "Volver": con el en "Apagar", Enter apagaba el equipo.
+            ActiveControl = btnLogin;
 
             // En kiosco ocupa toda la pantalla y no se puede cerrar con Alt+F4 ni
             // con "Finalizar tarea". Cerrar asignando DialogResult si pasa (llega
@@ -228,29 +254,12 @@ namespace DigBit
             return texto + ".";
         }
 
-        private Button CrearBoton(string texto, Point posicion, Size tamano)
-        {
-            Button boton = new Button
-            {
-                BackColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Font = new DrawingFont("Century Gothic", 11F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
-                Location = posicion,
-                Size = tamano,
-                Text = texto,
-                UseVisualStyleBackColor = false
-            };
-            boton.FlatAppearance.BorderColor = Color.DarkGreen;
-            boton.FlatAppearance.BorderSize = 2;
-            return boton;
-        }
-
         // Circulo verde con una palomita, dibujado a mano: no depende de que el
-        // equipo tenga una fuente concreta con el simbolo.
-        private void Palomita_Paint(object sender, PaintEventArgs e)
+        // equipo tenga una fuente concreta con el simbolo. Tambien la del "listo" de
+        // la pantalla del alumno (40 px): el trazo va con el tamano (7 en la de 80).
+        internal static void Palomita_Paint(object sender, PaintEventArgs e)
         {
-            Panel lienzo = (Panel)sender;
+            Control lienzo = (Control)sender;
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
             System.Drawing.Rectangle circulo = new System.Drawing.Rectangle(2, 2, lienzo.Width - 5, lienzo.Height - 5);
@@ -259,7 +268,7 @@ namespace DigBit
                 e.Graphics.FillEllipse(relleno, circulo);
             }
 
-            using (Pen trazo = new Pen(Color.White, 7F))
+            using (Pen trazo = new Pen(Color.White, Math.Max(3F, lienzo.Width * 7F / 80F)))
             {
                 trazo.StartCap = LineCap.Round;
                 trazo.EndCap = LineCap.Round;

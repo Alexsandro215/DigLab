@@ -290,8 +290,10 @@ try {
     Falla 'fin antes del inicio' (Llamar 'AgregarClase' @($b, $p2, $g1, $m2, (Franjas @(@($lab1, 3, '10:00', '09:00'))), $idAdmin)) 'ErrorDeDatos' 'hora de fin tiene que ser despu.s'
     Falla 'un laboratorio que no existe' (Llamar 'AgregarClase' @($b, $p2, $g1, $m2, (Franjas @(@(999999, 3, '07:00', '08:00'))), $idAdmin)) 'ErrorDeDatos' 'laboratorios ya no est'
     Falla 'un grupo que no existe' (Llamar 'AgregarClase' @($b, $p2, 999999, $m2, (Franjas @()), $idAdmin)) 'ErrorDeDatos' 'Ese grupo ya no est'
-    $r = Llamar 'AgregarClase' @($b, $null, $g2, $m2, (Franjas @(@($lab1, 1, '08:00', '10:00'))), $idAdmin)
-    Bien 'AgregarClase sin docente que choca en el laboratorio' $r | Out-Null
+    # Un choque es el mismo grupo (o docente) a la misma hora en OTRO laboratorio
+    # (2026-10-31); en el mismo laboratorio se reemplaza (probar_choques.ps1).
+    $r = Llamar 'AgregarClase' @($b, $null, $g1, $m2, (Franjas @(@($lab2, 1, '08:00', '10:00'))), $idAdmin)
+    Bien 'AgregarClase sin docente que choca (el mismo grupo en otro laboratorio)' $r | Out-Null
     $bb = $r.Valor
     $r = Llamar 'AgregarClase' @($b, $p2, $g2, $m3, (Franjas @()), $idAdmin)
     Bien 'AgregarClase sin horario' $r | Out-Null
@@ -302,7 +304,7 @@ try {
     $cargaB = @($leido.Cargas | Where-Object { $_.Id -eq $bb })[0]
     $filtroChoques = [Enum]::Parse($tFiltro, 'Choques')
     $mFiltro = $tRevision.GetMethod('EntraEnFiltro')
-    Ver "RevisionCiclo: $($rev.Choques.Count) choque, $($rev.SinProfesor) sin docente, $($rev.SinHorario) sin horario" ($rev.Choques.Count -eq 1 -and $rev.SinProfesor -eq 1 -and $rev.SinHorario -eq 1 -and $rev.Choques[0].MismoLaboratorio)
+    Ver "RevisionCiclo: $($rev.Choques.Count) choque, $($rev.SinProfesor) sin docente, $($rev.SinHorario) sin horario" ($rev.Choques.Count -eq 1 -and $rev.SinProfesor -eq 1 -and $rev.SinHorario -eq 1 -and -not $rev.Choques[0].MismoLaboratorio -and $rev.Choques[0].MismoGrupo -and $rev.Encimadas.Count -eq 0)
     Ver '... el filtro Choques da las dos que chocan' ((Invocar $mFiltro $null @($leido, $rev, $cargaA, $filtroChoques)) -and (Invocar $mFiltro $null @($leido, $rev, $cargaB, $filtroChoques)))
     Ver '... la sin docente es la primera de la lista' ($leido.Cargas[0].Id -eq $bb)
     Ver '... dos docentes en la leyenda' ($leido.Profesores.Count -eq 2)

@@ -33,7 +33,6 @@ namespace DigBit
     {
         private const int AnchoDosColumnas = 1150;
         private const int AnchoTarjeta = 720;
-        private const int AnchoBotonEnlace = 64;
         private static readonly CultureInfo Invariante = CultureInfo.InvariantCulture;
         private static readonly Color TextoOscuro = Color.FromArgb(40, 40, 40);
         private static readonly Color TextoGris = Color.FromArgb(105, 105, 105);
@@ -1311,10 +1310,9 @@ namespace DigBit
         {
             string motivo = MotivoParaNoAplicar();
             motivoBoton = motivo ?? "";
+            // Apagado se ve apagado como cualquier principal (BotonesApagados), y al
+            // encenderse vuelve a su VerdeTeschi (antes, colores a mano y DarkGreen).
             btnAplicar.Enabled = motivo == null;
-            // Desactivado, el texto lo pinta Windows en gris: sobre el verde oscuro no se leeria.
-            btnAplicar.BackColor = motivo == null ? Color.DarkGreen : Color.FromArgb(222, 230, 222);
-            btnAplicar.FlatAppearance.BorderColor = motivo == null ? Color.DarkGreen : Color.FromArgb(165, 180, 165);
             btnAplicar.AccessibleDescription = motivo;
             ayuda.SetToolTip(btnAplicar, motivo == null ? "Pide la contraseña de la administración." : motivo);
             // Lo rojo que no deja aplicar, a la vista; mientras se revisa o se aplica, nada.
@@ -1365,20 +1363,25 @@ namespace DigBit
         {
             // Configuraciones abre sin fechas: no ve las clases que ya estan en Clases.
             // Si todos los choques son con ellas, "Verlas" ensenaria una lista vacia.
-            bool soloConProgramadas = renglon.Ver == FiltroClases.Choques && revisado != null && revisado.Revision != null
-                && revisado.Revision.Choques.Count > 0 && revisado.Revision.Choques.All(c => c.Programada != null);
+            // Lo mismo con las encimadas en un laboratorio.
+            List<ChoqueCiclo> deRenglon = revisado == null || revisado.Revision == null ? null
+                : renglon.Ver == FiltroClases.Choques ? revisado.Revision.Choques
+                : renglon.Ver == FiltroClases.Encimadas ? revisado.Revision.Encimadas
+                : null;
+            bool soloConProgramadas = deRenglon != null && deRenglon.Count > 0 && deRenglon.All(c => c.Programada != null);
             bool conEnlace = renglon.Ver != FiltroClases.Ninguno && borrador != null && !soloConProgramadas;
             Panel fila = new Panel { BackColor = Color.White, Margin = new Padding(0, 0, 0, 7), Width = ancho, Tag = renglon };
-            Label texto = new Label
-            {
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 9.5F),
-                ForeColor = renglon.Nivel == NivelRevision.Rojo ? TextoRojo : TextoOscuro,
-                Location = new Point(20, 0),
-                MaximumSize = new Size(Math.Max(80, ancho - 20 - (conEnlace ? AnchoBotonEnlace : 0)), 0),
-                Text = renglon.Texto,
-                UseMnemonic = false
-            };
+            // Con "Verlas", el renglon es un LinkLabel y el enlace va justo despues de su
+            // frase, en el mismo parrafo (antes, en una columna aparte a la derecha, lejos
+            // de lo que ensena).
+            Label texto = conEnlace ? new LinkLabel { LinkColor = Color.DarkGreen, ActiveLinkColor = Color.ForestGreen } : new Label();
+            texto.AutoSize = true;
+            texto.Font = new DrawingFont("Century Gothic", 9.5F);
+            texto.ForeColor = renglon.Nivel == NivelRevision.Rojo ? TextoRojo : TextoOscuro;
+            texto.Location = new Point(20, 0);
+            texto.MaximumSize = new Size(Math.Max(80, ancho - 20), 0);
+            texto.UseMnemonic = false;
+            texto.Text = conEnlace ? renglon.Texto + "  Verlas" : renglon.Texto;
             fila.Controls.Add(texto);
             fila.Height = Math.Max(20, texto.PreferredSize.Height);
             Color punto = renglon.Nivel == NivelRevision.Rojo ? PuntoRojo
@@ -1397,16 +1400,17 @@ namespace DigBit
             if (conEnlace)
             {
                 FiltroClases filtro = renglon.Ver;
-                LinkLabel ver = Enlace("Verlas", (s, e) =>
+                LinkLabel ver = (LinkLabel)texto;
+                ver.LinkArea = new LinkArea(renglon.Texto.Length + 2, "Verlas".Length);
+                ver.LinkClicked += (s, e) =>
                 {
                     if (borrador != null)
                     {
                         IrAConfiguraciones(borrador.Id, filtro);
                     }
-                });
-                ver.Location = new Point(ancho - AnchoBotonEnlace + 8, 0);
-                ayuda.SetToolTip(ver, "Las enseña en la lista de clases del horario en preparación (paso 2).");
-                fila.Controls.Add(ver);
+                };
+                ver.AccessibleDescription = "«Verlas» las enseña en la lista de clases del horario en preparación (paso 2).";
+                ayuda.SetToolTip(ver, "«Verlas»: las enseña en la lista de clases del horario en preparación (paso 2).");
             }
 
             return fila;
@@ -1831,10 +1835,12 @@ namespace DigBit
                 lblAntes.Location = new Point(xd, 12);
                 lblRevisando.SetBounds(xd + wd - 320, 15, 320, 20);
                 lnkRevisarOtraVez.Location = new Point(xd + wd - lnkRevisarOtraVez.Width, 15);
-                int abajo = alto - 10 - lblPieRevision.Height;
-                lblPieRevision.Location = new Point(xd, abajo);
+                // La clave de los colores, bajo su titulo y antes de los renglones (abajo
+                // del todo quedaba lejos de lo que explica).
+                lblPieRevision.Location = new Point(xd, lblAntes.Bottom + 2);
+                int arriba = lblPieRevision.Bottom + 8;
                 flowRevision.AutoScroll = true;
-                flowRevision.SetBounds(xd, 42, wd, Math.Max(80, abajo - 8 - 42));
+                flowRevision.SetBounds(xd, arriba, wd, Math.Max(80, alto - 10 - arriba));
                 anchoLista = wd - SystemInformation.VerticalScrollBarWidth - 6;
                 if (anchoLista != anchoRenglones)
                 {
@@ -1854,9 +1860,9 @@ namespace DigBit
                 }
 
                 int altoLista = flowRevision.Controls.Cast<Control>().Sum(c => c.Height + c.Margin.Vertical) + 4;
+                lblPieRevision.Location = new Point(x0, lblAntes.Bottom + 2);
                 flowRevision.AutoScroll = false;
-                flowRevision.SetBounds(x0, yd + 30, wIzq, Math.Max(40, altoLista));
-                lblPieRevision.Location = new Point(x0, flowRevision.Bottom + 6);
+                flowRevision.SetBounds(x0, lblPieRevision.Bottom + 8, wIzq, Math.Max(40, altoLista));
             }
 
             vistaC.ResumeLayout();

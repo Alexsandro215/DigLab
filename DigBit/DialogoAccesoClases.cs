@@ -164,7 +164,8 @@ namespace DigBit
             // Que quepa en la pantalla: a 1366x768 la barra de tareas deja unos 720 de
             // alto y, con la casilla de los docentes, la lista de abajo ensena una
             // fila menos (las demas, con su barra).
-            int filas = FilasQueCaben(SizeFromClientSize(new Size(Ancho, alto)).Height, Screen.PrimaryScreen.WorkingArea.Height);
+            // Con el aire que BotonesDialogo agrega abajo.
+            int filas = FilasQueCaben(SizeFromClientSize(new Size(Ancho, alto + EstiloAdmin.AireBajoBotones)).Height, Screen.PrimaryScreen.WorkingArea.Height);
             if (filas < FilasVisibles)
             {
                 int menos = (FilasVisibles - filas) * AltoFila;

@@ -346,6 +346,11 @@ namespace DigBit.conexion
         public bool SinHorario { get; private set; }
         /// <summary>La configuracion guardada o aplicada que se copia; null si no es de una.</summary>
         public int? ConfiguracionId { get; private set; }
+        /// <summary>
+        /// Con ConfiguracionId: solo sus clases (docente, materia y grupo), sin sus
+        /// horas, para armar el horario de cero ("Crear plantilla nueva...").
+        /// </summary>
+        public bool SoloClases { get; private set; }
 
         public bool EsEnBlanco
         {
@@ -360,6 +365,11 @@ namespace DigBit.conexion
         public static FuentePreparacion DeConfiguracion(int idConfiguracion)
         {
             return new FuentePreparacion { ConfiguracionId = idConfiguracion };
+        }
+
+        public static FuentePreparacion ClasesDeConfiguracion(int idConfiguracion)
+        {
+            return new FuentePreparacion { ConfiguracionId = idConfiguracion, SoloClases = true };
         }
 
         public static FuentePreparacion EnBlanco()
@@ -836,7 +846,7 @@ namespace DigBit.conexion
                 }
                 else if (fuente.ConfiguracionId.HasValue)
                 {
-                    CopiarCiclo(conexion, transaccion, fuente.ConfiguracionId.Value, idCiclo);
+                    CopiarCiclo(conexion, transaccion, fuente.ConfiguracionId.Value, idCiclo, !fuente.SoloClases);
                 }
 
                 ResultadoEmpezar resultado = Contar(conexion, transaccion, idCiclo, nombre);
@@ -846,7 +856,8 @@ namespace DigBit.conexion
                     + (fuente.Dia.HasValue
                         ? ": copia de las clases del " + fuente.Dia.Value.ToString("yyyy-MM-dd") + " en los laboratorios "
                           + (fuente.Laboratorios == null ? "todos" : string.Join(",", fuente.Laboratorios)) + (fuente.SinHorario ? " y las sin horario" : "")
-                        : fuente.ConfiguracionId.HasValue ? ": copia de la configuracion " + fuente.ConfiguracionId.Value + " (" + origenNombre + ")"
+                        : fuente.ConfiguracionId.HasValue ? (fuente.SoloClases ? ": las clases, sin horas, de la configuracion " : ": copia de la configuracion ")
+                          + fuente.ConfiguracionId.Value + " (" + origenNombre + ")"
                         : ": en blanco")
                     + "; " + resultado.Clases + " clases de " + resultado.Docentes + " docentes con " + resultado.Horarios + " horarios.");
                 return resultado;
@@ -1185,21 +1196,29 @@ namespace DigBit.conexion
         /// origen (para "Como queda") y de que clase de ella viene (carga_origen).
         /// De una aplicada, clase_origen es la clase que creo.
         /// </summary>
-        private static void CopiarCiclo(MySqlConnection conexion, MySqlTransaction transaccion, int idOrigen, int idDestino)
+        /// <param name="conHoras">
+        /// False ("Crear plantilla nueva..."): solo las clases, sin sus horas ni el
+        /// horario de origen (todas salen "sin horario" y sus horas, al ponerlas, nuevas).
+        /// </param>
+        private static void CopiarCiclo(MySqlConnection conexion, MySqlTransaction transaccion, int idOrigen, int idDestino, bool conHoras = true)
         {
+            string horarioOrigen = conHoras
+                ? @"(SELECT GROUP_CONCAT(CONCAT(f.laboratorio, ':', f.dia_semana, ':', TIME_FORMAT(f.hora_inicio, '%H:%i'), '-', TIME_FORMAT(f.hora_fin, '%H:%i'))
+                               ORDER BY f.dia_semana, f.hora_inicio, f.laboratorio SEPARATOR ';') FROM ciclo_franjas f WHERE f.idcarga = o.idcarga)"
+                : "NULL";
             using (MySqlCommand comando = new MySqlCommand(@"
                 INSERT INTO ciclo_cargas (idciclo, profesor, grupo, materia, quitada, clase_origen, profesor_origen, grupo_origen,
                                           materia_origen, horario_origen, carga_origen)
                 SELECT @Destino, o.profesor, o.grupo, o.materia, 0, COALESCE(o.clase_publicada, o.clase_origen), o.profesor, o.grupo, o.materia,
-                       (SELECT GROUP_CONCAT(CONCAT(f.laboratorio, ':', f.dia_semana, ':', TIME_FORMAT(f.hora_inicio, '%H:%i'), '-', TIME_FORMAT(f.hora_fin, '%H:%i'))
-                               ORDER BY f.dia_semana, f.hora_inicio, f.laboratorio SEPARATOR ';') FROM ciclo_franjas f WHERE f.idcarga = o.idcarga),
+                       " + horarioOrigen + @",
                        o.idcarga
-                FROM ciclo_cargas o WHERE o.idciclo = @Origen AND o.quitada = 0 ORDER BY o.idcarga;
+                FROM ciclo_cargas o WHERE o.idciclo = @Origen AND o.quitada = 0 ORDER BY o.idcarga;"
+                + (conHoras ? @"
                 INSERT INTO ciclo_franjas (idcarga, laboratorio, dia_semana, hora_inicio, hora_fin)
                 SELECT n.idcarga, f.laboratorio, f.dia_semana, f.hora_inicio, f.hora_fin
                 FROM ciclo_cargas n INNER JOIN ciclo_franjas f ON f.idcarga = n.carga_origen
                 WHERE n.idciclo = @Destino
-                ORDER BY n.idcarga, f.idfranja;", conexion, transaccion))
+                ORDER BY n.idcarga, f.idfranja;" : ""), conexion, transaccion))
             {
                 comando.Parameters.AddWithValue("@Origen", idOrigen);
                 comando.Parameters.AddWithValue("@Destino", idDestino);
@@ -1270,7 +1289,9 @@ namespace DigBit.conexion
 
         /// <summary>
         /// Una clase nueva en el horario en preparacion (profesor null: "Sin
-        /// docente") con sus franjas. Los choques no impiden guardarla: impiden
+        /// docente") con sus franjas. Lo que se cruza con ellas de otras clases
+        /// del mismo laboratorio se les quita (RecortarEncimadas). Los choques
+        /// (docente o grupo en otro laboratorio) no impiden guardarla: impiden
         /// aplicar. Devuelve su idcarga.
         /// </summary>
         public int AgregarClase(int idCiclo, int? profesor, int grupo, int materia, IList<FranjaCiclo> franjas, int idAdministrador)
@@ -1296,6 +1317,7 @@ namespace DigBit.conexion
                     idCarga = Convert.ToInt32(comando.ExecuteScalar());
                 }
 
+                RecortarEncimadas(conexion, transaccion, idCiclo, idCarga, franjas, 0);
                 InsertarFranjas(conexion, transaccion, idCarga, franjas);
                 Tocar(conexion, transaccion, idCiclo, idAdministrador);
                 transaccion.Commit();
@@ -1305,7 +1327,11 @@ namespace DigBit.conexion
             }
         }
 
-        /// <summary>Cambia el docente, el grupo, la materia y todas las franjas de una clase del horario en preparacion.</summary>
+        /// <summary>
+        /// Cambia el docente, el grupo, la materia y todas las franjas de una clase
+        /// del horario en preparacion. Lo que se cruza con ellas de otras clases
+        /// del mismo laboratorio se les quita (RecortarEncimadas).
+        /// </summary>
         public void CambiarClase(int idCarga, int? profesor, int grupo, int materia, IList<FranjaCiclo> franjas, int idAdministrador)
         {
             Permisos.Exigir("Cambiar una clase del horario en preparacion");
@@ -1328,6 +1354,7 @@ namespace DigBit.conexion
                     comando.ExecuteNonQuery();
                 }
 
+                RecortarEncimadas(conexion, transaccion, idCiclo, idCarga, franjas, 0);
                 InsertarFranjas(conexion, transaccion, idCarga, franjas);
                 Tocar(conexion, transaccion, idCiclo, idAdministrador);
                 transaccion.Commit();
@@ -1336,7 +1363,11 @@ namespace DigBit.conexion
             }
         }
 
-        /// <summary>"Agregar estas horas a una clase que ya esta": solo anade franjas, que no pueden cruzarse con las suyas.</summary>
+        /// <summary>
+        /// "Agregar estas horas a una clase que ya esta": solo anade franjas, que no
+        /// pueden cruzarse con las suyas. Lo que se cruza con ellas de otras clases
+        /// del mismo laboratorio se les quita (RecortarEncimadas).
+        /// </summary>
         public void PonerHoras(int idCarga, IList<FranjaCiclo> franjas, int idAdministrador)
         {
             Permisos.Exigir("Poner horas a una clase del horario en preparacion");
@@ -1373,6 +1404,7 @@ namespace DigBit.conexion
 
                 ValidarFranjas(todas);
                 ExigirCatalogos(conexion, transaccion, null, null, null, franjas);
+                RecortarEncimadas(conexion, transaccion, idCiclo, idCarga, franjas, 0);
                 InsertarFranjas(conexion, transaccion, idCarga, franjas);
                 Tocar(conexion, transaccion, idCiclo, idAdministrador);
                 transaccion.Commit();
@@ -1424,8 +1456,10 @@ namespace DigBit.conexion
         /// "Cambiar horas" de Proximo ciclo: una franja del horario en preparacion
         /// pasa a otro dia, otras horas u otro laboratorio y, si se elige, a otra
         /// clase del mismo horario (idCarga), en su sitio (conserva su id). No
-        /// puede cruzarse con las demas horas de la clase a la que va; los choques
-        /// con otras clases no lo impiden (impiden aplicar).
+        /// puede cruzarse con las demas horas de la clase a la que va; a otras
+        /// clases del mismo laboratorio se les quita lo que se cruza
+        /// (RecortarEncimadas), y los choques (docente o grupo en otro
+        /// laboratorio) no lo impiden (impiden aplicar).
         /// </summary>
         public void CambiarFranja(int idFranja, int idCarga, FranjaCiclo nueva, int idAdministrador)
         {
@@ -1477,6 +1511,7 @@ namespace DigBit.conexion
 
                 ValidarFranjas(todas);
                 ExigirCatalogos(conexion, transaccion, null, null, null, new List<FranjaCiclo> { nueva });
+                RecortarEncimadas(conexion, transaccion, idCiclo, idCarga, new List<FranjaCiclo> { nueva }, idFranja);
                 using (MySqlCommand comando = new MySqlCommand(@"
                     UPDATE ciclo_franjas SET idcarga = @Carga, laboratorio = @L, dia_semana = @D, hora_inicio = @I, hora_fin = @Fin
                      WHERE idfranja = @F", conexion, transaccion))
@@ -1718,6 +1753,96 @@ namespace DigBit.conexion
                 object valor = comando.ExecuteScalar();
                 return valor == null || valor == DBNull.Value ? (int?)null : Convert.ToInt32(valor);
             }
+        }
+
+        /// <summary>
+        /// Poner unas horas encima de otra clase del mismo laboratorio la
+        /// reemplaza (decision del 2026-10-31, como Horario semanal con db/25):
+        /// a las franjas de OTRAS clases sin quitar de ese horario que se cruzan
+        /// con "nuevas" el mismo dia en el mismo laboratorio se les quita SOLO lo
+        /// que se cruza (RevisionCiclo.Resto: la de en medio se parte en dos, la
+        /// tapada entera se borra). No hay "Falta asignar": la que se queda sin
+        /// horas sale en "Sin horario". La de "excluirFranja" (la que se mueve) no
+        /// cuenta. Dentro de la transaccion de quien la llama, con el horario ya
+        /// bloqueado. Devuelve cuantas franjas toco.
+        /// </summary>
+        private static int RecortarEncimadas(MySqlConnection conexion, MySqlTransaction transaccion, int idCiclo, int idCarga, IList<FranjaCiclo> nuevas,
+            int excluirFranja)
+        {
+            if (nuevas == null || nuevas.Count == 0)
+            {
+                return 0;
+            }
+
+            List<FranjaCiclo> otras = new List<FranjaCiclo>();
+            using (MySqlCommand comando = new MySqlCommand(@"
+                SELECT f.idfranja, f.idcarga, f.laboratorio, f.dia_semana, f.hora_inicio, f.hora_fin
+                FROM ciclo_franjas f INNER JOIN ciclo_cargas cc ON cc.idcarga = f.idcarga
+                WHERE cc.idciclo = @C AND cc.quitada = 0 AND f.idcarga <> @Carga AND f.idfranja <> @X", conexion, transaccion))
+            {
+                comando.Parameters.AddWithValue("@C", idCiclo);
+                comando.Parameters.AddWithValue("@Carga", idCarga);
+                comando.Parameters.AddWithValue("@X", excluirFranja);
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        otras.Add(new FranjaCiclo
+                        {
+                            Id = reader.GetInt32("idfranja"),
+                            CargaId = reader.GetInt32("idcarga"),
+                            LaboratorioId = reader.GetInt32("laboratorio"),
+                            DiaSemana = Convert.ToInt32(reader["dia_semana"]),
+                            Inicio = reader.GetTimeSpan("hora_inicio"),
+                            Fin = reader.GetTimeSpan("hora_fin")
+                        });
+                    }
+                }
+            }
+
+            int tocadas = 0;
+            foreach (FranjaCiclo otra in otras)
+            {
+                List<TimeSpan[]> resto = RevisionCiclo.Resto(otra, nuevas);
+                if (resto == null)
+                {
+                    continue;
+                }
+
+                tocadas++;
+                using (MySqlCommand comando = new MySqlCommand("", conexion, transaccion))
+                {
+                    comando.Parameters.AddWithValue("@F", otra.Id);
+                    if (resto.Count == 0)
+                    {
+                        comando.CommandText = "DELETE FROM ciclo_franjas WHERE idfranja = @F";
+                    }
+                    else
+                    {
+                        // El primer trozo, en su sitio (conserva su id); el otro, nuevo.
+                        comando.CommandText = "UPDATE ciclo_franjas SET hora_inicio = @I, hora_fin = @Fin WHERE idfranja = @F";
+                        comando.Parameters.AddWithValue("@I", resto[0][0]);
+                        comando.Parameters.AddWithValue("@Fin", resto[0][1]);
+                    }
+
+                    comando.ExecuteNonQuery();
+                }
+
+                List<FranjaCiclo> trozos = resto.Skip(1).Select(t => new FranjaCiclo
+                {
+                    LaboratorioId = otra.LaboratorioId,
+                    DiaSemana = otra.DiaSemana,
+                    Inicio = t[0],
+                    Fin = t[1]
+                }).ToList();
+                InsertarFranjas(conexion, transaccion, otra.CargaId, trozos);
+                Log.Info("Horario en preparacion " + idCiclo + ": a la clase " + otra.CargaId + " se le quito lo que se cruzaba de su franja " + otra.Id
+                    + " (laboratorio " + otra.LaboratorioId + ", dia " + otra.DiaSemana + ", " + HorariosDatos.Hora(otra.Inicio) + "-" + HorariosDatos.Hora(otra.Fin)
+                    + "): " + (resto.Count == 0 ? "se quito entera" : "queda " + string.Join(" y ", resto.Select(t => HorariosDatos.Hora(t[0]) + "-" + HorariosDatos.Hora(t[1]))))
+                    + "; la reemplaza la clase " + idCarga + ".");
+            }
+
+            return tocadas;
         }
 
         /// <summary>Las franjas de una clase, con un solo INSERT de varias filas.</summary>

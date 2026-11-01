@@ -13,10 +13,10 @@
       1. Respalda la base entera con mysqldump y comprueba que el respaldo sirve.
       2. Pasa db/00_revision_previa.sql, que no cambia nada, y SE DETIENE si
          alguna comprobacion dice BLOQUEA.
-      3. Aplica 03, 04, 05, 06 y de la 08 a la 23 en orden, parando en el primer error.
+      3. Aplica 03, 04, 05, 06 y de la 08 a la 25 en orden, parando en el primer error.
       4. Vuelve a pasar la revision para enseñar como quedo.
 
-    Las veinte migraciones son repetibles: si una ya estaba aplicada lo dice y
+    Las veintidos migraciones son repetibles: si una ya estaba aplicada lo dice y
     sigue. Se pueden volver a pasar sin romper nada.
 
     La 18 (encargados de laboratorio) crea ademas la cuenta de MySQL de solo
@@ -40,6 +40,16 @@
     equipos. Con root deja ademas que digbit_consulta las lea (la persona
     responsable del laboratorio ve las guardadas y las aplicadas); con otro
     usuario, lo dice con un AVISO.
+
+    La 24 (docentes con el SIIA) anade una columna vacia a usuarios y la tabla
+    de quienes esperan que los enlacen. No cambia nada hasta encender en
+    Ajustes el inicio de sesion de docentes con el SIIA. Con root da permiso a
+    digbit_equipo y digbit_consulta; con otro usuario, lo dice con un AVISO.
+
+    La 25 (horas que faltan por asignar) crea una tabla nueva y no toca nada
+    mas. Solo la usa el DigBit de la administracion: no hace falta actualizar
+    los equipos. Con root deja ademas que digbit_consulta la lea (la persona
+    responsable ve "Falta asignar"); con otro usuario, lo dice con un AVISO.
 
 .EXAMPLE
     .\migrar_bd.ps1 -Servidor 127.0.0.1 -Usuario root -ContrasenaAdmin "LaDelAdministrador"
@@ -101,7 +111,9 @@ $migraciones = @(
     "20_vigencia_franjas.sql",
     "21_historial_cambios.sql",
     "22_asistencia_dada.sql",
-    "23_horarios_guardados.sql"
+    "23_horarios_guardados.sql",
+    "24_docentes_siia.sql",
+    "25_horas_por_asignar.sql"
 ) | ForEach-Object { Join-Path $carpetaDb $_ }
 
 # Repone la clave foranea que la 04 quita un momento, si una migracion se

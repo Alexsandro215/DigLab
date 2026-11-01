@@ -12,6 +12,37 @@ using Timer = System.Windows.Forms.Timer;
 namespace DigBit
 {
     /// <summary>
+    /// Un reporte de falla que el docente envio desde la tarjeta del codigo
+    /// (TarjetaCodigo.UltimoReporte): de que clase (su franja o su sesion extra,
+    /// con su hora de inicio) y a que hora del servidor. Las clases se vuelven a
+    /// leer cada 30 s, asi que se compara por su clave y no por el objeto.
+    /// </summary>
+    internal sealed class ReporteEnviado
+    {
+        public ReporteEnviado(SesionAgenda clase, DateTime hora)
+        {
+            Clave = ClaveDe(clase);
+            Hora = hora;
+        }
+
+        public string Clave { get; private set; }
+
+        /// <summary>Cuando se guardo (hora del servidor, estimada).</summary>
+        public DateTime Hora { get; private set; }
+
+        /// <summary>Si es de esa clase de ese dia.</summary>
+        public bool EsDe(SesionAgenda clase, DateTime hoy)
+        {
+            return clase != null && Hora.Date == hoy.Date && ClaveDe(clase) == Clave;
+        }
+
+        private static string ClaveDe(SesionAgenda s)
+        {
+            return s == null ? "" : (s.EsExtra ? "x" + s.ExcepcionId : "f" + s.FranjaId) + "@" + HorariosDatos.Hora(s.Inicio);
+        }
+    }
+
+    /// <summary>
     /// El codigo de clase del profesor en grande y deletreado: es lo que dicta a
     /// sus alumnos, uno para todas sus clases (db/09). En una base sin la 09
     /// cada clase tiene el suyo y se listan. Segun el modo del laboratorio de su
@@ -29,6 +60,9 @@ namespace DigBit
     /// </summary>
     internal class TarjetaCodigo : Control
     {
+        // "Reporte enviado a las 08:20" (UltimoReporte), debajo de "Reportar una falla".
+        private static readonly Color VerdeReporte = Color.FromArgb(46, 125, 50);
+
         // Grande: se ve desde el fondo del salon (DibujarCodigo lo achica si no cabe).
         private const float TamanoCodigo = 120F;
         private const int Relleno = 22;
@@ -75,8 +109,14 @@ namespace DigBit
         // calcula donde caen y, al terminar, ColocarAcciones los pone ahi (nunca
         // se mueven a media pintura); sin sitio, ocultos.
         private readonly BotonCabecera btnReportar = new BotonCabecera("Reportar una falla") { FondoDetras = FondoFicha };
-        private readonly BotonOpcion opcionBitacora = new BotonOpcion("Bitácora");
-        private readonly BotonOpcion opcionAsistencia = new BotonOpcion("Asistencia") { Descripcion = "Quién ha venido a cada clase" };
+        // Con nombres que no se confunden con las secciones de arriba ("Mis bitacoras",
+        // "Mis grupos"): quien registro en esta sesion y la lista de asistencia del grupo.
+        private readonly BotonOpcion opcionBitacora = new BotonOpcion("Quién registró");
+        private readonly BotonOpcion opcionAsistencia = new BotonOpcion("Lista de asistencia") { Descripcion = "Quién ha venido a cada clase" };
+        // Compactas (1366) solo llevan el titulo: su linea de debajo va en esta ayuda.
+        private readonly ToolTip ayudaOpciones = new ToolTip { InitialDelay = 300, ReshowDelay = 100, AutoPopDelay = 15000 };
+        private string ayudaBitacoraPuesta;
+        private string ayudaAsistenciaPuesta;
         private Rectangle zonaReportar;
         private Rectangle zonaOpciones;
         private bool opcionesCompactas;
@@ -116,10 +156,17 @@ namespace DigBit
         private Rectangle zonaLista;
         private bool encimaLista;
         private readonly ToolTip ayudaLista = new ToolTip { InitialDelay = 300, ReshowDelay = 100, AutoPopDelay = 15000 };
-        private const string AyudaDeLaLista = "Pulsa para ver en Asistencia quién falta.";
+        private const string AyudaDeLaLista = "Pulsa para ver en la lista de asistencia quién falta.";
         // La de la cifra que se pinto (Registro): con db/22 y la clase en curso,
         // tambien que ahi se da la asistencia, y cuantas diste hoy.
         private string ayudaDeLaListaPintada = AyudaDeLaLista;
+        // Con los codigos ocultos, "Pidele el codigo..." en el sitio del codigo: lo
+        // de quien si los ve va en su ayuda (antes era una nota fija debajo).
+        private Rectangle zonaAviso;
+        private bool encimaAviso;
+        internal const string AyudaDelAviso = "Solo la administración de DigBit y la persona responsable del laboratorio ven los códigos.";
+        // "Reporte enviado a las 08:20" bajo "Reportar una falla", mientras dura esa clase.
+        private ReporteEnviado ultimoReporte;
 
         /// <summary>"Reportar una falla" de la clase en curso (solo mientras dura).</summary>
         public event Action<SesionAgenda> ReportarFalla;
@@ -127,11 +174,31 @@ namespace DigBit
         /// <summary>El circulo de la clase de la ficha: "Personalizar tu clase" de esa clase (su id).</summary>
         public event Action<int> Personalizar;
 
-        /// <summary>"Bitacora": quien registro hasta el momento en la sesion de las cifras.</summary>
+        /// <summary>"Quien registro": quien registro hasta el momento en la sesion de las cifras.</summary>
         public event Action<SesionAgenda> VerBitacora;
 
-        /// <summary>"Asistencia" de la clase de la tarjeta.</summary>
+        /// <summary>"Lista de asistencia" de la clase de la tarjeta.</summary>
         public event Action<SesionAgenda> VerAsistencia;
+
+        /// <summary>
+        /// El ultimo reporte de falla que envio el docente desde la tarjeta (lo pone
+        /// el panel al guardarse), o null. Mientras se puede reportar en esa misma
+        /// clase, debajo de "Reportar una falla" dice en verde "Reporte enviado a las
+        /// 08:20"; despues ya no se ve.
+        /// </summary>
+        public ReporteEnviado UltimoReporte
+        {
+            get
+            {
+                return ultimoReporte;
+            }
+
+            set
+            {
+                ultimoReporte = value;
+                Invalidate();
+            }
+        }
 
         public TarjetaCodigo()
         {
@@ -169,6 +236,8 @@ namespace DigBit
                     ReportarFalla(claseReportar);
                 }
             };
+            ayudaOpciones.SetToolTip(btnReportar, "Una falla del laboratorio o de un equipo en esta clase. "
+                + "La administración de DigBit la ve en sus alertas y en la bitácora de la clase.");
             opcionBitacora.Click += (s, e) =>
             {
                 if (sesionBitacora != null && VerBitacora != null)
@@ -307,6 +376,7 @@ namespace DigBit
                 fuenteEtiquetaCifra.Dispose();
                 fuenteFaltan.Dispose();
                 ayudaLista.Dispose();
+                ayudaOpciones.Dispose();
             }
 
             base.Dispose(disposing);
@@ -362,6 +432,7 @@ namespace DigBit
             sinCodigoEscuchar = null;
             aspectoCirculo = null;
             zonaLista = Rectangle.Empty;
+            zonaAviso = Rectangle.Empty;
             Pintar(e.Graphics);
 
             // La cifra de la lista ya no esta bajo el raton (recarga, otra clase):
@@ -371,6 +442,16 @@ namespace DigBit
                 encimaLista = false;
                 Cursor = Cursors.Default;
                 ayudaLista.SetToolTip(this, null);
+            }
+
+            // Lo mismo con el aviso de los codigos ocultos (solo su ayuda).
+            if (encimaAviso && (zonaAviso.IsEmpty || !zonaAviso.Contains(PointToClient(MousePosition))))
+            {
+                encimaAviso = false;
+                if (!encimaLista)
+                {
+                    ayudaLista.SetToolTip(this, null);
+                }
             }
 
             // Los botones se mueven despues del pintado, y solo si cambio su sitio
@@ -419,6 +500,7 @@ namespace DigBit
             opcionBitacora.Compacta = opcionesCompactas;
             opcionAsistencia.Compacta = opcionesCompactas;
             opcionBitacora.Enabled = bitacoraAbierta;
+            PonerAyudaDeOpciones();
             if (zonaOpciones.IsEmpty)
             {
                 Colocar(opcionBitacora, Rectangle.Empty);
@@ -430,6 +512,29 @@ namespace DigBit
             int mitad = (zonaOpciones.Width - Entre) / 2;
             Colocar(opcionBitacora, new Rectangle(zonaOpciones.Left, zonaOpciones.Top, mitad, zonaOpciones.Height));
             Colocar(opcionAsistencia, new Rectangle(zonaOpciones.Left + mitad + Entre, zonaOpciones.Top, zonaOpciones.Width - mitad - Entre, zonaOpciones.Height));
+        }
+
+        /// <summary>
+        /// Compactas (a 1366 solo llevan el titulo), la linea de debajo de cada
+        /// opcion va en su ayuda ("16 estudiantes registraron hasta ahora", "Quien
+        /// ha venido a cada clase"); con su linea a la vista, sin ayuda. Solo se
+        /// toca si cambio: el pintado la llama con el borde latiendo.
+        /// </summary>
+        private void PonerAyudaDeOpciones()
+        {
+            string bitacora = opcionesCompactas && opcionBitacora.Descripcion.Length > 0 ? opcionBitacora.Descripcion : null;
+            string asistencia = opcionesCompactas && opcionAsistencia.Descripcion.Length > 0 ? opcionAsistencia.Descripcion : null;
+            if (bitacora != ayudaBitacoraPuesta)
+            {
+                ayudaBitacoraPuesta = bitacora;
+                ayudaOpciones.SetToolTip(opcionBitacora, bitacora);
+            }
+
+            if (asistencia != ayudaAsistenciaPuesta)
+            {
+                ayudaAsistenciaPuesta = asistencia;
+                ayudaOpciones.SetToolTip(opcionAsistencia, asistencia);
+            }
         }
 
         /// <summary>Lo que miden las opciones debajo de las cifras, con su aire: normales, o compactas si las cifras van compactas.</summary>
@@ -462,7 +567,7 @@ namespace DigBit
         }
 
         /// <summary>
-        /// "Bitacora" y "Asistencia", debajo de las cifras, en y: la bitacora de la
+        /// "Quien registro" y "Lista de asistencia", debajo de las cifras, en y: la bitacora de la
         /// misma sesion de la que salen las cifras (DondeRegistran) y la asistencia
         /// de la clase de la tarjeta. Antes de que sus alumnos puedan registrar, la
         /// bitacora va apagada y dice desde cuando. Devuelve lo que ocupan.
@@ -481,8 +586,26 @@ namespace DigBit
             opcionBitacora.Descripcion = !bitacoraAbierta ? "Desde las " + HorariosDatos.Hora(desde)
                 : registraron == 0 ? "Nadie ha registrado todavía"
                 : registraron == 1 ? "1 estudiante registró hasta ahora" : registraron + " estudiantes registraron hasta ahora";
+            // La cifra cambia sin mover las opciones (ColocarAcciones no corre): su ayuda
+            // al dia despues del pintado, y solo si cambio (el borde late 20 veces por segundo).
+            string ayudaBitacora = compactas && opcionBitacora.Descripcion.Length > 0 ? opcionBitacora.Descripcion : null;
+            if (ayudaBitacora != ayudaBitacoraPuesta && !ayudaOpcionesPendiente && IsHandleCreated)
+            {
+                ayudaOpcionesPendiente = true;
+                BeginInvoke(new Action(() =>
+                {
+                    ayudaOpcionesPendiente = false;
+                    if (!IsDisposed)
+                    {
+                        PonerAyudaDeOpciones();
+                    }
+                }));
+            }
+
             return alto;
         }
+
+        private bool ayudaOpcionesPendiente;
 
         /// <summary>
         /// La sesion donde registran los alumnos de la clase s: la suya; la de su
@@ -578,7 +701,7 @@ namespace DigBit
                     + HorariosDatos.MargenAntesDelInicioMinutos + " minutos antes de empezar: tu clase se elige sola si es la única "
                     + "a esa hora (si no, la elige de una lista). No hace falta dictarles nada.";
 
-                // Las cifras y, debajo, Bitacora y Asistencia; compactas si asi no cabe la nota.
+                // Las cifras y, debajo, Quien registro y Lista de asistencia; compactas si asi no cabe la nota.
                 // "Escuchar el codigo", apagado (aqui no hay nada que dictar), bajo el
                 // titulo: es lo que menos importa, no compacta nada y solo va si cabe.
                 int altoNota = 12 + AltoDe(g, comoEntran, fuenteNota, interior.Width);
@@ -599,17 +722,18 @@ namespace DigBit
             }
 
             // Los docentes no ven los codigos (CodigosSoloResponsables): en el sitio
-            // del codigo, que se lo pida a la persona responsable del laboratorio, y
-            // debajo como va su clase, como siempre. Sin "Escuchar el codigo" ni
-            // ninguna nota que diga un codigo; con el codigo unico y con la
-            // generacion de codigos, y tambien sin la 09 o sin codigo asignado.
+            // del codigo, "Codigo de la clase" y que se lo pida a la persona
+            // responsable del laboratorio (de tamano normal: pesa menos que la clase),
+            // y debajo como va su clase, como siempre. Quien si ve los codigos va en
+            // la ayuda del aviso. Sin "Escuchar el codigo" ni ninguna nota que diga
+            // un codigo; con el codigo unico y con la generacion de codigos, y
+            // tambien sin la 09 o sin codigo asignado.
             if (panorama.CodigosOcultos)
             {
-                DibujarCodigoConRegistro(g, interior, y, titulo, null, relevante,
+                DibujarCodigoConRegistro(g, interior, y, "Código de la clase", null, relevante,
                     modo == ModoCodigo.Fijo ? AnteriorConCodigoFijo(relevante, abiertas, hora) : null, hora,
                     Nota(modo == ModoCodigo.Renovable ? panorama.AvisoApertura : null, Color.FromArgb(190, 85, 0)),
-                    Nota(OtraClaseSigue(otraClase), nota),
-                    Nota("Solo la administración de DigBit y la persona responsable del laboratorio ven los códigos.", nota));
+                    Nota(OtraClaseSigue(otraClase), nota));
                 return;
             }
 
@@ -699,7 +823,7 @@ namespace DigBit
             int altoDeletreo = fila.Alto;
             bool compacto = false;
             int altoRegistro = Registro(g, interior, 0, clase, anterior, hora, false, false);
-            // Bitacora y Asistencia, debajo de las cifras (solo con una clase de la
+            // Quien registro y Lista de asistencia, debajo de las cifras (solo con una clase de la
             // que hablar): con ellas, las notas se quitan antes (el codigo no baja de
             // 80 px), porque las opciones se quedan siempre.
             bool conOpciones = clase != null && altoRegistro > 0;
@@ -720,13 +844,16 @@ namespace DigBit
 
             if (oculto)
             {
-                // Lo que se pide, lo mas grande que quepa donde iria el codigo.
+                // Lo que se pide, de tamano normal (16 pt) donde iria el codigo; 13 pt
+                // solo si ni asi cabe. Su ayuda dice quien si ve los codigos.
                 DrawingFont letra = LetraDelAviso(g, interior.Width, Math.Max(MinimoCodigo, libre - sinElCodigo()));
                 int altoAviso = AltoDe(g, CodigosSoloResponsables.PideElCodigo, letra, interior.Width);
                 y += Math.Max(0, libre - sinElCodigo() - altoAviso) * 45 / 100;
                 Centrado(g, titulo, fuenteTitulo, Color.DarkGreen, interior, ref y);
                 y += AlCodigo;
+                int arribaAviso = y;
                 Centrado(g, CodigosSoloResponsables.PideElCodigo, letra, Color.DarkGreen, interior, ref y);
+                zonaAviso = Rectangle.FromLTRB(interior.Left, arribaAviso, interior.Right, Math.Min(y, interior.Bottom));
             }
             else
             {
@@ -769,13 +896,15 @@ namespace DigBit
         }
 
         /// <summary>
-        /// La letra de "Pidele el codigo..." en el sitio del codigo: la mayor de
-        /// las de la tarjeta (24, 16 y 13 pt, en negritas) con la que cabe en ese
-        /// alto; si ni la menor cabe, la menor.
+        /// La letra de "Pidele el codigo..." en el sitio del codigo: la de la
+        /// materia (16 pt en negritas), la misma en todos los estados; antes iba
+        /// de 13 a 24 pt segun el sitio y, cuando la clase empezaba pronto, ocupaba
+        /// tres renglones gigantes y pesaba mas que la clase. Solo si no cabe en
+        /// ese alto, la del titulo (13 pt).
         /// </summary>
         private DrawingFont LetraDelAviso(Graphics g, int ancho, int alto)
         {
-            foreach (DrawingFont letra in new[] { fuenteSinCodigo, fuenteMateria, fuenteTitulo })
+            foreach (DrawingFont letra in new[] { fuenteMateria, fuenteTitulo })
             {
                 if (AltoDe(g, CodigosSoloResponsables.PideElCodigo, letra, ancho) <= alto)
                 {
@@ -984,6 +1113,12 @@ namespace DigBit
             claseReportar = conReportar ? claseEnCurso : null;
             int reserva = conReportar ? btnReportar.Width + 10 : 0;
 
+            // Si ya envio un reporte de esa clase, debajo del boton y en verde, a que
+            // hora (la confirmacion se queda mientras dura la clase, no 10 s abajo).
+            string reporte = conReportar && ultimoReporte != null && ultimoReporte.EsDe(claseEnCurso, panorama.AhoraServidor)
+                ? "Reporte enviado a las " + ultimoReporte.Hora.ToString("HH:mm", CultureInfo.InvariantCulture) : null;
+            Size medidaReporte = reporte == null ? Size.Empty : TextRenderer.MeasureText(g, reporte, fuenteFaltan, Size.Empty, SinMargen);
+
             // Cuanto falta va junto a la pastilla; si ahi no cabe, en su linea debajo.
             bool faltaAparte = falta != null && anchoPastillas + 10 + medidaFalta.Width > ancho - reserva;
 
@@ -994,7 +1129,7 @@ namespace DigBit
                 falta = null;
                 faltaAparte = false;
             }
-            int altoArriba = altoPastilla + (faltaAparte ? 4 + medidaFalta.Height : 0);
+            int altoArriba = altoPastilla + (faltaAparte ? 4 + medidaFalta.Height : 0) + (reporte != null ? 4 + medidaReporte.Height : 0);
             int altoAviso = aviso == null ? 0 : TextRenderer.MeasureText(g, aviso, fuenteTexto, new Size(ancho, int.MaxValue), TextFormatFlags.WordBreak | SinMargen).Height;
 
             // El circulo de la clase (db/19; sin el, todo como siempre): de 48 px a
@@ -1074,6 +1209,14 @@ namespace DigBit
                 // que se ve queda en el borde de dentro de la ficha.
                 zonaReportar = new Rectangle(ficha.Right - Dentro + 3 - btnReportar.Width, yy + (altoPastilla - btnReportar.Height) / 2,
                     btnReportar.Width, btnReportar.Height);
+            }
+
+            if (reporte != null)
+            {
+                // Alineado a la derecha, bajo el boton (y bajo "empieza en..." si bajo a su linea).
+                int yReporte = yy + altoPastilla + (faltaAparte ? 4 + medidaFalta.Height : 0) + 4;
+                TextRenderer.DrawText(g, reporte, fuenteFaltan,
+                    new Rectangle(x + ancho - medidaReporte.Width - 1, yReporte, medidaReporte.Width + 2, medidaReporte.Height), VerdeReporte, Linea);
             }
 
             yy += altoArriba;
@@ -1475,7 +1618,7 @@ namespace DigBit
         /// </summary>
         private static string AyudaDeLaListaDe(bool puedeDar, int dadasHoy)
         {
-            return (puedeDar ? "Pulsa para ver en Asistencia quién falta y darle la asistencia a quien no pudo registrar." : AyudaDeLaLista)
+            return (puedeDar ? "Pulsa para ver en la lista de asistencia quién falta y darle la asistencia a quien no pudo registrar." : AyudaDeLaLista)
                 + (dadasHoy > 0 ? "\nIncluye " + (dadasHoy == 1 ? "1 asistencia" : dadasHoy + " asistencias") + " que diste sin bitácora." : "");
         }
 
@@ -1496,16 +1639,48 @@ namespace DigBit
             }
         }
 
+        /// <summary>El raton sobre "Pidele el codigo..." (codigos ocultos): su ayuda dice quien si los ve.</summary>
+        private void PonerEncimaAviso(bool encima)
+        {
+            if (encima == encimaAviso)
+            {
+                return;
+            }
+
+            encimaAviso = encima;
+            if (encima)
+            {
+                ayudaLista.SetToolTip(this, AyudaDelAviso);
+            }
+            else if (!encimaLista)
+            {
+                ayudaLista.SetToolTip(this, null);
+            }
+        }
+
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
-            PonerEncimaLista(!zonaLista.IsEmpty && zonaLista.Contains(e.Location));
+            // Primero lo que se deja (su ayuda se quita) y despues lo que se toca.
+            bool sobreLista = !zonaLista.IsEmpty && zonaLista.Contains(e.Location);
+            bool sobreAviso = !zonaAviso.IsEmpty && zonaAviso.Contains(e.Location);
+            if (sobreLista)
+            {
+                PonerEncimaAviso(false);
+                PonerEncimaLista(true);
+            }
+            else
+            {
+                PonerEncimaLista(false);
+                PonerEncimaAviso(sobreAviso);
+            }
         }
 
         protected override void OnMouseLeave(EventArgs e)
         {
             base.OnMouseLeave(e);
             PonerEncimaLista(false);
+            PonerEncimaAviso(false);
         }
 
         /// <summary>La cifra de la lista ("8 aun no"): la Asistencia de su clase, como la opcion de debajo.</summary>
@@ -1874,7 +2049,10 @@ namespace DigBit
     /// hubo, rojo si nadie registro, gris si se cancelo; las que aun no
     /// empiezan, claras. Cada hora mide al menos lo que una clase necesita para
     /// leerse: si asi no caben todas, las horas se desplazan (barra y rueda del
-    /// raton) y la vista empieza en la hora de ahora. La que esta en curso late
+    /// raton) y la vista empieza en la hora de ahora; lo que queda fuera de la
+    /// vista lo dice una flecha en el borde de su columna ("▲ 1 clase", roja si
+    /// es una sin bitacoras), que al pulsarla la trae. Con sitio (1920), las
+    /// letras son un punto y medio mas grandes. La que esta en curso late
     /// en verde (Resplandor, como en el panel del administrador) y una linea roja
     /// marca la hora en la columna de hoy. Un clic en una que ya empezo o paso
     /// abre quien registro (BitacoraSesion). Con db/19 cada bloque lleva un lomo
@@ -1916,6 +2094,17 @@ namespace DigBit
         private readonly DrawingFont fuenteMateria = new DrawingFont("Century Gothic", 9F, FontStyle.Bold);
         private readonly DrawingFont fuenteDetalle = new DrawingFont("Century Gothic", 8.25F);
         private readonly DrawingFont fuenteEtiqueta = new DrawingFont("Century Gothic", 7.75F, FontStyle.Bold);
+        // El juego grande (1920): se lee desde mas lejos. Lo elige Medir (EligeLetraGrande).
+        private readonly DrawingFont fuenteHorasGrande = new DrawingFont("Century Gothic", 9F);
+        private readonly DrawingFont fuenteMateriaGrande = new DrawingFont("Century Gothic", 10.5F, FontStyle.Bold);
+        private readonly DrawingFont fuenteDetalleGrande = new DrawingFont("Century Gothic", 9.5F);
+        private readonly DrawingFont fuenteEtiquetaGrande = new DrawingFont("Century Gothic", 8.5F, FontStyle.Bold);
+        private bool letraGrande;
+        // Las pastillas "▲ 1 clase" / "▼ 2 clases" de lo que quedo fuera de la vista.
+        private readonly DrawingFont fuenteFlecha = new DrawingFont("Century Gothic", 8.25F, FontStyle.Bold);
+        private readonly List<Flecha> flechas = new List<Flecha>();
+        private bool sobreFlecha;
+        private static readonly Color FondoFlecha = Color.FromArgb(85, 95, 85);
         private readonly Timer animacion = new Timer { Interval = Resplandor.IntervaloMs };
         private readonly List<Zona> zonas = new List<Zona>();
         private readonly ToolTip ayuda = new ToolTip { InitialDelay = 300, ReshowDelay = 100, AutoPopDelay = 20000 };
@@ -1996,6 +2185,45 @@ namespace DigBit
             // Su circulo (db/19), o vacio si no lleva (sin la 19 o sin sitio).
             public Rectangle Circulo;
             public AspectoClase Aspecto;
+            // Ya paso y nadie registro (en rojo): la flecha de su columna sale roja si queda fuera de la vista.
+            public bool SinBitacoras;
+        }
+
+        /// <summary>
+        /// Una pastilla "▲ 1 clase" / "▼ 2 clases" en el borde de arriba o de abajo
+        /// de una columna, cuando con la barra quedan clases fuera de la vista;
+        /// roja si alguna es "Sin bitacoras". Al pulsarla, Destino es el
+        /// desplazamiento que lleva esa clase a la vista.
+        /// </summary>
+        private sealed class Flecha
+        {
+            public Rectangle Rect;
+            public bool Arriba;
+            public bool Roja;
+            public string Texto;
+            public string Ayuda;
+            public int Destino;
+        }
+
+        /// <summary>Las letras de las clases y de las horas: las de siempre o, con sitio (EligeLetraGrande), las grandes.</summary>
+        private DrawingFont LetraHoras
+        {
+            get { return letraGrande ? fuenteHorasGrande : fuenteHoras; }
+        }
+
+        private DrawingFont LetraMateria
+        {
+            get { return letraGrande ? fuenteMateriaGrande : fuenteMateria; }
+        }
+
+        private DrawingFont LetraDetalle
+        {
+            get { return letraGrande ? fuenteDetalleGrande : fuenteDetalle; }
+        }
+
+        private DrawingFont LetraEtiqueta
+        {
+            get { return letraGrande ? fuenteEtiquetaGrande : fuenteEtiqueta; }
         }
 
         /// <summary>Quien registro en esa clase ese dia.</summary>
@@ -2099,9 +2327,11 @@ namespace DigBit
 
             // Se desplaza solo si repartir el alto deja las horas por debajo del
             // minimo (comparar el total redondeado sacaba la barra por un pixel).
+            // El minimo es el del juego de letras elegido.
             int horas = geo.Hasta - geo.Desde;
             float repartido = geo.Cuerpo.Height / (float)horas;
-            float minimo = AltoHoraMinimo(g);
+            PonerLetraGrande(EligeLetraGrande(g, geo, repartido));
+            float minimo = AltoHoraMinimo(g, letraGrande);
             bool desplaza = repartido < minimo;
             geo.AltoHora = desplaza ? minimo : repartido;
             geo.Contenido = desplaza ? (int)Math.Ceiling(horas * minimo) : geo.Cuerpo.Height;
@@ -2174,24 +2404,59 @@ namespace DigBit
         }
 
         /// <summary>
+        /// Las letras grandes (horas 9, materia 10.5, detalle 9.5 y etiqueta 8.5)
+        /// si sobra sitio: con columnas de 300 px o mas (a 1920 miden unos 340; a
+        /// 1366, unos 225), o si cada hora mide al menos 1.5 veces el minimo con
+        /// las de siempre (una ventana alta). A 1920 las horas casi no sobran
+        /// (el dia tiene 15 o 16), asi que manda el ancho, pero la letra grande
+        /// nunca saca ella sola la barra: si con las de siempre caben todas las
+        /// horas y con las grandes no (un dia de 15 horas a 1920: 45 px por hora,
+        /// y las grandes piden 47), se quedan las de siempre. Si la barra sale con
+        /// las dos, las grandes: lo que queda fuera lo avisan las flechas.
+        /// </summary>
+        private bool EligeLetraGrande(Graphics g, Geometria geo, float repartido)
+        {
+            float minimoChico = AltoHoraMinimo(g, false);
+            int anchoSinBarra = (geo.Tabla.Width - AnchoHoras) / 3;
+            if (anchoSinBarra >= 300)
+            {
+                return repartido >= AltoHoraMinimo(g, true) || repartido < minimoChico;
+            }
+
+            return repartido >= 1.5f * minimoChico;
+        }
+
+        /// <summary>Cambia el juego de letras; lo medido con el otro (la materia y el detalle de un bloque) se mide otra vez.</summary>
+        private void PonerLetraGrande(bool grande)
+        {
+            if (grande != letraGrande)
+            {
+                letraGrande = grande;
+                altoMateriaBloque = 0;
+                altoDetalleBloque = 0;
+            }
+        }
+
+        /// <summary>
         /// Lo minimo que mide una hora para que cada clase se lea entera: una de
         /// una hora, con la materia y una linea mas; una de dos, con la materia y
         /// tres (grupo, laboratorio y horario). Cuenta los margenes del bloque (2
-        /// por arriba y por abajo, y 3 dentro).
+        /// por arriba y por abajo, y 3 dentro). Con ese juego de letras (grande o el de
+        /// siempre), sin cambiar el de ahora: EligeLetraGrande compara los dos.
         /// </summary>
-        private float AltoHoraMinimo(Graphics g)
+        private float AltoHoraMinimo(Graphics g, bool grande)
         {
             const int Margenes = 4 + 6;
-            int primera = PrimeraLinea(g);
-            int detalle = TextRenderer.MeasureText(g, "Ág", fuenteDetalle).Height;
+            int primera = PrimeraLinea(g, grande);
+            int detalle = TextRenderer.MeasureText(g, "Ág", grande ? fuenteDetalleGrande : fuenteDetalle).Height;
             return Math.Max(primera + detalle + Margenes, (primera + 3 * detalle + Margenes) / 2f);
         }
 
         /// <summary>El alto de la primera linea de un bloque: la materia, o la pastilla si es mas alta.</summary>
-        private int PrimeraLinea(Graphics g)
+        private int PrimeraLinea(Graphics g, bool grande)
         {
-            int pastilla = TextRenderer.MeasureText(g, "Ág", fuenteEtiqueta, Size.Empty, TextFormatFlags.NoPadding).Height + 3;
-            return Math.Max(TextRenderer.MeasureText(g, "Ág", fuenteMateria).Height, pastilla) + 1;
+            int pastilla = TextRenderer.MeasureText(g, "Ág", grande ? fuenteEtiquetaGrande : fuenteEtiqueta, Size.Empty, TextFormatFlags.NoPadding).Height + 3;
+            return Math.Max(TextRenderer.MeasureText(g, "Ág", grande ? fuenteMateriaGrande : fuenteMateria).Height, pastilla) + 1;
         }
 
         /// <summary>
@@ -2366,7 +2631,7 @@ namespace DigBit
                 Rectangle caja = new Rectangle(Resplandor.Margen + 1, Resplandor.Margen + 1,
                     Width - 2 * Resplandor.Margen - 3, Height - 2 * Resplandor.Margen - 3);
                 Marco(g, caja);
-                TextRenderer.DrawText(g, "Cargando tus clases...", fuenteDetalle, Rectangle.Inflate(caja, -Relleno, -14), TextoApagado,
+                TextRenderer.DrawText(g, "Cargando tus clases...", LetraDetalle, Rectangle.Inflate(caja, -Relleno, -14), TextoApagado,
                     TextFormatFlags.Left | TextFormatFlags.Top);
                 return;
             }
@@ -2417,7 +2682,7 @@ namespace DigBit
                     {
                         // "07:00-08:00", como en Horarios.
                         TextRenderer.DrawText(g, HorariosDatos.Hora(TimeSpan.FromHours(geo.Desde + h)) + "-" + HorariosDatos.Hora(TimeSpan.FromHours(geo.Desde + h + 1)),
-                            fuenteHoras, new Rectangle(tabla.Left, yh, AnchoHoras, y(TimeSpan.FromHours(geo.Desde + h + 1)) - yh), TextoSecundario,
+                            LetraHoras, new Rectangle(tabla.Left, yh, AnchoHoras, y(TimeSpan.FromHours(geo.Desde + h + 1)) - yh), TextoSecundario,
                             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
                     }
                 }
@@ -2488,17 +2753,23 @@ namespace DigBit
                 }
             }
 
+            // Con la barra, lo que quedo fuera de la vista en cada columna: las flechas
+            // (se pintan al final, encima de todo).
+            CalcularFlechas(g, geo);
+
             // Lo que esta bajo el raton despues de recargar o desplazar: su cursor y su ayuda.
             bool circuloBajoRaton = false;
-            int bajoRaton = raton.HasValue ? ZonaEn(raton.Value, out circuloBajoRaton) : -1;
-            if (bajoRaton != encima || circuloBajoRaton != encimaCirculo)
+            Flecha flechaBajoRaton = raton.HasValue ? FlechaEn(raton.Value) : null;
+            int bajoRaton = raton.HasValue && flechaBajoRaton == null ? ZonaEn(raton.Value, out circuloBajoRaton) : -1;
+            if (bajoRaton != encima || circuloBajoRaton != encimaCirculo || (flechaBajoRaton != null) != sobreFlecha)
             {
                 encima = bajoRaton;
                 encimaCirculo = circuloBajoRaton;
-                Cursor = circuloBajoRaton || (bajoRaton >= 0 && zonas[bajoRaton].Abre) ? Cursors.Hand : Cursors.Default;
+                sobreFlecha = flechaBajoRaton != null;
+                Cursor = sobreFlecha || circuloBajoRaton || (bajoRaton >= 0 && zonas[bajoRaton].Abre) ? Cursors.Hand : Cursors.Default;
             }
 
-            string ayudaBajoRaton = AyudaDe(bajoRaton, circuloBajoRaton);
+            string ayudaBajoRaton = flechaBajoRaton != null ? flechaBajoRaton.Ayuda : AyudaDe(bajoRaton, circuloBajoRaton);
             if (ayudaBajoRaton != textoAyuda)
             {
                 textoAyuda = ayudaBajoRaton;
@@ -2546,8 +2817,19 @@ namespace DigBit
                     Cabecera(i, fechas[i], geo.Dia, clases[i].Count == 0, out arribaCabecera, out debajoCabecera);
                     TextRenderer.DrawText(g, arribaCabecera, fuenteDia, new Rectangle(cabecera.Left, cabecera.Top + 3, cabecera.Width, cabecera.Height / 2),
                         Verde, TextFormatFlags.HorizontalCenter | TextFormatFlags.Bottom | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
-                    TextRenderer.DrawText(g, debajoCabecera, fuenteFecha,
-                        new Rectangle(cabecera.Left, cabecera.Top + cabecera.Height / 2 + 1, cabecera.Width, cabecera.Height / 2),
+                    // Con la flecha de arriba a su derecha, la fecha se corre lo justo para no tocarla.
+                    Rectangle segunda = new Rectangle(cabecera.Left, cabecera.Top + cabecera.Height / 2 + 1, cabecera.Width, cabecera.Height / 2);
+                    Flecha deArriba = flechas.FirstOrDefault(f => f.Arriba && f.Rect.Left >= cabecera.Left && f.Rect.Right <= cabecera.Right);
+                    if (deArriba != null)
+                    {
+                        int anchoSegunda = TextRenderer.MeasureText(g, debajoCabecera, fuenteFecha).Width;
+                        if (cabecera.Left + (cabecera.Width + anchoSegunda) / 2 + 4 > deArriba.Rect.Left)
+                        {
+                            segunda = Rectangle.FromLTRB(cabecera.Left, segunda.Top, deArriba.Rect.Left - 4, segunda.Bottom);
+                        }
+                    }
+
+                    TextRenderer.DrawText(g, debajoCabecera, fuenteFecha, segunda,
                         TextoSecundario, TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
                     g.DrawLine(rejilla, cabecera.Left, cabecera.Top, cabecera.Left, cabecera.Bottom);
                 }
@@ -2564,10 +2846,139 @@ namespace DigBit
                 }
             }
 
+            // El pie llega hasta la primera flecha de abajo (si hay), con "..." si no cabe.
+            int finPie = flechas.Where(f => !f.Arriba).Select(f => f.Rect.Left - 8).DefaultIfEmpty(geo.Interior.Right).Min();
             TextRenderer.DrawText(g, "Pulsa una clase que ya empezó o terminó para ver quién registró y qué reportaron.", fuenteFecha,
-                new Rectangle(geo.Interior.Left, geo.Interior.Bottom - geo.AltoPie + 6, geo.Interior.Width, geo.AltoPie), Color.FromArgb(110, 110, 110),
+                new Rectangle(geo.Interior.Left, geo.Interior.Bottom - geo.AltoPie + 6, Math.Max(10, finPie - geo.Interior.Left), geo.AltoPie), Color.FromArgb(110, 110, 110),
                 TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
             Marco(g, geo.Caja);
+            PintarFlechas(g);
+        }
+
+        /// <summary>
+        /// Con la barra visible, por columna: las clases que quedan por encima de lo
+        /// que se ve o por debajo de geo.Cuerpo.Bottom (con menos de 6 px a la
+        /// vista). Por cada lado con alguna, una pastilla en ese borde de la columna,
+        /// roja si alguna es "Sin bitacoras" (por la tarde, la clase de ayer sin
+        /// bitacoras quedaba arriba sin ninguna senal). Su destino lleva a la vista
+        /// la roja mas cercana o, sin rojas, la mas cercana. Fuera de las horas, para
+        /// no tapar ninguna clase: la de arriba en la mitad de abajo de la cabecera
+        /// del dia, a la derecha; la de abajo en el pie, bajo su columna. Con columnas
+        /// angostas (1366), solo el numero ("▲ 3"); lo demas, en su ayuda.
+        /// </summary>
+        private void CalcularFlechas(Graphics g, Geometria geo)
+        {
+            flechas.Clear();
+            if (geo.AnchoBarra == 0 || !barra.Visible)
+            {
+                return;
+            }
+
+            const int Visible = 6;
+            int maximo = Math.Max(0, geo.Contenido - geo.Cuerpo.Height);
+            int arriba = geo.Cuerpo.Top - desplazamiento;
+            for (int i = 0; i < 3; i++)
+            {
+                DateTime fecha = geo.Fechas[i];
+                List<Zona> deLaColumna = zonas.Where(z => z.Fecha == fecha).ToList();
+                List<Zona> encimaDeLaVista = deLaColumna.Where(z => z.Rect.Bottom <= geo.Cuerpo.Top + Visible).ToList();
+                List<Zona> debajoDeLaVista = deLaColumna.Where(z => z.Rect.Top >= geo.Cuerpo.Bottom - Visible).ToList();
+                int izquierda = geo.Tabla.Left + AnchoHoras + i * geo.AnchoColumna;
+                foreach (bool deArriba in new[] { true, false })
+                {
+                    List<Zona> ocultas = deArriba ? encimaDeLaVista : debajoDeLaVista;
+                    if (ocultas.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    bool roja = ocultas.Any(z => z.SinBitacoras);
+                    // La mas cercana a lo que se ve (de las rojas, si hay).
+                    IEnumerable<Zona> candidatas = roja ? ocultas.Where(z => z.SinBitacoras) : ocultas;
+                    Zona destino = deArriba ? candidatas.OrderByDescending(z => z.Rect.Top).First() : candidatas.OrderBy(z => z.Rect.Top).First();
+                    int arribaEnContenido = destino.Rect.Top - arriba;
+                    int abajoEnContenido = destino.Rect.Bottom - arriba;
+                    int nuevo = deArriba ? arribaEnContenido - 8 : Math.Min(arribaEnContenido - 8, abajoEnContenido - geo.Cuerpo.Height + 8);
+                    nuevo = Math.Max(0, Math.Min(maximo, nuevo));
+
+                    string texto = geo.AnchoColumna < 260 ? ocultas.Count.ToString(CultureInfo.InvariantCulture)
+                        : ocultas.Count == 1 ? "1 clase" : ocultas.Count + " clases";
+                    Size medida = TextRenderer.MeasureText(g, texto, fuenteFlecha, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+                    int ancho = 8 + TrianguloFlecha + 5 + medida.Width + 9;
+                    int alto = medida.Height + 5;
+                    int x = izquierda + geo.AnchoColumna - 5 - ancho;
+                    int y = deArriba ? geo.Tabla.Top + AltoCabecera / 2 + (AltoCabecera / 2 - alto) / 2 : geo.Tabla.Bottom + 3;
+                    string cuales = string.Join(", ", ocultas.OrderBy(z => z.Clase.Inicio)
+                        .Select(z => z.Clase.Materia + " (" + HorariosDatos.Hora(z.Clase.Inicio) + (z.SinBitacoras ? ", sin bitácoras" : "") + ")"));
+                    flechas.Add(new Flecha
+                    {
+                        Rect = new Rectangle(x, y, ancho, alto),
+                        Arriba = deArriba,
+                        Roja = roja,
+                        Texto = texto,
+                        Destino = nuevo,
+                        Ayuda = (ocultas.Count == 1 ? "Una clase más " : ocultas.Count + " clases más ") + (deArriba ? "arriba" : "abajo") + ": " + cuales
+                            + ".\nPulsa para " + (ocultas.Count == 1 ? "verla." : roja ? "ver la que no tiene bitácoras." : "ver la más cercana.")
+                    });
+                }
+            }
+        }
+
+        private const int TrianguloFlecha = 9;
+
+        /// <summary>Las flechas, encima de todo: en la cabecera de los dias y en el pie.</summary>
+        private void PintarFlechas(Graphics g)
+        {
+            foreach (Flecha f in flechas)
+            {
+                SmoothingMode antes = g.SmoothingMode;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                Color fondo = f.Roja ? BordeSinBitacoras : FondoFlecha;
+                using (GraphicsPath forma = PanelLaboratoriosAhora.Redondeado(f.Rect, f.Rect.Height))
+                using (SolidBrush relleno = new SolidBrush(fondo))
+                using (Pen borde = new Pen(Color.White, 1.5f))
+                {
+                    g.FillPath(relleno, forma);
+                    g.DrawPath(borde, forma);
+                }
+
+                // El triangulo pintado (no un caracter: no depende de la fuente).
+                const int Triangulo = TrianguloFlecha;
+                float cx = f.Rect.Left + 8 + Triangulo / 2f;
+                float cy = f.Rect.Top + f.Rect.Height / 2f;
+                PointF[] puntas = f.Arriba
+                    ? new[] { new PointF(cx - Triangulo / 2f, cy + 3), new PointF(cx + Triangulo / 2f, cy + 3), new PointF(cx, cy - 4) }
+                    : new[] { new PointF(cx - Triangulo / 2f, cy - 3), new PointF(cx + Triangulo / 2f, cy - 3), new PointF(cx, cy + 4) };
+                using (SolidBrush blanco = new SolidBrush(Color.White))
+                {
+                    g.FillPolygon(blanco, puntas);
+                }
+
+                g.SmoothingMode = antes;
+                Rectangle texto = Rectangle.FromLTRB(f.Rect.Left + 8 + Triangulo + 5, f.Rect.Top, f.Rect.Right - 4, f.Rect.Bottom);
+                TextRenderer.DrawText(g, f.Texto, fuenteFlecha, texto, Color.White,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+            }
+        }
+
+        /// <summary>La flecha bajo el punto, o null.</summary>
+        private Flecha FlechaEn(Point punto)
+        {
+            return flechas.FirstOrDefault(f => f.Rect.Contains(punto));
+        }
+
+        /// <summary>Pulsar una flecha: su clase a la vista, como si se desplazara a mano (vuelve sola a la hora de ahora).</summary>
+        private void IrALaFlecha(Flecha f)
+        {
+            if (!barra.Visible)
+            {
+                return;
+            }
+
+            int maximo = Math.Max(0, barra.Maximum - barra.LargeChange + 1);
+            int nuevo = Math.Max(0, Math.Min(maximo, f.Destino));
+            barra.Value = nuevo;
+            Desplazar(nuevo);
         }
 
         private static void Marco(Graphics g, Rectangle caja)
@@ -2595,7 +3006,7 @@ namespace DigBit
             Rectangle t = aspecto == null ? Rectangle.Inflate(r, -7, -3) : Rectangle.FromLTRB(r.Left + 9, r.Top + 3, r.Right - 7, r.Bottom - 3);
             Rectangle circulo = aspecto == null ? Rectangle.Empty : CirculoDelBloque(g, t);
             int indice = zonas.Count;
-            zonas.Add(new Zona { Rect = r, Clase = s, Fecha = fecha, Abre = abre, Circulo = circulo, Aspecto = aspecto });
+            zonas.Add(new Zona { Rect = r, Clase = s, Fecha = fecha, Abre = abre, Circulo = circulo, Aspecto = aspecto, SinBitacoras = estado == Estado.SinBitacoras });
 
             Color fondo;
             Color borde;
@@ -2710,13 +3121,13 @@ namespace DigBit
             Color texto = estado == Estado.Cancelada ? TextoApagado : TextoPrincipal;
             Color secundario = estado == Estado.Cancelada ? TextoApagado : TextoSecundario;
             const TextFormatFlags UnaLinea = TextFormatFlags.Left | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix;
-            int altoMateria = TextRenderer.MeasureText(g, "Ág", fuenteMateria).Height;
-            int altoDetalle = TextRenderer.MeasureText(g, "Ág", fuenteDetalle).Height;
-            int altoPastilla = TextRenderer.MeasureText(g, "Ág", fuenteEtiqueta, Size.Empty, TextFormatFlags.NoPadding).Height + 3;
+            int altoMateria = TextRenderer.MeasureText(g, "Ág", LetraMateria).Height;
+            int altoDetalle = TextRenderer.MeasureText(g, "Ág", LetraDetalle).Height;
+            int altoPastilla = TextRenderer.MeasureText(g, "Ág", LetraEtiqueta, Size.Empty, TextFormatFlags.NoPadding).Height + 3;
             if (t.Height < altoMateria)
             {
                 // Una sesion de unos minutos: solo la materia (la pastilla no cabe).
-                TextRenderer.DrawText(g, nombre, fuenteMateria, new Rectangle(t.Left, r.Top, t.Width, r.Height), texto, UnaLinea | TextFormatFlags.VerticalCenter);
+                TextRenderer.DrawText(g, nombre, LetraMateria, new Rectangle(t.Left, r.Top, t.Width, r.Height), texto, UnaLinea | TextFormatFlags.VerticalCenter);
                 return;
             }
 
@@ -2731,10 +3142,10 @@ namespace DigBit
                 Rectangle tb = Junto(t, circulo, t.Top);
                 Rectangle arriba = Pastilla(g, etiqueta, etiquetaCorta, colorPastilla, tb.Right, tb.Top + 1, tb.Width / 2);
                 int anchoMateria = arriba.IsEmpty ? tb.Width : arriba.Left - 6 - tb.Left;
-                TextRenderer.DrawText(g, nombre, fuenteMateria, new Rectangle(tb.Left, tb.Top, anchoMateria, altoMateria), texto, UnaLinea | TextFormatFlags.Top);
+                TextRenderer.DrawText(g, nombre, LetraMateria, new Rectangle(tb.Left, tb.Top, anchoMateria, altoMateria), texto, UnaLinea | TextFormatFlags.Top);
                 if (caben == 1)
                 {
-                    Linea(g, laboratorio.Length > 0 ? grupo + ", " + laboratorio : grupo, fuenteDetalle, secundario, tb,
+                    Linea(g, laboratorio.Length > 0 ? grupo + ", " + laboratorio : grupo, LetraDetalle, secundario, tb,
                         tb.Top + Math.Max(altoMateria, arriba.IsEmpty ? 0 : arriba.Height) + 1);
                 }
 
@@ -2747,16 +3158,16 @@ namespace DigBit
             int altoFila = Math.Max(altoDetalle, altoPastilla);
             int detalles = (laboratorio.Length > 0 ? 2 : 1) * altoDetalle + altoFila;
             Rectangle tm = Junto(t, circulo, t.Top);
-            bool dosLineas = TextRenderer.MeasureText(g, nombre, fuenteMateria, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix).Width > tm.Width
+            bool dosLineas = TextRenderer.MeasureText(g, nombre, LetraMateria, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix).Width > tm.Width
                 && t.Height + 2 >= 2 * altoMateria + 1 + detalles;
             int altoTitulo = dosLineas ? 2 * altoMateria : altoMateria;
-            TextRenderer.DrawText(g, nombre, fuenteMateria, new Rectangle(tm.Left, t.Top, tm.Width, altoTitulo), texto, dosLineas
+            TextRenderer.DrawText(g, nombre, LetraMateria, new Rectangle(tm.Left, t.Top, tm.Width, altoTitulo), texto, dosLineas
                 ? TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix
                 : UnaLinea | TextFormatFlags.Top);
-            int yTexto = Linea(g, grupo, fuenteDetalle, secundario, Junto(t, circulo, t.Top + altoTitulo + 1), t.Top + altoTitulo + 1);
+            int yTexto = Linea(g, grupo, LetraDetalle, secundario, Junto(t, circulo, t.Top + altoTitulo + 1), t.Top + altoTitulo + 1);
             if (laboratorio.Length > 0)
             {
-                yTexto = Linea(g, laboratorio, fuenteDetalle, secundario, Junto(t, circulo, yTexto), yTexto);
+                yTexto = Linea(g, laboratorio, LetraDetalle, secundario, Junto(t, circulo, yTexto), yTexto);
             }
 
             // El horario con la pastilla a su derecha: la pastilla puede tomar hasta
@@ -2767,10 +3178,10 @@ namespace DigBit
             }
 
             Rectangle th = Junto(t, circulo, yTexto);
-            int anchoHorario = TextRenderer.MeasureText(g, horario, fuenteDetalle, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix).Width;
+            int anchoHorario = TextRenderer.MeasureText(g, horario, LetraDetalle, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix).Width;
             Rectangle pastilla = Pastilla(g, etiqueta, etiquetaCorta, colorPastilla, th.Right, yTexto + (altoFila - altoPastilla) / 2,
                 Math.Max(th.Width - anchoHorario - 8, th.Width / 2));
-            TextRenderer.DrawText(g, horario, fuenteDetalle,
+            TextRenderer.DrawText(g, horario, LetraDetalle,
                 new Rectangle(th.Left, yTexto + (altoFila - altoDetalle) / 2, Math.Max(10, (pastilla.IsEmpty ? th.Right : pastilla.Left - 6) - th.Left), altoDetalle),
                 secundario, UnaLinea | TextFormatFlags.Top);
             yTexto += altoFila;
@@ -2779,7 +3190,7 @@ namespace DigBit
             string comoVa = ComoVa(s, estado, fecha, hora, out colorComoVa);
             if (comoVa != null)
             {
-                Linea(g, comoVa, fuenteDetalle, colorComoVa, Junto(t, circulo, yTexto), yTexto);
+                Linea(g, comoVa, LetraDetalle, colorComoVa, Junto(t, circulo, yTexto), yTexto);
             }
         }
 
@@ -2794,8 +3205,8 @@ namespace DigBit
         {
             if (altoMateriaBloque == 0)
             {
-                altoMateriaBloque = TextRenderer.MeasureText(g, "Ág", fuenteMateria).Height;
-                altoDetalleBloque = Math.Max(1, TextRenderer.MeasureText(g, "Ág", fuenteDetalle).Height);
+                altoMateriaBloque = TextRenderer.MeasureText(g, "Ág", LetraMateria).Height;
+                altoDetalleBloque = Math.Max(1, TextRenderer.MeasureText(g, "Ág", LetraDetalle).Height);
             }
 
             if (t.Width < 120 || t.Height < altoMateriaBloque)
@@ -2833,7 +3244,7 @@ namespace DigBit
                     continue;
                 }
 
-                Size medida = TextRenderer.MeasureText(g, intento, fuenteEtiqueta, Size.Empty, TextFormatFlags.NoPadding);
+                Size medida = TextRenderer.MeasureText(g, intento, LetraEtiqueta, Size.Empty, TextFormatFlags.NoPadding);
                 if (medida.Width + 10 > maximo)
                 {
                     continue;
@@ -2846,7 +3257,7 @@ namespace DigBit
                     g.FillPath(pincel, forma);
                 }
 
-                TextRenderer.DrawText(g, intento, fuenteEtiqueta, pastilla, Color.White,
+                TextRenderer.DrawText(g, intento, LetraEtiqueta, pastilla, Color.White,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
                 return pastilla;
             }
@@ -3013,19 +3424,22 @@ namespace DigBit
         {
             base.OnMouseMove(e);
             ratonDentro = true;
-            bool enCirculo;
-            int nueva = ZonaEn(e.Location, out enCirculo);
-            if (nueva != encima || enCirculo != encimaCirculo)
+            // Una flecha va encima de las clases: si el raton esta en ella, manda ella.
+            bool enCirculo = false;
+            Flecha flecha = FlechaEn(e.Location);
+            int nueva = flecha == null ? ZonaEn(e.Location, out enCirculo) : -1;
+            if (nueva != encima || enCirculo != encimaCirculo || (flecha != null) != sobreFlecha)
             {
                 // El circulo se pulsa aunque el bloque no abra (los de manana tambien se personalizan).
                 encima = nueva;
                 encimaCirculo = enCirculo;
-                Cursor = enCirculo || (nueva >= 0 && zonas[nueva].Abre) ? Cursors.Hand : Cursors.Default;
+                sobreFlecha = flecha != null;
+                Cursor = sobreFlecha || enCirculo || (nueva >= 0 && zonas[nueva].Abre) ? Cursors.Hand : Cursors.Default;
                 Invalidate();
             }
 
             // Fuera de las clases, sin ayuda (la de la ultima seguiria saliendo en los huecos).
-            string texto = AyudaDe(nueva, enCirculo);
+            string texto = flecha != null ? flecha.Ayuda : AyudaDe(nueva, enCirculo);
             if (texto != textoAyuda)
             {
                 textoAyuda = texto;
@@ -3037,10 +3451,11 @@ namespace DigBit
         {
             base.OnMouseLeave(e);
             ratonDentro = false;
-            if (encima != -1 || encimaCirculo)
+            if (encima != -1 || encimaCirculo || sobreFlecha)
             {
                 encima = -1;
                 encimaCirculo = false;
+                sobreFlecha = false;
                 Cursor = Cursors.Default;
                 Invalidate();
             }
@@ -3052,6 +3467,17 @@ namespace DigBit
         protected override void OnMouseClick(MouseEventArgs e)
         {
             base.OnMouseClick(e);
+            Flecha flecha = FlechaEn(e.Location);
+            if (flecha != null)
+            {
+                if (e.Button == MouseButtons.Left)
+                {
+                    IrALaFlecha(flecha);
+                }
+
+                return;
+            }
+
             bool enCirculo;
             int indice = ZonaEn(e.Location, out enCirculo);
             // El circulo, solo con el boton izquierdo: "Personalizar tu clase" de la
@@ -3087,6 +3513,11 @@ namespace DigBit
                 fuenteMateria.Dispose();
                 fuenteDetalle.Dispose();
                 fuenteEtiqueta.Dispose();
+                fuenteHorasGrande.Dispose();
+                fuenteMateriaGrande.Dispose();
+                fuenteDetalleGrande.Dispose();
+                fuenteEtiquetaGrande.Dispose();
+                fuenteFlecha.Dispose();
             }
 
             base.Dispose(disposing);

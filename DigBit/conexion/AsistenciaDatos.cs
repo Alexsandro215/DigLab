@@ -93,6 +93,11 @@ namespace DigBit.conexion
         public string Matricula = "";
         /// <summary>"Apellidos Nombre" del alumno.</summary>
         public string Nombre = "";
+        /// <summary>
+        /// Solo LectorDeDadas: "Apellidos Nombre", como la lista oficial, para las
+        /// pantallas; Nombre pasa alli a "Nombre Apellidos", como el PDF de bitacoras.
+        /// </summary>
+        public string NombreLista = "";
 
         // Solo AsistenciasDadas.DelEstudiante: los de su sesion.
         public string Laboratorio = "";
@@ -159,7 +164,7 @@ namespace DigBit.conexion
         public List<AlumnoDeAsistencia> Alumnos = new List<AlumnoDeAsistencia>();
     }
 
-    /// <summary>Una clase leida: la de AsistenciaDatos.DeLaClase, o una de E1 en AsistenciaDatos.LeerEnLote.</summary>
+    /// <summary>Una clase leida: la de AsistenciaDatos.DeLaClase, o una de E1 en AsistenciaDatos.LeerClasesEnLote.</summary>
     internal sealed class ClaseLeida
     {
         public int Id;
@@ -170,12 +175,12 @@ namespace DigBit.conexion
         public DateTime VigenteHasta;
         public string Materia = "";
         public string Grupo = "";
-        /// <summary>"Nombre Apellidos" del docente (solo LeerEnLote; vacio en DeLaClase).</summary>
+        /// <summary>"Nombre Apellidos" del docente (solo el lote; vacio en DeLaClase).</summary>
         public string Docente = "";
     }
 
     /// <summary>
-    /// Una sesion (codigos_accesos): en LeerEnLote todas las del rango (E2), tambien
+    /// Una sesion (codigos_accesos): en el lote (LeerElRestoEnLote) todas las del rango (E2), tambien
     /// las de uso libre y las de antes de los horarios; en DeLaClase, las del
     /// profesor con sus dos horas.
     /// </summary>
@@ -238,7 +243,7 @@ namespace DigBit.conexion
         }
     }
 
-    /// <summary>Una bitacora: una cuenta que registro en una sesion (E6 en LeerEnLote).</summary>
+    /// <summary>Una bitacora: una cuenta que registro en una sesion (E6 en LeerElRestoEnLote).</summary>
     internal sealed class BitacoraLeida
     {
         // Las banderas de E6 (se suman).
@@ -258,7 +263,7 @@ namespace DigBit.conexion
         public DateTime? RegistradoEn;
         /// <summary>Las Bandera* que tiene. En DeLaClase solo BanderaRetirada.</summary>
         public int Banderas;
-        /// <summary>El equipo tal como se escribio, sin espacios a los lados ("" si no hay). Solo en LeerEnLote.</summary>
+        /// <summary>El equipo tal como se escribio, sin espacios a los lados ("" si no hay). Solo en el lote.</summary>
         public string Equipo = "";
 
         /// <summary>El profesor le quito la asistencia (db/17): sigue siendo bitacora, no asistencia.</summary>
@@ -275,16 +280,16 @@ namespace DigBit.conexion
         public string Matricula = "";
         /// <summary>"Apellidos Nombre" (CONCAT_WS, como Mis grupos).</summary>
         public string Nombre = "";
-        /// <summary>No esta dado de baja (sin db/08, siempre true). Solo LeerEnLote.</summary>
+        /// <summary>No esta dado de baja (sin db/08, siempre true). Solo el lote.</summary>
         public bool Activo = true;
-        /// <summary>El grupo guardado en su cuenta (la fila de carrera_grupo_semestre con grupo de mayor id), o null. Solo LeerEnLote.</summary>
+        /// <summary>El grupo guardado en su cuenta (la fila de carrera_grupo_semestre con grupo de mayor id), o null. Solo el lote.</summary>
         public int? GrupoId;
         public string Grupo = "";
     }
 
     /// <summary>
     /// Lo leido de la base para contar la asistencia (AsistenciaDatos.Calcular): lo
-    /// de UNA clase (DeLaClase) o lo de TODAS (LeerEnLote, para Estadisticas). Calcular
+    /// de UNA clase (DeLaClase) o lo de TODAS (el lote de Estadisticas: LeerClasesEnLote y LeerElRestoEnLote). Calcular
     /// no consulta nada: toma de aqui lo de cada clase.
     /// </summary>
     internal sealed class LecturaDeAsistencia
@@ -292,7 +297,10 @@ namespace DigBit.conexion
         public DateTime AhoraServidor;
         /// <summary>El reloj de este equipo en el instante en que se leyo AhoraServidor.</summary>
         public DateTime LeidoEnRelojLocal;
-        /// <summary>Lo leido va de DesdeLectura a HastaLectura (en el lote, hasta hoy).</summary>
+        /// <summary>
+        /// Lo leido va de DesdeLectura a HastaLectura: hoy, o el ultimo dia de las clases
+        /// de un periodo que ya termino (HastaLecturaDe).
+        /// </summary>
         public DateTime DesdeLectura;
         public DateTime HastaLectura;
         /// <summary>Esquema.AsistenciaRetirable (db/17).</summary>
@@ -354,7 +362,8 @@ namespace DigBit.conexion
     /// va a otra lista.
     ///
     /// La lectura y el calculo van separados: DeLaClase lee lo de una clase y
-    /// LeerEnLote lo de todas (Estadisticas); las dos cuentan con el mismo
+    /// el lote (LeerClasesEnLote y LeerElRestoEnLote) lo de todas (Estadisticas);
+    /// las dos cuentan con el mismo
     /// Calcular, que no consulta nada.
     /// </summary>
     public class AsistenciaDatos
@@ -378,8 +387,8 @@ namespace DigBit.conexion
         /// <summary>
         /// La asistencia de una clase. Lee lo mismo que antes de que la lectura y el
         /// calculo se separaran (las mismas consultas, en el mismo orden) y lo cuenta
-        /// con Calcular, el mismo calculo que el lote de Estadisticas (LeerEnLote y
-        /// CalcularTodas).
+        /// con Calcular, el mismo calculo que el lote de Estadisticas (LeerClasesEnLote,
+        /// LeerElRestoEnLote y CalcularTodas).
         /// </summary>
         /// <param name="idClase">clases.idclases.</param>
         /// <param name="hoyInicio">Si la clase es hoy (la de la tarjeta): su inicio y su fin. Su columna cuenta mientras dura, aunque aun nadie registre.</param>
@@ -516,7 +525,7 @@ namespace DigBit.conexion
         /// <summary>
         /// La asistencia de una clase con lo ya leido, sin ninguna consulta. Con la
         /// lectura de su DeLaClase da lo mismo que DeLaClase; con la del lote
-        /// (LeerEnLote), lo mismo que daria DeLaClase de esa clase leida en ese
+        /// (LeerClasesEnLote y LeerElRestoEnLote), lo mismo que daria DeLaClase de esa clase leida en ese
         /// momento. Toma de la lectura lo que DeLaClase lee: las sesiones del
         /// profesor en [vigente_desde, min(vigente_hasta, hoy)], sus franjas activas y
         /// sus excepciones de esos dias (para sus bloques sin sesion), las bitacoras
@@ -861,11 +870,24 @@ namespace DigBit.conexion
 
         /// <summary>
         /// La clase es del periodo [desde, hasta]: su vigencia lo toca y, con un ciclo
-        /// ("Este ciclo" o "Ciclo anterior"), ademas empezo en el (R2 de Estadisticas).
+        /// ("Este ciclo" o un ciclo pasado), ademas es del ciclo (R2 de Estadisticas): la
+        /// de un ciclo pasado, si es una de soloEstas (sus clases, EstadisticasDatos.ArmarCiclos);
+        /// sin soloEstas, si empezo en el periodo.
         /// </summary>
-        internal static bool DelPeriodo(ClaseLeida clase, DateTime desde, DateTime hasta, bool esCiclo)
+        /// <param name="soloEstas">Las clases de un ciclo pasado, o null.</param>
+        internal static bool DelPeriodo(ClaseLeida clase, DateTime desde, DateTime hasta, bool esCiclo, ISet<int> soloEstas)
         {
-            return clase.VigenteDesde <= hasta.Date && clase.VigenteHasta >= desde.Date && (!esCiclo || clase.VigenteDesde >= desde.Date);
+            if (clase.VigenteDesde > hasta.Date || clase.VigenteHasta < desde.Date)
+            {
+                return false;
+            }
+
+            if (soloEstas != null)
+            {
+                return soloEstas.Contains(clase.Id);
+            }
+
+            return !esCiclo || clase.VigenteDesde >= desde.Date;
         }
 
         /// <summary>
@@ -873,12 +895,12 @@ namespace DigBit.conexion
         /// de todo su ciclo, como en Mis grupos (R3): el menor entre desde y el primer
         /// dia de las clases del periodo. Nunca despues de desde.
         /// </summary>
-        internal static DateTime DesdeLecturaDe(IEnumerable<ClaseLeida> clases, DateTime desde, DateTime hasta, bool esCiclo)
+        internal static DateTime DesdeLecturaDe(IEnumerable<ClaseLeida> clases, DateTime desde, DateTime hasta, bool esCiclo, ISet<int> soloEstas)
         {
             DateTime resultado = desde.Date;
             foreach (ClaseLeida clase in clases)
             {
-                if (DelPeriodo(clase, desde, hasta, esCiclo) && clase.VigenteDesde < resultado)
+                if (DelPeriodo(clase, desde, hasta, esCiclo, soloEstas) && clase.VigenteDesde < resultado)
                 {
                     resultado = clase.VigenteDesde;
                 }
@@ -888,19 +910,46 @@ namespace DigBit.conexion
         }
 
         /// <summary>
-        /// Lo que hace falta para la asistencia de TODAS las clases a la vez
-        /// (Estadisticas), en una conexion y con pocas consultas en vez de unas diez
-        /// por clase: NOW(), E1 (todas las clases activas que tocan los ultimos 400
-        /// dias, sin filtro de periodo), DesdeLectura (DesdeLecturaDe) y, de
-        /// [DesdeLectura, hoy], E2 (sesiones, tambien las de uso libre), E3 (franjas
-        /// de las clases activas), E4 (excepciones), los modos, E6 (bitacoras con sus
-        /// banderas), E7 (estudiantes con bitacoras o asistencias dadas) y E11 (las
-        /// asistencias dadas, db/22). Solo lee. CalcularTodas lo cuenta.
+        /// Hasta cuando hay que leer: el mayor entre el ultimo dia del periodo (sin pasar de
+        /// hoy) y el ultimo dia de cada clase del periodo (o hoy, si aun no termina), para que
+        /// la lista de cada clase salga entera, como en Mis grupos; con los periodos que llegan
+        /// a hoy, hoy. Nunca antes de min(hasta, hoy).
         /// </summary>
-        /// <param name="desde">Primer dia del periodo elegido.</param>
-        /// <param name="hasta">Ultimo dia del periodo elegido (hoy o antes).</param>
-        /// <param name="esCiclo">"Este ciclo" o "Ciclo anterior": solo son del periodo las clases que empezaron en el.</param>
-        internal static LecturaDeAsistencia LeerEnLote(MySqlConnection conexion, DateTime desde, DateTime hasta, bool esCiclo)
+        internal static DateTime HastaLecturaDe(IEnumerable<ClaseLeida> clases, DateTime desde, DateTime hasta, bool esCiclo, ISet<int> soloEstas, DateTime hoy)
+        {
+            hoy = hoy.Date;
+            DateTime resultado = hasta.Date < hoy ? hasta.Date : hoy;
+            foreach (ClaseLeida clase in clases)
+            {
+                if (!DelPeriodo(clase, desde, hasta, esCiclo, soloEstas))
+                {
+                    continue;
+                }
+
+                DateTime fin = clase.VigenteHasta < hoy ? clase.VigenteHasta : hoy;
+                if (fin > resultado)
+                {
+                    resultado = fin;
+                }
+            }
+
+            return resultado;
+        }
+
+        // ---------------------------------------------------------------------
+        // El lote de Estadisticas, en dos partes: LeerClasesEnLote (lo que no
+        // depende del periodo: el reloj, E1 y E3) y LeerElRestoEnLote (lo de
+        // [DesdeLectura, HastaLectura]). Entre las dos, Estadisticas arma los ciclos
+        // con E1 y E3 y decide que dias leer. CalcularTodas lo cuenta.
+        // ---------------------------------------------------------------------
+
+        /// <summary>
+        /// La primera parte del lote de Estadisticas, la que no depende del periodo:
+        /// NOW(), si estan db/17 y db/22, E1 (todas las clases activas que ya
+        /// empezaron, sin filtro de periodo: los ciclos pasados salen de ellas) y E3
+        /// (las franjas de las clases activas). Solo lee. Lo demas, LeerElRestoEnLote.
+        /// </summary>
+        internal static LecturaDeAsistencia LeerClasesEnLote(MySqlConnection conexion)
         {
             LecturaDeAsistencia lectura = new LecturaDeAsistencia();
             using (MySqlCommand comando = new MySqlCommand("SELECT NOW()", conexion))
@@ -911,7 +960,6 @@ namespace DigBit.conexion
 
             lectura.ConRetiro = Esquema.AsistenciaRetirable(conexion);
             lectura.ConDadas = Esquema.AsistenciaDada(conexion);
-            DateTime hoy = lectura.AhoraServidor.Date;
 
             // E1: el periodo se aplica en memoria.
             using (MySqlCommand comando = new MySqlCommand(@"
@@ -922,7 +970,7 @@ namespace DigBit.conexion
                 INNER JOIN materias m ON m.id_materia = c.materias_id_materia
                 INNER JOIN grupos g   ON g.idgrupos = c.grupos_idgrupos
                 INNER JOIN usuarios u ON u.idusuarios = c.usuarios_idusuarios
-                WHERE c.activa = 1 AND c.vigente_desde <= CURDATE() AND c.vigente_hasta >= CURDATE() - INTERVAL 399 DAY
+                WHERE c.activa = 1 AND c.vigente_desde <= CURDATE()
                 ORDER BY c.usuarios_idusuarios, c.idclases", conexion))
             using (MySqlDataReader reader = comando.ExecuteReader())
             {
@@ -943,8 +991,26 @@ namespace DigBit.conexion
                 }
             }
 
-            lectura.DesdeLectura = DesdeLecturaDe(lectura.Clases, desde, hasta, esCiclo);
-            lectura.HastaLectura = hoy;
+            // E3, por profesor: no depende de las fechas (SinSesion las cruza con su vigencia).
+            foreach (FranjaLeida franja in LeerFranjas(conexion, null))
+            {
+                Agregar(lectura.FranjasPorDocente, franja.DocenteId, franja);
+            }
+
+            return lectura;
+        }
+
+        /// <summary>
+        /// La segunda parte del lote de Estadisticas, en la misma conexion: de
+        /// [desdeLectura, hastaLectura] (DesdeLecturaDe y HastaLecturaDe del periodo),
+        /// E2 (sesiones, tambien las de uso libre), E4 (excepciones), los modos, E6
+        /// (bitacoras con sus banderas), E7 (estudiantes con bitacoras o asistencias
+        /// dadas) y E11 (las asistencias dadas, db/22). Solo lee. CalcularTodas lo cuenta.
+        /// </summary>
+        internal static void LeerElRestoEnLote(MySqlConnection conexion, LecturaDeAsistencia lectura, DateTime desdeLectura, DateTime hastaLectura)
+        {
+            lectura.DesdeLectura = desdeLectura.Date;
+            lectura.HastaLectura = hastaLectura.Date;
 
             // E2: todas las sesiones, por profesor, en el orden de DeLaClase (dia y
             // entrada) con desempate por id.
@@ -960,7 +1026,7 @@ namespace DigBit.conexion
             {
                 comando.CommandTimeout = 60;
                 comando.Parameters.AddWithValue("@Desde", lectura.DesdeLectura);
-                comando.Parameters.AddWithValue("@Hasta", hoy);
+                comando.Parameters.AddWithValue("@Hasta", lectura.HastaLectura);
                 using (MySqlDataReader reader = comando.ExecuteReader())
                 {
                     while (reader.Read())
@@ -988,13 +1054,8 @@ namespace DigBit.conexion
 
             Guardar(lectura, sesiones);
 
-            // E3 y E4, por profesor.
-            foreach (FranjaLeida franja in LeerFranjas(conexion, null))
-            {
-                Agregar(lectura.FranjasPorDocente, franja.DocenteId, franja);
-            }
-
-            foreach (ExcepcionLeida excepcion in LeerExcepciones(conexion, null, lectura.DesdeLectura, hoy))
+            // E4, por profesor (E3 ya esta: LeerClasesEnLote).
+            foreach (ExcepcionLeida excepcion in LeerExcepciones(conexion, null, lectura.DesdeLectura, lectura.HastaLectura))
             {
                 Agregar(lectura.ExcepcionesPorDocente, excepcion.DocenteId, excepcion);
             }
@@ -1019,7 +1080,7 @@ namespace DigBit.conexion
             {
                 comando.CommandTimeout = 60;
                 comando.Parameters.AddWithValue("@Desde", lectura.DesdeLectura);
-                comando.Parameters.AddWithValue("@Hasta", hoy);
+                comando.Parameters.AddWithValue("@Hasta", lectura.HastaLectura);
                 using (MySqlDataReader reader = comando.ExecuteReader())
                 {
                     while (reader.Read())
@@ -1060,8 +1121,10 @@ namespace DigBit.conexion
                        ON cg.estudiante = u.idusuarios
                 LEFT JOIN grupos g ON g.idgrupos = cg.grupos_idgrupos", conexion))
             {
+                // Con un periodo largo (un ciclo pasado o fechas de hace mas de un ano) la UNION recorre mucho.
+                comando.CommandTimeout = 60;
                 comando.Parameters.AddWithValue("@Desde", lectura.DesdeLectura);
-                comando.Parameters.AddWithValue("@Hasta", hoy);
+                comando.Parameters.AddWithValue("@Hasta", lectura.HastaLectura);
                 using (MySqlDataReader reader = comando.ExecuteReader())
                 {
                     while (reader.Read())
@@ -1088,28 +1151,27 @@ namespace DigBit.conexion
             // las del periodo de cada una).
             if (lectura.ConDadas)
             {
-                foreach (AsistenciaDada dada in LeerDadas(conexion, null, lectura.DesdeLectura, hoy))
+                foreach (AsistenciaDada dada in LeerDadas(conexion, null, lectura.DesdeLectura, lectura.HastaLectura))
                 {
                     Agregar(lectura.DadasPorClase, dada.ClaseId, dada);
                 }
             }
-
-            return lectura;
         }
 
         /// <summary>
-        /// La asistencia de cada clase de la lectura del lote que empezo desde
-        /// DesdeLectura (las demas no se leyeron enteras), con Calcular: lo mismo que
-        /// DeLaClase de cada una. A la que hoy tiene bloques se le pasa su tramo de
-        /// hoy (el inicio del primero y el fin del ultimo, sin los cancelados, como
-        /// en Mis grupos): asi su columna de hoy esta en curso igual que en Mis
-        /// grupos, tambien en la pausa entre dos bloques y aunque aun no tenga sesion.
+        /// La asistencia de cada clase del lote leida entera (la que empezo desde
+        /// DesdeLectura y cuyo ultimo dia, o hoy si sigue, no pasa de HastaLectura; las
+        /// demas no se leyeron enteras), con Calcular: lo mismo que DeLaClase de cada
+        /// una. A la que hoy tiene bloques se le pasa su tramo de hoy (el inicio del
+        /// primero y el fin del ultimo, sin los cancelados, como en Mis grupos): asi su
+        /// columna de hoy esta en curso igual que en Mis grupos, tambien en la pausa
+        /// entre dos bloques y aunque aun no tenga sesion.
         /// </summary>
         /// <param name="tramosDeHoy">Por idclases; null o sin la clase = hoy no tiene bloques.</param>
         internal static Dictionary<int, AsistenciaDeClase> CalcularTodas(LecturaDeAsistencia lectura, IDictionary<int, TramoHorario> tramosDeHoy)
         {
             Dictionary<int, AsistenciaDeClase> listas = new Dictionary<int, AsistenciaDeClase>();
-            foreach (ClaseLeida clase in lectura.Clases.Where(c => c.VigenteDesde >= lectura.DesdeLectura))
+            foreach (ClaseLeida clase in lectura.Clases.Where(c => c.VigenteDesde >= lectura.DesdeLectura && HastaHoy(c, lectura) <= lectura.HastaLectura))
             {
                 TramoHorario tramo = null;
                 if (tramosDeHoy != null)

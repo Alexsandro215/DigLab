@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Drawing;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using DigBit.conexion;
 using DigBit.Infraestructura;
@@ -16,6 +17,8 @@ namespace DigBit
         public Login()
         {
             InitializeComponent();
+            // La tarjeta, el fondo y los textos (Login.Diseno.cs).
+            ConstruirDiseno();
             textoIniciarSesion = btnIniciarSesion.Text;
             mconexion = new Conexion();
             Kiosco.Aplicar(this);
@@ -28,17 +31,13 @@ namespace DigBit
             imgSalir.Visible = !Kiosco.Activo;
             imgMinimizar.Visible = !Kiosco.Activo;
 
-            // "USUARIO" y "CONTRASENA" como texto guia (gris, tambien con el cursor
-            // dentro): antes eran el texto de la caja y se borraban al entrar.
-            EstiloHorarios.PonerTextoGuia(txtUsuario, "USUARIO");
-            EstiloHorarios.PonerTextoGuia(txtPassword, "CONTRASEÑA");
+            // Texto guia (gris, tambien con el cursor dentro); el del usuario lo pone
+            // ActualizarSubtitulo, segun el equipo.
+            EstiloHorarios.PonerTextoGuia(txtPassword, "Tu contraseña");
             // Se escribe en cuanto aparece la ventana; Enter es "Iniciar sesion"
             // (AcceptButton, en el disenador). Con el foco en el enlace, Enter lo
             // abre: un LinkLabel es IButtonControl y entonces es el boton por defecto.
             ActiveControl = txtUsuario;
-            // El enlace va sobre las franjas verdes: con fondo blanco, como los
-            // botones, y centrado bajo "Iniciar sesion".
-            linkPasswd.Left = btnIniciarSesion.Left + (btnIniciarSesion.Width - linkPasswd.Width) / 2;
 
             // Fase 4: franja de aviso cuando se trabaja con la copia local.
             lblSinConexion = new Label
@@ -61,6 +60,59 @@ namespace DigBit
             temporizadorAviso.Start();
 
             PrepararBotonApagar();
+            Colocar();
+
+            // Con los estudiantes entrando con el SIIA, el kiosco no ofrece "Crear
+            // cuenta" (se crea sola). Se mira al ensenarse (antes no hay ventana a
+            // la que avisar) y cada minuto, sin congelar.
+            Shown += (s, e) => RevisarSiia();
+            temporizadorSiia = new Timer { Interval = 60000 };
+            temporizadorSiia.Tick += (s, e) => RevisarSiia();
+            temporizadorSiia.Start();
+        }
+
+        private Timer temporizadorSiia;
+        // Lo ultimo leido de Ajustes: los estudiantes entran con el SIIA.
+        private bool estudiantesConSiia;
+        private bool revisandoSiia;
+
+        private void RevisarSiia()
+        {
+            if (revisandoSiia || IsDisposed)
+            {
+                return;
+            }
+
+            revisandoSiia = true;
+            Task.Run(() => InicioConSiia.LeerSinFallar()).ContinueWith(tarea =>
+            {
+                if (IsDisposed || !IsHandleCreated)
+                {
+                    revisandoSiia = false;
+                    return;
+                }
+
+                try
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        revisandoSiia = false;
+                        estudiantesConSiia = !tarea.IsFaulted && tarea.Result.Estudiantes;
+                        docentesConSiia = !tarea.IsFaulted && tarea.Result.Docentes;
+                        if (esperaNip == null)
+                        {
+                            // Con el SIIA la cuenta del estudiante se crea sola: sin "Crear cuenta".
+                            btnRegistro.Visible = !estudiantesConSiia;
+                            ActualizarSubtitulo();
+                            Colocar();
+                        }
+                    }));
+                }
+                catch (InvalidOperationException)
+                {
+                    revisandoSiia = false;
+                }
+            });
         }
 
         private Label lblSinConexion;
@@ -88,7 +140,7 @@ namespace DigBit
                 Size = new Size(200, 46),
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Century Gothic", 10F, FontStyle.Bold),
-                BackColor = Color.FromArgb(63, 63, 70),
+                BackColor = Color.FromArgb(0, 52, 30),
                 ForeColor = Color.White,
                 Cursor = Cursors.Hand,
                 // Sin TabStop: que no se apague el equipo por darle a Tab y Enter
@@ -96,6 +148,7 @@ namespace DigBit
                 TabStop = false
             };
             btnApagar.FlatAppearance.BorderSize = 0;
+            btnApagar.FlatAppearance.MouseOverBackColor = Color.FromArgb(0, 40, 22);
             btnApagar.Click += (s, e) => ConfirmarApagado();
             Controls.Add(btnApagar);
             btnApagar.BringToFront();
@@ -132,12 +185,14 @@ namespace DigBit
                 Size = new Size(200, 32),
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Century Gothic", 8.5F),
-                BackColor = Color.FromArgb(94, 94, 102),
+                BackColor = Color.FromArgb(0, 84, 48),
                 ForeColor = Color.White,
                 Cursor = Cursors.Hand,
                 TabStop = false
             };
-            btnEmergencia.FlatAppearance.BorderSize = 0;
+            btnEmergencia.FlatAppearance.BorderSize = 1;
+            btnEmergencia.FlatAppearance.BorderColor = Color.FromArgb(0, 52, 30);
+            btnEmergencia.FlatAppearance.MouseOverBackColor = Color.FromArgb(0, 66, 38);
             btnEmergencia.Click += (s, e) => AbrirEmergencia();
             Controls.Add(btnEmergencia);
             btnEmergencia.BringToFront();
@@ -259,7 +314,15 @@ namespace DigBit
 
             ColocarBotonApagar();
             ColocarBotonEmergencia();
+            // La tarjeta va al centro de lo que deja libre la franja: solo si cambio.
+            if (AltoFranja() != altoFranjaColocada)
+            {
+                altoFranjaColocada = AltoFranja();
+                Colocar();
+            }
         }
+
+        private int altoFranjaColocada;
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
@@ -268,6 +331,13 @@ namespace DigBit
                 temporizadorAviso.Stop();
                 temporizadorAviso.Dispose();
                 temporizadorAviso = null;
+            }
+
+            if (temporizadorSiia != null)
+            {
+                temporizadorSiia.Stop();
+                temporizadorSiia.Dispose();
+                temporizadorSiia = null;
             }
 
             base.OnFormClosed(e);
@@ -289,8 +359,32 @@ namespace DigBit
             }
         }
 
-        private void btnIniciarSesion_Click(object sender, EventArgs e)
+        // Mientras se comprueba una cuenta (con el SIIA, hasta unos segundos en
+        // segundo plano): la ventana se mueve y se repinta, pero no se empieza otra
+        // cosa (otro inicio de sesion, "Crear cuenta", "Olvidaste tu contrasena?").
+        private bool entrando;
+
+        // El paso del NIP del SIIA (PedirNip): la misma tarjeta, con la caja de la
+        // contrasena para el NIP. Mientras se espera, la tarea que lo recibe.
+        private TaskCompletionSource<string> esperaNip;
+        private string textoRegistro;
+        private string textoEnlace;
+        private bool cajaSoloCifras;
+
+        private async void btnIniciarSesion_Click(object sender, EventArgs e)
         {
+            // En el paso del NIP, "Entrar" entrega el NIP a quien lo espera.
+            if (esperaNip != null)
+            {
+                EntregarNip();
+                return;
+            }
+
+            if (entrando)
+            {
+                return;
+            }
+
             // Una matricula no lleva espacios: los de mas al principio o al final se quitan.
             string numeroIdentificadorIngresado = txtUsuario.Text.Trim();
             string contraseñaIngresada = txtPassword.Text;
@@ -321,7 +415,7 @@ namespace DigBit
             MostrarEntrando(true);
             try
             {
-                entro = Entrar(numeroIdentificadorIngresado, contraseñaIngresada);
+                entro = await Entrar(numeroIdentificadorIngresado, contraseñaIngresada);
             }
             catch (Exception ex)
             {
@@ -334,11 +428,14 @@ namespace DigBit
             }
             finally
             {
+                // Despues del paso del NIP, la caja vuelve a ser la de la contrasena.
+                SalirDelPasoNip();
                 MostrarEntrando(false);
             }
 
             if (entro)
             {
+                txtPassword.Clear();
                 this.Hide();
                 return;
             }
@@ -352,10 +449,143 @@ namespace DigBit
         }
 
         /// <summary>
+        /// El paso 2 del SIIA, en esta misma ventana: la caja de la contrasena pasa
+        /// a pedir el NIP (4 numeros, oculto), "¿Olvidaste tu NIP?" y "Volver". La
+        /// contrasena se queda solo en la memoria de quien la pidio. Devuelve el NIP,
+        /// o null si la persona vuelve atras (Volver, Esc o salir del kiosco).
+        /// </summary>
+        private Task<string> PedirNip(string aviso)
+        {
+            if (IsDisposed)
+            {
+                return Task.FromResult<string>(null);
+            }
+
+            if (textoRegistro == null)
+            {
+                textoRegistro = btnRegistro.Text;
+                textoEnlace = linkPasswd.Text;
+            }
+
+            if (!cajaSoloCifras)
+            {
+                CajaNip.SoloCifras(txtPassword);
+                cajaSoloCifras = true;
+            }
+
+            // Arriba, quien es (el nombre que dio el SIIA, ya con la contrasena comprobada).
+            string nombre = consultas.NombreEnElPasoNip;
+            lblTitulo.Text = "Escribe tu NIP";
+            lblSubtitulo.ForeColor = nombre != null ? VerdeOscuro : GrisTexto;
+            lblSubtitulo.Text = (nombre != null ? "Hola, " + nombre + "." + Environment.NewLine : "") + "Es el NIP de 4 dígitos del SIIA.";
+            lblEtiquetaPassword.Text = "NIP del SIIA";
+            PrepararAvisoNip();
+            if (lnkAvisoNip != null)
+            {
+                lnkAvisoNip.Visible = true;
+            }
+
+            UsuarioSoloLectura(true);
+            OcultarPassword();
+            txtPassword.Clear();
+            txtPassword.MaxLength = 4;
+            EstiloHorarios.PonerTextoGuia(txtPassword, "4 dígitos");
+            btnRegistro.Text = "Volver";
+            btnRegistro.Visible = true;
+            linkPasswd.Text = "¿Olvidaste tu NIP?";
+            MostrarEntrando(false);
+            btnIniciarSesion.Text = "Entrar";
+            MostrarMensaje(aviso);
+            // Lo que sigue al NIP no corre dentro del clic de "Entrar".
+            esperaNip = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            ActiveControl = txtPassword;
+            txtPassword.Focus();
+            return esperaNip.Task;
+        }
+
+        /// <summary>"Entrar" en el paso del NIP: solo 4 numeros; luego se comprueba (otra vez "Entrando...").</summary>
+        private void EntregarNip()
+        {
+            string nip = txtPassword.Text;
+            if (!InicioConSiia.NipValido(nip))
+            {
+                MostrarMensaje("El NIP son 4 números.");
+                txtPassword.Focus();
+                return;
+            }
+
+            TaskCompletionSource<string> espera = esperaNip;
+            esperaNip = null;
+            txtPassword.Clear();
+            MostrarMensaje(null);
+            MostrarEntrando(true);
+            espera.TrySetResult(nip);
+        }
+
+        /// <summary>"Volver" (o Esc): sin NIP; quien lo esperaba no entra y la ventana vuelve al paso 1.</summary>
+        private void CancelarNip()
+        {
+            TaskCompletionSource<string> espera = esperaNip;
+            esperaNip = null;
+            if (espera != null)
+            {
+                espera.TrySetResult(null);
+            }
+        }
+
+        /// <summary>La tarjeta como al principio: la caja vuelve a ser la de la contrasena.</summary>
+        private void SalirDelPasoNip()
+        {
+            CancelarNip();
+            if (textoRegistro == null || IsDisposed)
+            {
+                return;
+            }
+
+            if (lnkAvisoNip != null)
+            {
+                lnkAvisoNip.Visible = false;
+            }
+
+            UsuarioSoloLectura(false);
+            OcultarPassword();
+            txtPassword.MaxLength = 32767;
+            EstiloHorarios.PonerTextoGuia(txtPassword, "Tu contraseña");
+            lblEtiquetaPassword.Text = "Contraseña";
+            btnRegistro.Text = textoRegistro;
+            btnRegistro.Visible = !estudiantesConSiia;
+            linkPasswd.Text = textoEnlace;
+            ActualizarSubtitulo();
+            MostrarMensaje(null);
+        }
+
+        /// <summary>En el paso del NIP el usuario ya no se cambia: la caja, gris y de solo lectura.</summary>
+        private void UsuarioSoloLectura(bool soloLectura)
+        {
+            txtUsuario.ReadOnly = soloLectura;
+            txtUsuario.BackColor = soloLectura ? FondoSoloLectura : Color.White;
+            lblIconoUsuario.BackColor = txtUsuario.BackColor;
+            panelTarjeta.Invalidate();
+        }
+
+        /// <summary>Esc en el paso del NIP: volver al paso 1.</summary>
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == Keys.Escape && esperaNip != null)
+            {
+                CancelarNip();
+                return true;
+            }
+
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        /// <summary>
         /// Prueba el servidor (o sigue con la copia local) y abre la ventana de la
         /// cuenta. True si la abrio; los avisos de por que no, los ensena por el camino.
+        /// Solo un docente con el SIIA encendido espera algo en segundo plano.
         /// </summary>
-        private bool Entrar(string numeroIdentificadorIngresado, string contraseñaIngresada)
+        private async Task<bool> Entrar(string numeroIdentificadorIngresado, string contraseñaIngresada)
         {
             // Fase 4: sin servidor, el alumno entra solo con su matricula contra la
             // copia local; su bitacora quedara marcada como registrada sin conexion.
@@ -406,8 +636,11 @@ namespace DigBit
             // laboratorio (4), el panel del administrador, el encargado en solo
             // consulta. Si esta version no conoce el tipo, devuelve false y el
             // login se queda a la vista. El administrador es un usuario mas de la
-            // base desde la fase 6; antes eran credenciales escritas aqui.
-            return consultas.RealizarInicioSesion(numeroIdentificadorIngresado, contraseñaIngresada);
+            // base desde la fase 6; antes eran credenciales escritas aqui. Un
+            // docente o un estudiante, con el SIIA encendido para ellos en Ajustes,
+            // se comprueba con el SIIA, con su NIP en esta misma ventana.
+            return await consultas.RealizarInicioSesionAsync(numeroIdentificadorIngresado, contraseñaIngresada,
+                aviso => PedirNip(aviso));
         }
 
         /// <summary>
@@ -435,8 +668,12 @@ namespace DigBit
                 return;
             }
 
+            this.entrando = entrando;
             btnIniciarSesion.Enabled = !entrando;
-            btnIniciarSesion.Text = entrando ? "ENTRANDO..." : textoIniciarSesion;
+            btnIniciarSesion.Text = entrando ? "Entrando..." : textoIniciarSesion;
+            // UseWaitCursor tambien mientras se espera al SIIA: entonces la ventana
+            // procesa mensajes y Cursor.Current volveria a la flecha.
+            UseWaitCursor = entrando;
             Cursor.Current = entrando ? Cursors.WaitCursor : Cursors.Default;
             if (entrando)
             {
@@ -455,8 +692,29 @@ namespace DigBit
         /// esas credenciales se crean alumnos y nada mas. Ver
         /// db/07_usuarios_minimos.sql y db/10_red_y_autoregistro.sql.
         /// </summary>
-        private void btnRegistro_Click(object sender, EventArgs e)
+        private async void btnRegistro_Click(object sender, EventArgs e)
         {
+            // En el paso del NIP es "Volver".
+            if (esperaNip != null)
+            {
+                CancelarNip();
+                return;
+            }
+
+            if (entrando)
+            {
+                return;
+            }
+
+            // Con los estudiantes entrando con el SIIA no hace falta crear cuenta:
+            // se crea sola la primera vez (el kiosco ni ensena el boton).
+            if (estudiantesConSiia || InicioConSiia.LeerSinFallar().Estudiantes)
+            {
+                MessageBox.Show("Ya no hace falta crear una cuenta: entra con tu matrícula, tu contraseña y tu NIP del SIIA, y tu cuenta de DigBit "
+                    + "se crea sola la primera vez.", "Crear cuenta", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             // Sin servidor no se puede: ni saber si la matricula ya existe ni
             // guardar la cuenta. Y sin la migracion 10 la base no admite un
             // alumno sin grupo. Las dos cosas se miran antes de que el alumno lo
@@ -521,7 +779,7 @@ namespace DigBit
             MostrarEntrando(true);
             try
             {
-                entro = consultas.RealizarInicioSesion(matricula, contrasena);
+                entro = await consultas.RealizarInicioSesionAsync(matricula, contrasena);
             }
             catch (Exception ex)
             {
@@ -555,32 +813,75 @@ namespace DigBit
         /// </summary>
         private void linkPasswd_LinkClicked_1(object sender, LinkLabelLinkClickedEventArgs e)
         {
+            // En el paso del NIP: "¿Olvidaste tu NIP?", a la pagina del SIIA.
+            if (esperaNip != null)
+            {
+                VentanaPaginaSiia.Recuperar(this, InicioConSiia.LeerSinFallar());
+                txtPassword.Focus();
+                return;
+            }
+
+            if (entrando)
+            {
+                return;
+            }
+
             ApiRecuperacion api;
+            // Con el SIIA encendido, la contrasena de quien entra con el (docente o
+            // estudiante) es la del SIIA y se recupera alli (tambien en el kiosco,
+            // sin abrir ningun navegador). La recuperacion por correo de DigBit
+            // queda para las cuentas propias de DigBit (la administracion...).
+            ConfiguracionSiia siia;
+            string escrita = txtUsuario.Text.Trim();
+            bool conSiia = false;
             Cursor anterior = Cursor.Current;
             Cursor.Current = Cursors.WaitCursor;
             try
             {
                 api = RecuperacionContrasena.Buscar();
+                siia = InicioConSiia.LeerSinFallar();
+                if (siia.Activo)
+                {
+                    try
+                    {
+                        // Sin escribir nada: con el SIIA encendido, lo mas probable es que
+                        // sea un estudiante o un docente (la administracion, que recupera
+                        // por correo, escribe antes su usuario).
+                        conSiia = escrita.Length == 0 ? siia.Activo
+                            : System.Text.RegularExpressions.Regex.IsMatch(escrita, @"^[a-zA-Z0-9]+$") && siia.ParaElTipo(InicioConSiia.TipoDeCuenta(escrita));
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error("Recuperar contrasena: saber si '" + escrita + "' entra con el SIIA", ex);
+                    }
+                }
             }
             finally
             {
                 Cursor.Current = anterior;
             }
 
+            if (conSiia)
+            {
+                Log.Info("Recuperar contrasena: '" + (escrita.Length == 0 ? "(sin usuario)" : escrita) + "' entra con el SIIA: se le manda a la pagina del SIIA.");
+                VentanaPaginaSiia.Recuperar(this, siia);
+                return;
+            }
+
             if (!api.Configurada)
             {
-                MessageBox.Show(api.NoSeSupo
+                MessageBox.Show((api.NoSeSupo
                     ? "Ahora no hay conexión con el servidor, así que no se puede recuperar la contraseña. "
                         + "Inténtalo más tarde o pide a la administración de DigBit que te ponga una contraseña nueva."
                     : "La recuperación de contraseña por correo todavía no está activada. "
-                        + "Pide a la administración de DigBit que te ponga una contraseña nueva.",
+                        + "Pide a la administración de DigBit que te ponga una contraseña nueva.")
+                    + (siia.Activo ? Environment.NewLine + Environment.NewLine + InicioConSiia.TextoSiEresDocente(siia) : ""),
                     "Recuperar contraseña", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            string escrita = txtUsuario.Text.Trim();
             string matricula;
-            if (!DialogoRecuperarContrasena.Mostrar(this, api, escrita, out matricula))
+            if (!DialogoRecuperarContrasena.Mostrar(this, api, escrita, siia.Activo ? siia : null, out matricula))
             {
                 return;
             }

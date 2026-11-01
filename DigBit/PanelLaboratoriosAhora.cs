@@ -731,7 +731,8 @@ namespace DigBit
         /// cabe en una linea de la tarjeta; renglones: cuantas lineas de estado
         /// caben en ella. codigo: si los docentes no ven los codigos
         /// (CodigosSoloResponsables), el de la clase, que va ("Codigo: 48213") en la
-        /// que aun no empieza y en la que esta en curso; null, como siempre.
+        /// que aun no empieza y en la que esta en curso, antes que el tiempo
+        /// (CodigoYTiempo); null, como siempre.
         /// </summary>
         private static IEnumerable<Tuple<string, Color>> Estado(SesionAgenda sesion, int fila, TimeSpan hora, ModoCodigo modo, Func<string, bool> cabe, int renglones,
             string codigo)
@@ -754,12 +755,19 @@ namespace DigBit
             if (sesion.Inicio > hora)
             {
                 TimeSpan falta = sesion.Inicio - hora;
-                yield return Tuple.Create("Empieza en " + Duracion(falta), Verde);
                 if (codigo != null)
                 {
-                    yield return Tuple.Create(ConElCodigo(codigo, cabe), TextoPrincipal);
+                    // El codigo primero: es lo que el docente le pide a la responsable.
+                    foreach (Tuple<string, Color> linea in CodigoYTiempo(codigo, "Empieza en " + Duracion(falta), cabe, renglones))
+                    {
+                        yield return linea;
+                    }
+
+                    yield break;
                 }
-                else if (falta <= TimeSpan.FromMinutes(HorariosDatos.MargenAntesDelInicioMinutos))
+
+                yield return Tuple.Create("Empieza en " + Duracion(falta), Verde);
+                if (falta <= TimeSpan.FromMinutes(HorariosDatos.MargenAntesDelInicioMinutos))
                 {
                     yield return modo == ModoCodigo.Renovable ? CodigoDeLaClase(sesion)
                         : Tuple.Create(modo == ModoCodigo.SinCodigo ? "Ya pueden registrar" : "Ya se acepta el código", TextoSecundario);
@@ -781,16 +789,26 @@ namespace DigBit
                 yield break;
             }
 
+            int usadas = 0;
             if (enCurso)
             {
-                yield return Tuple.Create("Quedan " + Duracion(sesion.Fin - hora), Verde);
                 if (codigo != null)
                 {
-                    yield return Tuple.Create(ConElCodigo(codigo, cabe), TextoPrincipal);
+                    foreach (Tuple<string, Color> linea in CodigoYTiempo(codigo, "Quedan " + Duracion(sesion.Fin - hora), cabe, renglones))
+                    {
+                        usadas++;
+                        yield return linea;
+                    }
                 }
-                else if (modo == ModoCodigo.Renovable)
+                else
                 {
-                    yield return CodigoDeLaClase(sesion);
+                    yield return Tuple.Create("Quedan " + Duracion(sesion.Fin - hora), Verde);
+                    usadas = 1;
+                    if (modo == ModoCodigo.Renovable)
+                    {
+                        yield return CodigoDeLaClase(sesion);
+                        usadas = 2;
+                    }
                 }
             }
 
@@ -805,7 +823,7 @@ namespace DigBit
                 int n = sesion.AsistenciasDadas;
                 string dio = "su docente dio " + Asistencias(n);
                 string dadas = n == 1 ? " dada" : " dadas";
-                int libres = renglones - (enCurso ? (modo == ModoCodigo.Renovable || codigo != null ? 2 : 1) : 0);
+                int libres = renglones - usadas;
                 if (cabe(nadie + "; " + dio))
                 {
                     yield return Tuple.Create(nadie + "; " + dio, TextoSecundario);
@@ -867,6 +885,26 @@ namespace DigBit
         private static string ConElCodigo(string codigo, Func<string, bool> cabe)
         {
             return cabe("Código: " + codigo) ? "Código: " + codigo : codigo;
+        }
+
+        /// <summary>
+        /// Con CodigosSoloResponsables, el codigo y cuanto falta ("Empieza en..." o
+        /// "Quedan..."): primero el codigo, que es lo que el docente le pide a la
+        /// responsable. Si solo cabe un renglon (a 1366 la tarjeta es baja), los dos
+        /// en uno ("Código AB12C · quedan 35 min") si cabe; si no, solo el codigo:
+        /// en curso la barra ya dice cuanto falta.
+        /// </summary>
+        private static IEnumerable<Tuple<string, Color>> CodigoYTiempo(string codigo, string tiempo, Func<string, bool> cabe, int renglones)
+        {
+            if (renglones >= 2)
+            {
+                yield return Tuple.Create(ConElCodigo(codigo, cabe), TextoPrincipal);
+                yield return Tuple.Create(tiempo, Verde);
+                yield break;
+            }
+
+            string juntos = "Código " + codigo + " · " + char.ToLowerInvariant(tiempo[0]) + tiempo.Substring(1);
+            yield return Tuple.Create(cabe(juntos) ? juntos : ConElCodigo(codigo, cabe), TextoPrincipal);
         }
 
         /// <summary>"1 asistencia", "3 asistencias".</summary>
@@ -991,25 +1029,17 @@ namespace DigBit
     {
         /// <summary>
         /// Esas columnas, nunca mas angostas que su encabezado: una palabra
-        /// ("Estudiantes") no pasa a la linea siguiente y se cortaria. ListaDigBit
-        /// solo mide las celdas. Un encabezado de varias palabras se parte en
-        /// lineas: basta con que quepa la mas larga ("internet").
+        /// ("Estudiantes") no pasa a la linea siguiente y se cortaria. Las listas
+        /// de EstiloHorarios.CrearGrid (ListaDigBit) ya lo hacen solas con cada
+        /// columna (2026-10-31); esto queda para una lista que no lo sea. Un
+        /// encabezado que se parte en renglones, en dos como mucho.
         /// </summary>
         public static void EncabezadoEntero(DataGridView grid, params string[] columnas)
         {
             foreach (string nombre in columnas)
             {
                 DataGridViewColumn columna = grid.Columns[nombre];
-                // En una linea, con su margen y el sitio de la flecha de ordenar.
-                int ancho = columna.GetPreferredWidth(DataGridViewAutoSizeColumnMode.ColumnHeader, true);
-                string texto = columna.HeaderText ?? "";
-                if (texto.IndexOf(' ') > 0)
-                {
-                    DrawingFont fuente = columna.HeaderCell.InheritedStyle.Font ?? grid.Font;
-                    int palabra = texto.Split(' ').Max(p => TextRenderer.MeasureText(p, fuente).Width);
-                    ancho = ancho - TextRenderer.MeasureText(texto, fuente).Width + palabra;
-                }
-
+                int ancho = ListaDigBit.AnchoDelEncabezado(columna);
                 if (ancho > columna.MinimumWidth)
                 {
                     columna.MinimumWidth = ancho;
@@ -1037,6 +1067,9 @@ namespace DigBit
                 }
 
                 DrawingFont fuente = columna.InheritedStyle.Font ?? grid.Font;
+                // El margen de la celda (8 + 8 desde que las listas tienen aire): sin
+                // contarlo, la fecha y el horario de Bitacoras salian cortados.
+                int margen = 8 + columna.InheritedStyle.Padding.Horizontal;
                 HashSet<string> medidos = new HashSet<string>(StringComparer.Ordinal);
                 int pide = 0;
                 foreach (DataGridViewRow fila in grid.Rows)
@@ -1045,7 +1078,7 @@ namespace DigBit
                     if (!string.IsNullOrEmpty(texto) && medidos.Add(texto))
                     {
                         // Lo que pide la celda: el texto y su margen (como PreferredSize).
-                        pide = Math.Max(pide, TextRenderer.MeasureText(texto, fuente).Width + 8);
+                        pide = Math.Max(pide, TextRenderer.MeasureText(texto, fuente).Width + margen);
                     }
                 }
 
@@ -1073,7 +1106,11 @@ namespace DigBit
     /// </summary>
     internal class TarjetaOpcion : Control
     {
-        private static readonly Color FondoEncima = Color.FromArgb(236, 246, 236);
+        private static readonly Color FondoEncima = Color.FromArgb(236, 246, 239);
+        // Borde fino y suave con una franja verde a la izquierda (2026-10-31: antes,
+        // borde grueso verde oscuro y el texto pegado a el).
+        private static readonly Color BordeSuave = Color.FromArgb(205, 222, 210);
+        private const int Franja = 5;
 
         // Las de la descripcion en OnPaint; con las mismas se mide si cabe.
         private const TextFormatFlags BanderasDescripcion = TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak
@@ -1214,20 +1251,29 @@ namespace DigBit
                     g.FillPath(brocha, forma);
                 }
 
-                using (Pen borde = new Pen(Color.DarkGreen, Focused ? 3f : 2f))
+                // La franja de la izquierda, recortada a la forma.
+                Region antes = g.Clip;
+                g.SetClip(forma, CombineMode.Intersect);
+                using (SolidBrush franja = new SolidBrush(EstiloHorarios.VerdeTeschi))
+                {
+                    g.FillRectangle(franja, r.Left, r.Top, Franja, r.Height + 1);
+                }
+
+                g.Clip = antes;
+                using (Pen borde = new Pen(Focused || encima ? EstiloHorarios.VerdeTeschi : BordeSuave, Focused ? 2f : 1f))
                 {
                     g.DrawPath(borde, forma);
                 }
             }
 
-            Rectangle texto = Rectangle.Inflate(r, -14, -10);
+            Rectangle texto = new Rectangle(r.Left + Franja + 14, r.Top + 12, r.Width - Franja - 28, r.Height - 22);
             int altoTitulo = TextRenderer.MeasureText(g, Titulo, fuenteTitulo).Height;
             TextRenderer.DrawText(g, Titulo, fuenteTitulo, new Rectangle(texto.Left, texto.Top, texto.Width, altoTitulo), Color.DarkGreen,
                 TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
 
             int yDescripcion = texto.Top + altoTitulo + 4;
             Rectangle sitio = new Rectangle(texto.Left, yDescripcion, texto.Width, texto.Bottom - yDescripcion);
-            TextRenderer.DrawText(g, DescripcionQueCabe(g, sitio), fuenteDescripcion, sitio, Color.FromArgb(80, 80, 80), BanderasDescripcion);
+            TextRenderer.DrawText(g, DescripcionQueCabe(g, sitio), fuenteDescripcion, sitio, Color.FromArgb(95, 99, 96), BanderasDescripcion);
         }
 
         /// <summary>

@@ -30,12 +30,24 @@ namespace DigBit
     {
         private const int AnchoMaximo = 900;
         private const int SegundosEntreActualizaciones = 60;
+        // El alto de la barra de abajo; crece si un error no cabe (Colocar).
+        private const int AltoPie = 84;
+        // El ejemplo de codigo bajo el titulo del paso 1, con el largo real: el de cada docente
+        // lleva letras y cifras (CodigosDeProfesor) y el de cada clase con la generacion de
+        // codigos, cifras. Fuera de la caja: dentro, con su letra grande y en mayusculas,
+        // parecia un codigo ya escrito.
+        private const string EjemploCodigoFijo = "Por ejemplo: K7M2Q.";
+        private const string EjemploCodigoDeClase = "Por ejemplo: 48213.";
         private const string SinProblema = "Sin problema";
         private const string Otro = "Otro";
         private static readonly CultureInfo Espanol = CultureInfo.GetCultureInfo("es-MX");
         private static readonly Color TextoSecundario = Color.FromArgb(90, 90, 90);
         private static readonly Color FondoClase = Color.FromArgb(236, 246, 236);
         private static readonly Color FondoAviso = Color.FromArgb(255, 236, 204);
+        // La letra sobre FondoAviso: lo que el alumno tiene que hacer (avisar a su docente).
+        private static readonly Color LetraAviso = Color.FromArgb(150, 70, 0);
+        // Una falla marcada en el paso 2: ambar, no el verde de "Sin problema".
+        private static readonly Color Ambar = Color.FromArgb(176, 96, 0);
         private static readonly Color Rojo = Color.FromArgb(190, 30, 30);
         private static readonly Color Apagado = Color.FromArgb(165, 165, 165);
         // El borde y el relleno de lo que aun no se puede pulsar, como "Registrar mi bitacora".
@@ -79,6 +91,9 @@ namespace DigBit
         // La clase de ahora como ficha (con el circulo que eligio el profesor, db/19);
         // sin clase, las dos etiquetas de arriba.
         private FichaClaseAlumno fichaClase;
+        // La ficha esta puesta (MostrarFicha) y no las dos etiquetas (OcultarFicha). Un
+        // campo y no fichaClase.Visible: antes de ensenarse la ventana, Visible dice false.
+        private bool conFicha;
         // Lo personal de los profesores de hoy en este laboratorio, por profesor.
         private readonly Dictionary<int, LecturaPersonal> personalPorProfesor = new Dictionary<int, LecturaPersonal>();
 
@@ -121,7 +136,11 @@ namespace DigBit
         private readonly Dictionary<string, Label> etiquetasArea = new Dictionary<string, Label>();
         private readonly Dictionary<string, FlowLayoutPanel> chipsArea = new Dictionary<string, FlowLayoutPanel>();
         private readonly Dictionary<string, TextBox> otroArea = new Dictionary<string, TextBox>();
+        // Debajo de la caja de "Otro": "Escribe qué falla..." si se dejo vacia (OtrosConDetalle).
+        private readonly Dictionary<string, Label> errorOtroArea = new Dictionary<string, Label>();
         private Label lblErrorPaso2;
+        // Junto al boton apagado (sin error a la vista): lo que falta para registrar (QueFalta).
+        private Label lblFalta;
         private Button btnRegistrar;
 
         // Paso 3: otras computadoras del laboratorio sin internet. Solo si la base
@@ -142,6 +161,29 @@ namespace DigBit
 
         private Label lblListo;
         private Label lblListoDetalle;
+        // A la izquierda de "Listo", la palomita de RegistroExitoso en chico.
+        private Panel pnlPalomita;
+        // Guardada en este equipo durante una clase: lo unico que le toca hacer, en grande
+        // (antes iba a media frase, en gris, bajo un titulo verde que decia que ya acabo).
+        // Tambien cuando vuelve a entrar y la suya sigue en la cola (MostrarYaRegistrado).
+        private Label lblAvisoDocente;
+        private const string AvisoAlDocente = "Tu docente todavía no ve tu bitácora. Avísale ahora para que te dé la asistencia.";
+        // Ya tenia su bitacora de esta sesion y no se reanudo (MostrarYaRegistrado): el
+        // "listo" tranquilo, sin el error rojo de antes y sin equipo que entregar.
+        private bool yaRegistrado;
+
+        // Cuando aqui no se puede registrar (SinNadaQueRegistrar): un solo bloque con el
+        // titulo, el motivo y "Cerrar sesion", en lugar de los pasos sin nada que elegir.
+        private Label lblNoPuedes;
+        private Label lblNoPuedesMotivo;
+        // Sin barra de abajo (no hay boton que pulsar) se iba con ella "Mi perfil", el
+        // unico camino a su contrasena y su correo: aqui va junto a "Cerrar sesion".
+        private LinkLabel lnkPerfilSinNada;
+        // "Cerrar sesion" como salida principal: tras registrar fuera del kiosco (la
+        // pantalla no se esconde), con "ya tienes tu bitacora" y cuando no se puede registrar.
+        private Button btnSalir;
+        // La barra de abajo se quita cuando no se puede registrar (no hay boton que pulsar).
+        private bool conPie = true;
 
         // Tras registrar, el equipo se entrega hasta la hora de salida (en el kiosco
         // se abre el escritorio y esta pantalla se esconde) una sola vez: a los 1,5 s
@@ -157,6 +199,10 @@ namespace DigBit
         private int segundosParaEntregar;
         private Panel pie;
         private LinkLabel lnkPerfil;
+        // Con el SIIA no hay Mi perfil (2026-10-31): su nombre y su contrasena son los del
+        // SIIA y se cambian alli. Un campo y no lnkPerfil.Visible: antes de ensenarse la
+        // ventana, Visible siempre dice false.
+        private readonly bool conPerfil = !Datos_User.ContrasenaDelSiia;
         private editar_Perfil perfil;
 
         private Timer relojTimer;
@@ -241,11 +287,25 @@ namespace DigBit
             CrearPaso2();
             CrearPaso3();
 
+            pnlPalomita = new Panel { BackColor = Color.White, Size = new Size(40, 40), Visible = false };
+            pnlPalomita.Paint += RegistroExitoso.Palomita_Paint;
             lblListo = new Label
             {
                 AutoSize = false,
+                AutoEllipsis = true,
                 Font = new DrawingFont("Century Gothic", 18F, FontStyle.Bold),
                 ForeColor = Color.DarkGreen,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Visible = false
+            };
+            lblAvisoDocente = new Label
+            {
+                AutoSize = false,
+                BackColor = FondoAviso,
+                Font = new DrawingFont("Century Gothic", 12F, FontStyle.Bold),
+                ForeColor = LetraAviso,
+                Padding = new Padding(12),
+                Text = "",
                 Visible = false
             };
             lblListoDetalle = new Label
@@ -262,22 +322,39 @@ namespace DigBit
             btnEntendido.Visible = false;
             btnEntendido.Click += (s, e) => EntregarEquipo();
 
-            lnkPerfil = new LinkLabel
+            lblNoPuedes = TituloPaso("Ahora no puedes registrar tu bitácora en este equipo");
+            lblNoPuedes.Visible = false;
+            lblNoPuedesMotivo = new Label
             {
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 10.5F),
-                LinkColor = Color.DarkGreen,
-                ActiveLinkColor = Color.Green,
-                Text = "Mi perfil (nombre, correo y contraseña)"
+                AutoSize = false,
+                Font = new DrawingFont("Century Gothic", 12F),
+                ForeColor = Color.FromArgb(50, 50, 50),
+                Visible = false
             };
-            lnkPerfil.LinkClicked += (s, e) => AbrirPerfil();
 
-            columna.Controls.AddRange(new Control[] { lblListo, lblListoDetalle, btnEntendido });
+            // Salir de la sesion, no de la aplicacion (como el de la cabecera).
+            btnSalir = EstiloAdmin.BotonPrincipal("Cerrar sesión", Point.Empty, new Size(220, 44));
+            btnSalir.Font = new DrawingFont("Century Gothic", 12F, FontStyle.Bold);
+            btnSalir.Visible = false;
+            btnSalir.Click += (s, e) =>
+            {
+                if (AppContexto.Actual != null)
+                {
+                    AppContexto.Actual.CerrarSesion();
+                }
+            };
+
+            lnkPerfil = CrearEnlacePerfil();
+            lnkPerfil.Visible = conPerfil;
+            lnkPerfilSinNada = CrearEnlacePerfil();
+            lnkPerfilSinNada.Visible = false;
+
+            columna.Controls.AddRange(new Control[] { pnlPalomita, lblListo, lblAvisoDocente, lblListoDetalle, btnEntendido, lblNoPuedes, lblNoPuedesMotivo, btnSalir, lnkPerfilSinNada });
 
             // Barra fija abajo: "Registrar mi bitacora" siempre a la vista, aunque la
             // lista de fallas no quepa en una pantalla de 768 de alto.
-            pie = new Panel { Dock = DockStyle.Bottom, Height = 84, BackColor = Color.White };
-            pie.Controls.AddRange(new Control[] { lnkPerfil, lblErrorPaso2, btnRegistrar });
+            pie = new Panel { Dock = DockStyle.Bottom, Height = AltoPie, BackColor = Color.White };
+            pie.Controls.AddRange(new Control[] { lnkPerfil, lblErrorPaso2, lblFalta, btnRegistrar });
             pie.Paint += (s, e) =>
             {
                 using (Pen linea = new Pen(Color.FromArgb(215, 222, 215)))
@@ -301,8 +378,8 @@ namespace DigBit
             datosTimer = new Timer(componentes) { Interval = SegundosEntreActualizaciones * 1000 };
             datosTimer.Tick += (s, e) =>
             {
-                // Con el codigo ya aceptado, lo de arriba es su clase: no se toca.
-                if (codigoAceptado == null)
+                // Con el codigo ya aceptado (o ya con su bitacora), lo de arriba es su clase: no se toca.
+                if (codigoAceptado == null && !registrado)
                 {
                     ActualizarDatos();
                 }
@@ -477,6 +554,7 @@ namespace DigBit
 
             fichaClase.Mostrar(materia, grupo, profesor, LaboratorioEquipo.Nombre ?? "", LaboratorioEquipo.NumeroMaquina,
                 inicio, fin, esLaTuya, esExtra, nota, sinConexion, aspecto);
+            conFicha = true;
             lblClaseTitulo.Visible = false;
             lblClaseDetalle.Visible = false;
             pnlClase.BackColor = columna.BackColor;
@@ -493,9 +571,11 @@ namespace DigBit
         {
             if (fichaClase == null || !fichaClase.Visible)
             {
+                conFicha = false;
                 return;
             }
 
+            conFicha = false;
             fichaClase.Visible = false;
             lblClaseTitulo.Visible = true;
             lblClaseDetalle.Visible = true;
@@ -614,11 +694,13 @@ namespace DigBit
             };
             lnkOtroCodigo.LinkClicked += (s, e) => OlvidarCodigo();
 
+            // Con el ejemplo desde el principio, antes de leer el modo (TextosPaso1 lo cambia).
             lblPaso1Ayuda = new Label
             {
                 AutoSize = false,
                 Font = new DrawingFont("Century Gothic", 10.5F),
-                ForeColor = TextoSecundario
+                ForeColor = TextoSecundario,
+                Text = EjemploCodigoFijo
             };
 
             // Sin codigo: un boton por clase abierta. Botones y no RadioButton: un
@@ -650,9 +732,10 @@ namespace DigBit
                 lblPaso1.Text = modo == ModoCodigo.Renovable
                     ? "Paso 1. Escribe el código de esta clase"
                     : "Paso 1. Escribe el código que te dicta tu docente";
+                // Con un ejemplo de este modo: quien ve la caja por primera vez no lo sabia.
                 lblPaso1Ayuda.Text = modo == ModoCodigo.Renovable
-                    ? "Cambia en cada clase: tu docente lo ve al entrar a DigBit."
-                    : "";
+                    ? "Cambia en cada clase: tu docente lo ve al entrar a DigBit. " + EjemploCodigoDeClase
+                    : EjemploCodigoFijo;
                 if (codigoAceptado == null)
                 {
                     AcceptButton = btnContinuar;
@@ -667,6 +750,40 @@ namespace DigBit
                 // Enter no elige por el alumno.
                 AcceptButton = null;
             }
+        }
+
+        /// <summary>
+        /// Lo escrito en la caja del codigo, en mayusculas, sin espacios y, con
+        /// sinGuiones, sin guiones: "k7m 2q" o "K7M-2Q" valen K7M2Q (los codigos no
+        /// llevan ninguno de los dos; antes un espacio lo rechazaba sin decir que
+        /// revisar). Las mayusculas no cambian nada al cotejarlo (nadie las distingue).
+        /// </summary>
+        private static string LimpiarCodigo(string escrito, bool sinGuiones)
+        {
+            return new string((escrito ?? "").Where(c => !char.IsWhiteSpace(c)
+                && !(sinGuiones && char.GetUnicodeCategory(c) == UnicodeCategory.DashPunctuation)).ToArray()).ToUpperInvariant();
+        }
+
+        /// <summary>
+        /// Resuelve el codigo sin guiones y, si asi no existe pero se escribio con
+        /// alguno, tal cual: un codigo viejo puesto a mano (Clases, antes de db/09)
+        /// podria llevarlo. En usado, el que se resolvio.
+        /// </summary>
+        private static ResultadoCodigo ConOSinGuiones(string codigo, string conGuiones, Func<string, ResultadoCodigo> resolver, out string usado)
+        {
+            usado = codigo;
+            ResultadoCodigo resultado = resolver(codigo);
+            if (resultado.Motivo == MotivoCodigo.NoExiste && conGuiones != codigo)
+            {
+                ResultadoCodigo tal = resolver(conGuiones);
+                if (tal.Motivo != MotivoCodigo.NoExiste)
+                {
+                    usado = conGuiones;
+                    return tal;
+                }
+            }
+
+            return resultado;
         }
 
         /// <summary>
@@ -844,6 +961,11 @@ namespace DigBit
                     {
                         MostrarErrorPaso2("");
                         ActualizarPaso2();
+                        if (s == rbFalla)
+                        {
+                            // Lo que se abre, a la vista: a 1366 las fallas quedaban bajo la barra de abajo.
+                            contenedor.ScrollControlIntoView(chipsArea[Consultas.AreasDeFalla[Consultas.AreasDeFalla.Length - 1]]);
+                        }
                     }
                 };
                 pnlEstados.Controls.Add(estado);
@@ -869,24 +991,36 @@ namespace DigBit
                 };
 
                 FlowLayoutPanel chips = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = true, BackColor = Color.White };
-                RadioButton ninguna = Chip(SinProblema, false);
+                RadioButton ninguna = Chip(SinProblema, false, TipoChip.SinProblema);
                 ninguna.Checked = true;
                 chips.Controls.Add(ninguna);
                 foreach (string opcion in Consultas.OpcionesDeFalla(area))
                 {
-                    chips.Controls.Add(Chip(opcion, false));
+                    // Se lee la etiqueta ("No tiene cable de red"); se guarda el valor de siempre (Tag, LeerArea).
+                    RadioButton chip = Chip(Consultas.EtiquetaDeFalla(opcion), false, TipoChip.Falla);
+                    chip.Tag = opcion;
+                    chips.Controls.Add(chip);
                 }
 
-                RadioButton otra = Chip(Otro, false);
+                RadioButton otra = Chip(Otro, false, TipoChip.Falla);
                 chips.Controls.Add(otra);
+                Label errorOtro = new Label
+                {
+                    AutoSize = false,
+                    Font = new DrawingFont("Century Gothic", 10.5F, FontStyle.Bold),
+                    ForeColor = Rojo,
+                    Visible = false
+                };
                 foreach (RadioButton chip in chips.Controls)
                 {
                     chip.CheckedChanged += (s, e) =>
                     {
                         if (((RadioButton)s).Checked)
                         {
+                            errorOtro.Text = "";
                             MostrarErrorPaso2("");
-                            Colocar();
+                            // El resumen de lo que se va a reportar, el boton y lo que falta (tambien recoloca).
+                            ActualizarPaso2();
                         }
                     };
                 }
@@ -896,6 +1030,17 @@ namespace DigBit
                     Font = new DrawingFont("Century Gothic", 11F),
                     MaxLength = 255,
                     Visible = false
+                };
+                // "Otro" lleva escrito que falla (OtrosConDetalle): la caja dice que se espera.
+                EstiloHorarios.PonerTextoGuia(texto, "¿Qué falla? Por ejemplo: no abre NetBeans");
+                texto.TextChanged += (s, e) =>
+                {
+                    if (errorOtro.Text.Length > 0 && texto.Text.Trim().Length > 0)
+                    {
+                        errorOtro.Text = "";
+                        MostrarErrorPaso2("");
+                        Colocar();
+                    }
                 };
                 otra.CheckedChanged += (s, e) =>
                 {
@@ -910,7 +1055,8 @@ namespace DigBit
                 etiquetasArea[area] = etiqueta;
                 chipsArea[area] = chips;
                 otroArea[area] = texto;
-                pnlFallas.Controls.AddRange(new Control[] { etiqueta, chips, texto });
+                errorOtroArea[area] = errorOtro;
+                pnlFallas.Controls.AddRange(new Control[] { etiqueta, chips, texto, errorOtro });
             }
 
             lblErrorPaso2 = new Label
@@ -921,16 +1067,20 @@ namespace DigBit
                 TextAlign = ContentAlignment.MiddleRight
             };
 
+            lblFalta = new Label
+            {
+                AutoSize = false,
+                AutoEllipsis = true,
+                Font = new DrawingFont("Century Gothic", 10.5F),
+                ForeColor = TextoSecundario,
+                TextAlign = ContentAlignment.MiddleRight,
+                Visible = false
+            };
+
             btnRegistrar = EstiloAdmin.BotonPrincipal("Registrar mi bitácora", Point.Empty, new Size(300, 52));
             btnRegistrar.Font = new DrawingFont("Century Gothic", 13F, FontStyle.Bold);
             btnRegistrar.Click += (s, e) => Registrar();
-            // Deshabilitado se ve gris: verde oscuro con letra gris parecia pulsable.
-            btnRegistrar.EnabledChanged += (s, e) =>
-            {
-                Color fondo = btnRegistrar.Enabled ? Color.DarkGreen : Color.FromArgb(205, 210, 205);
-                btnRegistrar.BackColor = fondo;
-                btnRegistrar.FlatAppearance.BorderColor = fondo;
-            };
+            // Deshabilitado se ve gris (BotonesApagados, como todos los botones).
 
             // El error y el boton van en la barra de abajo (ver InicializarComponentes).
             columna.Controls.AddRange(new Control[] { lblPaso2, pnlEstados, lblPista, pnlFallas });
@@ -1120,8 +1270,20 @@ namespace DigBit
             };
         }
 
-        /// <summary>Opcion que se marca como un boton: verde relleno cuando esta elegida.</summary>
-        private static RadioButton Chip(string texto, bool grande)
+        /// <summary>
+        /// Como se pinta un chip marcado: verde relleno (lo de siempre), ambar (una
+        /// falla del paso 2) o verde muy claro ("Sin problema", lo que viene marcado):
+        /// antes una falla elegida y "Sin problema" se veian igual.
+        /// </summary>
+        private enum TipoChip
+        {
+            Normal,
+            Falla,
+            SinProblema
+        }
+
+        /// <summary>Opcion que se marca como un boton: relleno cuando esta elegida (TipoChip).</summary>
+        private static RadioButton Chip(string texto, bool grande, TipoChip tipo = TipoChip.Normal)
         {
             RadioButton chip = new RadioButton
             {
@@ -1140,10 +1302,10 @@ namespace DigBit
                 UseVisualStyleBackColor = false
             };
             chip.FlatAppearance.BorderSize = grande ? 2 : 1;
-            PintarMarcado(chip, false);
-            chip.CheckedChanged += (s, e) => PintarMarcado(chip, chip.Checked);
+            PintarMarcado(chip, false, tipo);
+            chip.CheckedChanged += (s, e) => PintarMarcado(chip, chip.Checked, tipo);
             // Tambien cuando se apaga su panel (el paso 2 antes del codigo).
-            chip.EnabledChanged += (s, e) => PintarMarcado(chip, chip.Checked);
+            chip.EnabledChanged += (s, e) => PintarMarcado(chip, chip.Checked, tipo);
             chip.Paint += PintarLetraApagada;
             return chip;
         }
@@ -1185,20 +1347,31 @@ namespace DigBit
         }
 
         /// <summary>
-        /// Letra blanca sobre verde si esta marcado. Con el raton encima se pinta
-        /// MouseOverBackColor aunque este marcado: con el verde claro de siempre, la
-        /// letra blanca del recien pulsado no se leia hasta mover el raton. Apagado
-        /// (sin codigo aceptado, o la sexta casilla del paso 3), borde y letra
-        /// grises: con el borde verde parecia que se podia pulsar.
+        /// Letra blanca sobre verde si esta marcado; una falla, sobre ambar, y "Sin
+        /// problema", letra verde sobre verde muy claro con el borde mas grueso (asi
+        /// una falla elegida salta a la vista y lo de sin problema no). Con el raton
+        /// encima se pinta MouseOverBackColor aunque este marcado: con el verde claro
+        /// de siempre, la letra blanca del recien pulsado no se leia hasta mover el
+        /// raton. Apagado (sin codigo aceptado, o la sexta casilla del paso 3), borde
+        /// y letra grises: con el borde verde parecia que se podia pulsar.
         /// </summary>
-        private static void PintarMarcado(ButtonBase boton, bool marcado)
+        private static void PintarMarcado(ButtonBase boton, bool marcado, TipoChip tipo = TipoChip.Normal)
         {
             bool activo = boton.Enabled;
-            boton.ForeColor = marcado ? Color.White : activo ? Color.DarkGreen : Apagado;
-            boton.FlatAppearance.BorderColor = activo ? Color.DarkGreen : BordeApagado;
-            boton.FlatAppearance.CheckedBackColor = activo ? Color.DarkGreen : BordeApagado;
+            bool claro = tipo == TipoChip.SinProblema;
+            Color relleno = tipo == TipoChip.Falla ? Ambar : claro ? EstiloHorarios.VerdeSobre : Color.DarkGreen;
+            boton.ForeColor = marcado && !claro ? Color.White : activo ? Color.DarkGreen : Apagado;
+            boton.FlatAppearance.BorderColor = !activo ? BordeApagado : marcado && tipo == TipoChip.Falla ? Ambar : Color.DarkGreen;
+            boton.FlatAppearance.CheckedBackColor = activo ? relleno : BordeApagado;
             boton.FlatAppearance.MouseOverBackColor = !activo ? Color.White
-                : marcado ? Color.FromArgb(0, 120, 0) : Color.FromArgb(236, 246, 236);
+                : !marcado ? Color.FromArgb(236, 246, 236)
+                : tipo == TipoChip.Falla ? Color.FromArgb(150, 80, 0)
+                : claro ? EstiloHorarios.VerdePulsado
+                : Color.FromArgb(0, 120, 0);
+            if (claro)
+            {
+                boton.FlatAppearance.BorderSize = marcado && activo ? 2 : 1;
+            }
         }
 
         /// <summary>
@@ -1230,6 +1403,37 @@ namespace DigBit
                 | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
         }
 
+        /// <summary>
+        /// Aqui no se puede registrar: el equipo no tiene laboratorio, o sin codigos no
+        /// hay ninguna clase que elegir (ni uso libre). Entonces la pantalla lo dice una
+        /// vez, con el motivo y la salida, en lugar de pedir "Elige tu clase" sin nada
+        /// que elegir (y repetir el motivo arriba y abajo).
+        /// </summary>
+        private bool SinNadaQueRegistrar()
+        {
+            return !registrado && codigoAceptado == null
+                && (!LaboratorioEquipo.Resuelto || (!PideCodigo && pnlClases.Controls.Count == 0));
+        }
+
+        /// <summary>El motivo del bloque "Ahora no puedes registrar..." (SinNadaQueRegistrar).</summary>
+        private string MotivoSinNada()
+        {
+            if (!LaboratorioEquipo.Resuelto)
+            {
+                return "Este equipo no tiene laboratorio asignado. Avisa a la persona responsable del laboratorio: "
+                    + "sin eso no se puede registrar la bitácora.";
+            }
+
+            // La siguiente clase, o por que no hay ninguna (TextoProxima).
+            return lblProxima.Text.Length > 0 ? lblProxima.Text : "Ahora no hay ninguna clase abierta en este laboratorio.";
+        }
+
+        /// <summary>El alto de un texto que se parte en renglones a ese ancho.</summary>
+        private static int AltoDe(string texto, DrawingFont letra, int ancho)
+        {
+            return TextRenderer.MeasureText(texto ?? "", letra, new Size(Math.Max(1, ancho), int.MaxValue), TextFormatFlags.WordBreak).Height;
+        }
+
         /// <summary>Coloca todo de arriba abajo en una columna centrada; lo que no toca, se oculta.</summary>
         private void Colocar()
         {
@@ -1238,121 +1442,146 @@ namespace DigBit
                 return;
             }
 
+            bool sinNada = SinNadaQueRegistrar();
             int ancho = Math.Min(AnchoMaximo, Math.Max(560, contenedor.ClientSize.Width - 60));
+            int x = Math.Max(20, (contenedor.ClientSize.Width - ancho) / 2);
+
+            // La barra de abajo: sin ella cuando no hay nada que registrar, y mas alta si
+            // un error no cabe en sus renglones. Va primero: cambia el alto del contenedor
+            // y eso puede volver a llamar a Colocar (Resize), que coloca con el tamano nuevo.
+            if (pie != null)
+            {
+                int altoPie = AltoPie;
+                if (!registrado && lblErrorPaso2.Text.Length > 0)
+                {
+                    altoPie = Math.Max(AltoPie, AltoDe(lblErrorPaso2.Text, lblErrorPaso2.Font, AnchoTextoPie(x, ancho)) + 24);
+                }
+
+                if (pie.Height != altoPie)
+                {
+                    pie.Height = altoPie;
+                }
+
+                if (conPie == sinNada)
+                {
+                    conPie = !sinNada;
+                    pie.Visible = conPie;
+                }
+
+                ancho = Math.Min(AnchoMaximo, Math.Max(560, contenedor.ClientSize.Width - 60));
+                x = Math.Max(20, (contenedor.ClientSize.Width - ancho) / 2);
+            }
+
             int y = 0;
 
-            // Con clase, la ficha (FichaClaseAlumno) llena la franja; sin ella, las dos etiquetas.
-            pnlClase.SetBounds(0, y, ancho, fichaClase.Visible ? fichaClase.AltoNecesario : 84);
+            // Con clase, la ficha (FichaClaseAlumno) llena la franja; sin ella, las dos
+            // etiquetas. Cuando no se puede registrar, solo el laboratorio y el equipo:
+            // el motivo va una sola vez, abajo.
+            bool soloTitulo = sinNada && !conFicha;
+            if (!conFicha)
+            {
+                lblClaseDetalle.Visible = !soloTitulo;
+            }
+
+            pnlClase.SetBounds(0, y, ancho, conFicha ? fichaClase.AltoNecesario : soloTitulo ? 50 : 84);
             lblClaseTitulo.SetBounds(18, 12, ancho - 36, 26);
             lblClaseDetalle.SetBounds(18, 40, ancho - 36, 40);
             y += pnlClase.Height + 30;
 
-            // --- Paso 1 ---
-            lblPaso1.SetBounds(0, y, ancho, 32);
-            y += 40;
+            // --- Paso 1 (con su bitacora ya registrada, o sin nada que registrar, no se ve) ---
+            bool conPaso1 = !registrado && !sinNada;
             bool pidiendoCodigo = codigoAceptado == null;
             bool conCodigo = PideCodigo;
-            lblPaso1Ayuda.Visible = pidiendoCodigo && lblPaso1Ayuda.Text.Length > 0;
-            if (lblPaso1Ayuda.Visible)
+            lblPaso1.Visible = conPaso1;
+            lblPaso1Ayuda.Visible = conPaso1 && pidiendoCodigo && lblPaso1Ayuda.Text.Length > 0;
+            txtCodigo.Visible = conPaso1 && pidiendoCodigo && conCodigo;
+            btnContinuar.Visible = conPaso1 && pidiendoCodigo && conCodigo;
+            pnlClases.Visible = conPaso1 && pidiendoCodigo && !conCodigo;
+            lblProxima.Visible = conPaso1 && pidiendoCodigo && !conCodigo && lblProxima.Text.Length > 0;
+            lblErrorCodigo.Visible = conPaso1 && pidiendoCodigo && lblErrorCodigo.Text.Length > 0;
+            // La clase aceptada ya se ve en la ficha ("Tu clase"); su renglon, solo sin ficha (uso libre).
+            lblCodigoOk.Visible = conPaso1 && !pidiendoCodigo && !conFicha;
+            lnkOtroCodigo.Visible = conPaso1 && !pidiendoCodigo;
+            if (conPaso1)
             {
-                int altoAyuda = TextRenderer.MeasureText(lblPaso1Ayuda.Text, lblPaso1Ayuda.Font, new Size(ancho, int.MaxValue), TextFormatFlags.WordBreak).Height;
-                lblPaso1Ayuda.SetBounds(0, y - 6, ancho, altoAyuda + 2);
-                y += altoAyuda + 4;
-            }
-
-            txtCodigo.Visible = pidiendoCodigo && conCodigo;
-            btnContinuar.Visible = pidiendoCodigo && conCodigo;
-            pnlClases.Visible = pidiendoCodigo && !conCodigo;
-            lblProxima.Visible = pidiendoCodigo && !conCodigo && lblProxima.Text.Length > 0;
-            lblCodigoOk.Visible = !pidiendoCodigo;
-            lnkOtroCodigo.Visible = !pidiendoCodigo && !registrado;
-            if (pidiendoCodigo && !conCodigo)
-            {
-                // Sin codigo: los botones de las clases abiertas y, debajo, la siguiente.
-                int altoBotones = 0;
-                foreach (Control boton in pnlClases.Controls)
+                int anchoTitulo = ancho;
+                if (!pidiendoCodigo)
                 {
-                    boton.Size = new Size(ancho, 62);
-                    altoBotones += boton.Height + boton.Margin.Vertical;
+                    // "Usar otro codigo" a la derecha de "Paso 1 listo: codigo K7M2Q ✓".
+                    lnkOtroCodigo.Location = new Point(ancho - lnkOtroCodigo.Width, y + (32 - lnkOtroCodigo.Height) / 2 + 2);
+                    anchoTitulo = Math.Max(100, lnkOtroCodigo.Left - 16);
                 }
 
-                pnlClases.SetBounds(0, y, ancho, altoBotones);
-                y += altoBotones;
-                if (lblProxima.Visible)
+                lblPaso1.SetBounds(0, y, anchoTitulo, 32);
+                y += 40;
+                if (lblPaso1Ayuda.Visible)
                 {
-                    int altoProxima = TextRenderer.MeasureText(lblProxima.Text, lblProxima.Font, new Size(ancho, int.MaxValue), TextFormatFlags.WordBreak).Height;
-                    lblProxima.SetBounds(0, y, ancho, altoProxima + 4);
-                    y += altoProxima + 8;
+                    int altoAyuda = AltoDe(lblPaso1Ayuda.Text, lblPaso1Ayuda.Font, ancho);
+                    lblPaso1Ayuda.SetBounds(0, y - 6, ancho, altoAyuda + 2);
+                    y += altoAyuda + 4;
                 }
 
-                bool hayErrorClase = lblErrorCodigo.Text.Length > 0;
-                lblErrorCodigo.Visible = hayErrorClase;
-                if (hayErrorClase)
+                if (pidiendoCodigo && !conCodigo)
                 {
-                    int alto = TextRenderer.MeasureText(lblErrorCodigo.Text, lblErrorCodigo.Font, new Size(ancho, int.MaxValue), TextFormatFlags.WordBreak).Height;
+                    // Sin codigo: los botones de las clases abiertas y, debajo, la siguiente.
+                    int altoBotones = 0;
+                    foreach (Control boton in pnlClases.Controls)
+                    {
+                        boton.Size = new Size(ancho, 62);
+                        altoBotones += boton.Height + boton.Margin.Vertical;
+                    }
+
+                    pnlClases.SetBounds(0, y, ancho, altoBotones);
+                    y += altoBotones;
+                    if (lblProxima.Visible)
+                    {
+                        int altoProxima = AltoDe(lblProxima.Text, lblProxima.Font, ancho);
+                        lblProxima.SetBounds(0, y, ancho, altoProxima + 4);
+                        y += altoProxima + 8;
+                    }
+                }
+                else if (pidiendoCodigo)
+                {
+                    txtCodigo.Location = new Point(0, y);
+                    btnContinuar.SetBounds(txtCodigo.Right + 12, y, btnContinuar.Width, txtCodigo.Height);
+                    y += txtCodigo.Height + 8;
+                }
+                else if (lblCodigoOk.Visible)
+                {
+                    lblCodigoOk.SetBounds(0, y, ancho, 28);
+                    y += 32;
+                }
+
+                if (lblErrorCodigo.Visible)
+                {
+                    int alto = AltoDe(lblErrorCodigo.Text, lblErrorCodigo.Font, ancho);
                     lblErrorCodigo.SetBounds(0, y, ancho, alto + 4);
                     y += alto + 8;
                 }
-            }
-            else if (pidiendoCodigo)
-            {
-                txtCodigo.Location = new Point(0, y);
-                btnContinuar.SetBounds(txtCodigo.Right + 12, y, btnContinuar.Width, txtCodigo.Height);
-                y += txtCodigo.Height + 8;
-                bool hayError = lblErrorCodigo.Text.Length > 0;
-                lblErrorCodigo.Visible = hayError;
-                if (hayError)
-                {
-                    int alto = TextRenderer.MeasureText(lblErrorCodigo.Text, lblErrorCodigo.Font, new Size(ancho, int.MaxValue), TextFormatFlags.WordBreak).Height;
-                    lblErrorCodigo.SetBounds(0, y, ancho, alto + 4);
-                    y += alto + 8;
-                }
-            }
-            else
-            {
-                lblErrorCodigo.Visible = false;
-                lblCodigoOk.SetBounds(0, y, ancho, 28);
-                y += 32;
-                if (lnkOtroCodigo.Visible)
-                {
-                    lnkOtroCodigo.Location = new Point(0, y);
-                    y += 26;
-                }
+
+                y += 26;
             }
 
-            y += 26;
-
-            // --- Paso 2, o el "listo" cuando ya se registro ---
+            // --- Paso 2 y paso 3 (sin registrar y con algo que registrar) ---
+            bool conPaso2 = !registrado && !sinNada;
             foreach (Control control in new Control[] { lblPaso2, pnlEstados, lblPista, btnRegistrar })
             {
-                control.Visible = !registrado;
+                control.Visible = conPaso2;
             }
 
-            lblListo.Visible = registrado;
-            lblListoDetalle.Visible = registrado;
-            btnEntendido.Visible = registrado && conEntendido;
-            lblErrorPaso2.Visible = !registrado && lblErrorPaso2.Text.Length > 0;
-            if (registrado)
-            {
-                pnlFallas.Visible = false;
-                lblPaso3.Visible = false;
-                pnlVecinos.Visible = false;
-                pnlEquipos.Visible = false;
-                lblOtroEquipo.Visible = false;
-                txtVecinos.Visible = false;
-                lblVecinosPista.Visible = false;
-                lblListo.SetBounds(0, y, ancho, 38);
-                y += 44;
-                int altoDetalle = TextRenderer.MeasureText(lblListoDetalle.Text, lblListoDetalle.Font, new Size(ancho, int.MaxValue), TextFormatFlags.WordBreak).Height;
-                lblListoDetalle.SetBounds(0, y, ancho, altoDetalle + 6);
-                y += altoDetalle + 12;
-                if (conEntendido)
-                {
-                    btnEntendido.Location = new Point(0, y + 4);
-                    y += btnEntendido.Height + 16;
-                }
-            }
-            else
+            pnlFallas.Visible = conPaso2 && rbFalla.Checked;
+            // El paso 3 sale cuando el 2 ya tiene respuesta: antes, a 1366 salia partido
+            // bajo la barra de abajo antes de hacer nada.
+            bool conPaso3 = conPaso2 && preguntarVecinos && codigoAceptado != null && (rbTodoBien.Checked || rbFalla.Checked || rbPropio.Checked);
+            lblPaso3.Visible = conPaso3;
+            pnlVecinos.Visible = conPaso3;
+            bool avisando = conPaso3 && rbVecinosSi.Checked;
+            bool conLista = avisando && pnlEquipos.Controls.Count > 0;
+            pnlEquipos.Visible = conLista;
+            lblOtroEquipo.Visible = conLista;
+            txtVecinos.Visible = avisando;
+            lblVecinosPista.Visible = avisando;
+            if (conPaso2)
             {
                 lblPaso2.SetBounds(0, y, ancho, 32);
                 y += 42;
@@ -1360,10 +1589,11 @@ namespace DigBit
                 pnlEstados.Location = new Point(0, y);
                 pnlEstados.PerformLayout();
                 y += pnlEstados.Height + 2;
-                lblPista.SetBounds(0, y, ancho, 24);
-                y += 32;
+                // El resumen de lo que se va a reportar puede pasar a dos renglones.
+                int altoPista = Math.Max(24, AltoDe(lblPista.Text, lblPista.Font, ancho) + 4);
+                lblPista.SetBounds(0, y, ancho, altoPista);
+                y += altoPista + 8;
 
-                pnlFallas.Visible = rbFalla.Checked;
                 if (pnlFallas.Visible)
                 {
                     int yf = 0;
@@ -1384,6 +1614,15 @@ namespace DigBit
                             yf += texto.Height + 8;
                         }
 
+                        // "Escribe qué falla...", justo debajo de su caja.
+                        Label errorOtro = errorOtroArea[area];
+                        errorOtro.Visible = texto.Visible && errorOtro.Text.Length > 0;
+                        if (errorOtro.Visible)
+                        {
+                            errorOtro.SetBounds(anchoEtiqueta, yf - 4, ancho - anchoEtiqueta, 24);
+                            yf += 24;
+                        }
+
                         yf += 10;
                     }
 
@@ -1392,45 +1631,32 @@ namespace DigBit
                 }
 
                 // --- Paso 3 ---
-                lblPaso3.Visible = preguntarVecinos;
-                pnlVecinos.Visible = preguntarVecinos;
-                bool avisando = preguntarVecinos && rbVecinosSi.Checked;
-                bool conLista = avisando && pnlEquipos.Controls.Count > 0;
-                pnlEquipos.Visible = conLista;
-                lblOtroEquipo.Visible = conLista;
-                txtVecinos.Visible = avisando;
-                lblVecinosPista.Visible = avisando;
-                if (preguntarVecinos)
+                if (conPaso3)
                 {
                     y += 16;
                     // Con "(opcional)" el titulo puede no caber en una linea: pasa a dos.
-                    int altoPaso3 = Math.Max(32, TextRenderer.MeasureText(lblPaso3.Text, lblPaso3.Font, new Size(ancho, int.MaxValue),
-                        TextFormatFlags.WordBreak).Height + 4);
+                    int altoPaso3 = Math.Max(32, AltoDe(lblPaso3.Text, lblPaso3.Font, ancho) + 4);
                     lblPaso3.SetBounds(0, y, ancho, altoPaso3);
                     y += altoPaso3 + 10;
                     pnlVecinos.MaximumSize = new Size(ancho, 0);
                     pnlVecinos.Location = new Point(0, y);
                     pnlVecinos.PerformLayout();
                     y += pnlVecinos.Height + 2;
-                    int altoPista = avisando
-                        ? TextRenderer.MeasureText(lblVecinosPista.Text, lblVecinosPista.Font, new Size(ancho, int.MaxValue), TextFormatFlags.WordBreak).Height
-                        : 0;
+                    int altoPista3 = avisando ? AltoDe(lblVecinosPista.Text, lblVecinosPista.Font, ancho) : 0;
                     if (conLista)
                     {
                         // Que marque (la ayuda), la lista, y la caja para una que no este.
                         // La ayuda con el alto de la mas larga de sus dos versiones: cambia
                         // al marcar la quinta, y la lista no debe moverse bajo el puntero.
-                        Size limite = new Size(ancho, int.MaxValue);
-                        int altoAyuda = Math.Max(
-                            TextRenderer.MeasureText(TextoAyudaLista(false), lblVecinosPista.Font, limite, TextFormatFlags.WordBreak).Height,
-                            TextRenderer.MeasureText(TextoAyudaLista(true), lblVecinosPista.Font, limite, TextFormatFlags.WordBreak).Height);
+                        int altoAyuda = Math.Max(AltoDe(TextoAyudaLista(false), lblVecinosPista.Font, ancho),
+                            AltoDe(TextoAyudaLista(true), lblVecinosPista.Font, ancho));
                         lblVecinosPista.SetBounds(0, y, ancho, altoAyuda + 4);
                         y += altoAyuda + 10;
                         pnlEquipos.MaximumSize = new Size(ancho, 0);
                         pnlEquipos.Location = new Point(0, y);
                         pnlEquipos.PerformLayout();
                         y += pnlEquipos.Height + 6;
-                        int altoOtro = TextRenderer.MeasureText(lblOtroEquipo.Text, lblOtroEquipo.Font, new Size(ancho, int.MaxValue), TextFormatFlags.WordBreak).Height;
+                        int altoOtro = AltoDe(lblOtroEquipo.Text, lblOtroEquipo.Font, ancho);
                         lblOtroEquipo.SetBounds(0, y, ancho, altoOtro + 4);
                         y += altoOtro + 6;
                         txtVecinos.SetBounds(0, y, Math.Min(420, ancho), txtVecinos.Height);
@@ -1440,25 +1666,91 @@ namespace DigBit
                     {
                         txtVecinos.SetBounds(0, y, Math.Min(420, ancho), txtVecinos.Height);
                         y += txtVecinos.Height + 6;
-                        lblVecinosPista.SetBounds(0, y, ancho, altoPista + 4);
-                        y += altoPista + 12;
+                        lblVecinosPista.SetBounds(0, y, ancho, altoPista3 + 4);
+                        y += altoPista3 + 12;
                     }
                 }
             }
 
+            // --- El "listo": registrada, o ya la tenia (MostrarYaRegistrado) ---
+            // Fuera del kiosco la pantalla no se esconde al entregar el equipo: "Entendido"
+            // deja paso a "Cerrar sesion". Con "ya tienes tu bitacora" no hay nada que
+            // entregar: "Cerrar sesion" tambien en el kiosco.
+            // Con campos y no con Visible, que antes de ensenarse la ventana dice false.
+            bool conEntendidoVisible = registrado && conEntendido && !(equipoEntregado && !Kiosco.Activo);
+            bool conAvisoDocente = registrado && lblAvisoDocente.Text.Length > 0;
+            bool conSalir = sinNada || (registrado && !conEntendidoVisible && (yaRegistrado || !Kiosco.Activo));
+            pnlPalomita.Visible = registrado;
+            lblListo.Visible = registrado;
+            lblAvisoDocente.Visible = conAvisoDocente;
+            lblListoDetalle.Visible = registrado;
+            btnEntendido.Visible = conEntendidoVisible;
+            btnSalir.Visible = conSalir;
+            if (registrado)
+            {
+                pnlPalomita.Location = new Point(0, y);
+                lblListo.SetBounds(52, y, ancho - 52, 40);
+                y += 54;
+                if (conAvisoDocente)
+                {
+                    int altoAviso = AltoDe(lblAvisoDocente.Text, lblAvisoDocente.Font, ancho - lblAvisoDocente.Padding.Horizontal)
+                        + lblAvisoDocente.Padding.Vertical;
+                    lblAvisoDocente.SetBounds(0, y, ancho, altoAviso);
+                    y += altoAviso + 14;
+                }
+
+                int altoDetalle = AltoDe(lblListoDetalle.Text, lblListoDetalle.Font, ancho);
+                lblListoDetalle.SetBounds(0, y, ancho, altoDetalle + 6);
+                y += altoDetalle + 12;
+            }
+
+            // --- Sin nada que registrar: un solo bloque ---
+            lblNoPuedes.Visible = sinNada;
+            lblNoPuedesMotivo.Visible = sinNada;
+            if (sinNada)
+            {
+                int altoTitulo = Math.Max(32, AltoDe(lblNoPuedes.Text, lblNoPuedes.Font, ancho) + 4);
+                lblNoPuedes.SetBounds(0, y, ancho, altoTitulo);
+                y += altoTitulo + 6;
+                lblNoPuedesMotivo.Text = MotivoSinNada();
+                int altoMotivo = AltoDe(lblNoPuedesMotivo.Text, lblNoPuedesMotivo.Font, ancho);
+                lblNoPuedesMotivo.SetBounds(0, y, ancho, altoMotivo + 4);
+                y += altoMotivo + 12;
+            }
+
+            // El boton de salida (o "Entendido"), debajo de lo que haya. Sin nada que
+            // registrar no hay barra de abajo: "Mi perfil", a la derecha de "Cerrar sesion".
+            bool conPerfilSinNada = sinNada && conPerfil;
+            lnkPerfilSinNada.Visible = conPerfilSinNada;
+            if (conEntendidoVisible || conSalir)
+            {
+                Button boton = conEntendidoVisible ? btnEntendido : btnSalir;
+                boton.Location = new Point(0, y + 4);
+                if (conPerfilSinNada)
+                {
+                    lnkPerfilSinNada.Location = new Point(boton.Right + 28, boton.Top + (boton.Height - lnkPerfilSinNada.Height) / 2);
+                }
+
+                y += boton.Height + 16;
+            }
+
             y += 20;
             columna.Size = new Size(ancho, y);
-            int x = Math.Max(20, (contenedor.ClientSize.Width - ancho) / 2);
             columna.Location = new Point(x + contenedor.AutoScrollPosition.X, 28 + contenedor.AutoScrollPosition.Y);
 
             // La barra de abajo, alineada con la columna: el perfil a la izquierda,
-            // el boton a la derecha y, pegado a el, lo que falte para registrar.
+            // el boton a la derecha y, pegado a el, el error o lo que falte para registrar.
             if (pie != null)
             {
                 btnRegistrar.Location = new Point(x + ancho - btnRegistrar.Width, (pie.Height - btnRegistrar.Height) / 2);
                 lnkPerfil.Location = new Point(x, (pie.Height - lnkPerfil.Height) / 2);
-                int inicioError = lnkPerfil.Right + 20;
-                lblErrorPaso2.SetBounds(inicioError, 0, Math.Max(50, btnRegistrar.Left - 16 - inicioError), pie.Height);
+                int inicioError = InicioTextoPie(x);
+                lblErrorPaso2.Visible = conPaso2 && lblErrorPaso2.Text.Length > 0;
+                // Desde y = 1: la raya de arriba de la barra se sigue viendo.
+                lblErrorPaso2.SetBounds(inicioError, 1, AnchoTextoPie(x, ancho), pie.Height - 1);
+                // Con el boton apagado y sin error a la vista, que falta: el boton solo no lo decia.
+                lblFalta.Visible = conPaso2 && !lblErrorPaso2.Visible && lblFalta.Text.Length > 0;
+                lblFalta.SetBounds(inicioError, 1, AnchoTextoPie(x, ancho), pie.Height - 1);
             }
 
             // Al angostar la ventana (de 1920 a 1366) Windows calcula las barras antes
@@ -1480,6 +1772,19 @@ namespace DigBit
             }
         }
 
+        /// <summary>Donde empieza el texto de la barra de abajo: despues de "Mi perfil", si lo hay.</summary>
+        private int InicioTextoPie(int x)
+        {
+            return conPerfil ? x + lnkPerfil.Width + 20 : x;
+        }
+
+        /// <summary>El ancho del error (o de lo que falta) en la barra de abajo, hasta el boton.</summary>
+        private int AnchoTextoPie(int x, int ancho)
+        {
+            int inicio = conPerfil ? x + lnkPerfil.Width + 20 : x;
+            return Math.Max(50, x + ancho - btnRegistrar.Width - 16 - inicio);
+        }
+
         // =====================================================================
         // Paso 1: el codigo
         // =====================================================================
@@ -1497,10 +1802,12 @@ namespace DigBit
 
         private void Continuar()
         {
-            string codigo = txtCodigo.Text.Trim();
+            // Sin espacios ni guiones (LimpiarCodigo); con guiones, por si un codigo viejo los lleva.
+            string codigo = LimpiarCodigo(txtCodigo.Text, true);
+            string conGuiones = LimpiarCodigo(txtCodigo.Text, false);
             if (codigo.Length == 0)
             {
-                MostrarErrorCodigo("Escribe el código que te dicta tu docente.");
+                MostrarErrorCodigo("Escribe el código antes de pulsar Continuar.");
                 txtCodigo.Focus();
                 return;
             }
@@ -1518,9 +1825,10 @@ namespace DigBit
             {
                 ResultadoCodigo resultado;
                 SesionLocal sesionLocal = null;
+                string usado;
                 if (SinConexion.Activo)
                 {
-                    resultado = SinConexion.Cache.ResolverCodigo(codigo, matricula, out sesionLocal);
+                    resultado = ConOSinGuiones(codigo, conGuiones, c => SinConexion.Cache.ResolverCodigo(c, matricula, out sesionLocal), out usado);
                 }
                 else
                 {
@@ -1533,7 +1841,8 @@ namespace DigBit
                             return;
                         }
 
-                        resultado = new HorariosDatos().ResolverCodigo(codigo, LaboratorioEquipo.Id, idUsuario, matricula);
+                        resultado = ConOSinGuiones(codigo, conGuiones,
+                            c => new HorariosDatos().ResolverCodigo(c, LaboratorioEquipo.Id, idUsuario, matricula), out usado);
                     }
                     catch (Exception ex)
                     {
@@ -1545,16 +1854,23 @@ namespace DigBit
                             return;
                         }
 
-                        resultado = SinConexion.Cache.ResolverCodigo(codigo, matricula, out sesionLocal);
+                        resultado = ConOSinGuiones(codigo, conGuiones, c => SinConexion.Cache.ResolverCodigo(c, matricula, out sesionLocal), out usado);
                         ActualizarDatos();
                     }
                 }
 
-                // Quien ya registro y vuelve durante la misma clase (se fue la luz,
-                // se reinicio el equipo) no es un error: puede seguir usandolo.
-                if (resultado.Motivo == MotivoCodigo.YaRegistrado && resultado.Ventana != null
-                    && OfrecerReanudar(resultado.Ventana, sesionLocal))
+                codigo = usado;
+
+                // Quien ya registro y vuelve durante la misma clase (se fue la luz, se
+                // reinicio el equipo) no es un error: en el kiosco puede seguir usando el
+                // equipo; si no (o no quiere), se le dice con calma que ya la tiene.
+                if (resultado.Motivo == MotivoCodigo.YaRegistrado)
                 {
+                    if (resultado.Ventana == null || !OfrecerReanudar(resultado.Ventana, sesionLocal))
+                    {
+                        MostrarYaRegistrado(resultado.Ventana, sesionLocal);
+                    }
+
                     return;
                 }
 
@@ -1672,9 +1988,13 @@ namespace DigBit
                     }
                 }
 
-                if (resultado.Motivo == MotivoCodigo.YaRegistrado && resultado.Ventana != null
-                    && OfrecerReanudar(resultado.Ventana, sesionLocal))
+                if (resultado.Motivo == MotivoCodigo.YaRegistrado)
                 {
+                    if (resultado.Ventana == null || !OfrecerReanudar(resultado.Ventana, sesionLocal))
+                    {
+                        MostrarYaRegistrado(resultado.Ventana, sesionLocal);
+                    }
+
                     return;
                 }
 
@@ -1774,14 +2094,15 @@ namespace DigBit
 
         private bool SePuedeElegirSola(string clave)
         {
-            return codigoAceptado == null && !eligeElAlumno && Visible && !OwnedForms.Any(f => f.Visible)
+            return codigoAceptado == null && !registrado && !eligeElAlumno && Visible && !OwnedForms.Any(f => f.Visible)
                 && !elegidasSolas.Contains(clave);
         }
 
         /// <summary>
-        /// Le devuelve el equipo a quien ya registro y sigue en clase. True si se
-        /// atendio el caso (reanudo, o dijo que no); false para mostrar el aviso de
-        /// siempre. La hora es la del SERVIDOR, como en todo lo demas.
+        /// Le devuelve el equipo a quien ya registro y sigue en clase. True si
+        /// reanudo; false si no (la clase ya termino, fuera del kiosco, o dijo que
+        /// no): entonces se le dice con calma que ya tiene su bitacora
+        /// (MostrarYaRegistrado). La hora es la del SERVIDOR, como en todo lo demas.
         /// </summary>
         private bool OfrecerReanudar(VentanaCodigo ventanaRegistrada, SesionLocal sesionLocal)
         {
@@ -1794,14 +2115,18 @@ namespace DigBit
             }
 
             bool libre = ventanaRegistrada.EsUsoLibre;
+            // La suya sigue en la cola de este equipo: su docente aun no la ve. Se lo
+            // dice aqui y lo recuerda el globo del escritorio (como al registrar).
+            bool avisarAlDocente = !libre && EnLaColaDeEsteEquipo(ventanaRegistrada, sesionLocal);
             if (!DialogoConfirmacion.Preguntar(this, libre ? "Continuar con el uso libre" : "Continuar en esta clase",
                 libre ? "Ya registraste tu bitácora de uso libre." : "Ya registraste tu bitácora en esta clase.",
-                "Tu primer registro es el que cuenta y se queda como está. Puedes volver a usar este equipo "
-                    + HastaLas(ventanaRegistrada.Fin.TimeOfDay) + ".",
+                "Tu primer registro es el que cuenta y se queda como está. "
+                    + (avisarAlDocente ? AvisoAlDocente + " " : "")
+                    + "Puedes volver a usar este equipo " + HastaLas(ventanaRegistrada.Fin.TimeOfDay) + ".",
                 "Volver a usar el equipo", false))
             {
                 Log.Info("Se ofrecio reanudar la clase de " + matricula + " con el codigo " + codigo + " y dijo que no.");
-                return true;
+                return false;
             }
 
             Log.Info("Reanudando la clase de " + matricula + " con el codigo " + codigo + " hasta "
@@ -1809,7 +2134,7 @@ namespace DigBit
             Datos_User.Setcodigo(codigo);
             Datos_User.VentanaActual = ventanaRegistrada;
             Datos_User.SesionSinConexion = sesionLocal;
-            SesionEquipo.Liberar(ventanaRegistrada, matricula, codigo, true);
+            SesionEquipo.Liberar(ventanaRegistrada, matricula, codigo, true, avisarAlDocente);
             return true;
         }
 
@@ -1829,16 +2154,20 @@ namespace DigBit
             Log.Info((usoLibre ? "Uso libre" : tecleado == null ? "Clase elegida de la lista" : "Codigo '" + tecleado + "' aceptado") + " para " + matricula + " en "
                 + LaboratorioEquipo.Nombre + " (sesion " + aceptada.IdCodigo + ", hasta " + aceptada.Fin.ToString("HH:mm") + ").");
 
+            // El paso hecho lo dice su titulo: antes seguia pidiendo el codigo ya aceptado.
+            // La clase se ve en la ficha ("Tu clase"); el uso libre, que no tiene ficha,
+            // en su renglon (lblCodigoOk).
             if (usoLibre)
             {
+                lblPaso1.Text = "Paso 1 listo ✓";
                 lblCodigoOk.Text = "Uso libre del laboratorio (sin clase), " + HastaLas(aceptada.Fin.TimeOfDay) + ".";
                 lnkOtroCodigo.Text = "Volver a elegir";
                 MostrarClase("Uso libre: ahora no hay clase. Puedes usar el equipo " + HastaLas(aceptada.Fin.TimeOfDay) + ".", true);
             }
             else
             {
-                lblCodigoOk.Text = (tecleado != null ? "Código " + tecleado + " aceptado: " : sola ? "Tu clase (la única de ahora en este laboratorio): " : "Tu clase: ")
-                    + aceptada.Materia + ", " + aceptada.Grupo + ", hasta las " + aceptada.Fin.ToString("HH:mm") + ".";
+                lblPaso1.Text = tecleado != null ? "Paso 1 listo: código " + tecleado + " ✓" : "Paso 1 listo: clase elegida ✓";
+                lblCodigoOk.Text = "";
                 lnkOtroCodigo.Text = tecleado == null ? "Elegir otra clase" : "Usar otro código";
                 MostrarFicha(aceptada.Materia, aceptada.Grupo, aceptada.Profesor, aceptada.Inicio.TimeOfDay, aceptada.Fin.TimeOfDay, true, false,
                     null, AspectoDe(aceptada.IdProfesor, aceptada.IdMateria, aceptada.IdGrupo));
@@ -1889,7 +2218,9 @@ namespace DigBit
             lblPaso2.ForeColor = activo ? Color.DarkGreen : Apagado;
             pnlEstados.Enabled = activo;
             pnlFallas.Enabled = activo;
-            btnRegistrar.Enabled = activo && (rbTodoBien.Checked || rbFalla.Checked || rbPropio.Checked);
+            // Apagado mientras falte algo, y junto a el, que falta (lblFalta): el boton solo no lo decia.
+            lblFalta.Text = QueFalta();
+            btnRegistrar.Enabled = lblFalta.Text.Length == 0;
 
             lblPaso3.ForeColor = activo ? Color.DarkGreen : Apagado;
             pnlVecinos.Enabled = activo;
@@ -1897,13 +2228,53 @@ namespace DigBit
             txtVecinos.Enabled = activo;
             ActualizarTextosPaso3();
 
+            // Con una falla, lo que se va a reportar, para revisarlo de un vistazo antes de registrar.
+            List<string> fallas = rbFalla.Checked ? FallasMarcadas() : new List<string>();
             string equipo = LaboratorioEquipo.NumeroMaquina;
             lblPista.Text = !activo ? (PideCodigo ? "Primero escribe el código de tu clase." : "Primero elige tu clase.")
                 : rbTodoBien.Checked ? "Se registra sin fallas y el equipo " + equipo + " queda para ti hasta las " + ventana.Fin.ToString("HH:mm") + "."
-                : rbFalla.Checked ? "Marca lo que falla en cada parte; la persona responsable del laboratorio lo revisará."
+                : rbFalla.Checked ? (fallas.Count > 0 ? "Vas a reportar: " + string.Join("; ", fallas) + "."
+                    : "Aún no marcas ninguna falla: marca abajo lo que falla en cada parte.")
                 : rbPropio.Checked ? "No usarás este equipo: al registrar podrás apagarlo o dejarlo listo para otra persona."
                 : "Elige una opción; después pulsa «Registrar mi bitácora».";
+            lblPista.ForeColor = activo && fallas.Count > 0 ? LetraAviso : TextoSecundario;
             Colocar();
+        }
+
+        /// <summary>
+        /// Lo que falta para poder registrar, para decirlo junto al boton apagado; ""
+        /// si nada. Con "Reportar una falla" y las tres partes en "Sin problema" aun
+        /// no hay nada que reportar ("Otro" sin escribir lo dice Registrar, junto a su caja).
+        /// </summary>
+        private string QueFalta()
+        {
+            if (codigoAceptado == null)
+            {
+                return PideCodigo ? "Falta: escribir el código" : "Falta: elegir tu clase";
+            }
+
+            if (!rbTodoBien.Checked && !rbFalla.Checked && !rbPropio.Checked)
+            {
+                return "Falta: elegir cómo está el equipo";
+            }
+
+            return rbFalla.Checked && FallasMarcadas().Count == 0 ? "Falta: marcar la falla" : "";
+        }
+
+        /// <summary>Las fallas marcadas como se leen: "Red: No tiene cable de red", "Software: Otro".</summary>
+        private List<string> FallasMarcadas()
+        {
+            List<string> fallas = new List<string>();
+            foreach (string area in Consultas.AreasDeFalla)
+            {
+                RadioButton elegida = chipsArea[area].Controls.OfType<RadioButton>().FirstOrDefault(c => c.Checked);
+                if (elegida != null && elegida.Text != SinProblema)
+                {
+                    fallas.Add(etiquetasArea[area].Text + ": " + elegida.Text);
+                }
+            }
+
+            return fallas;
         }
 
         private void MostrarErrorPaso2(string texto)
@@ -1919,13 +2290,14 @@ namespace DigBit
 
         /// <summary>
         /// Falla y comentario de un area, como los guardaba Registro_Bitacora:
-        /// "Ninguno" sin problema, el texto de la lista, u "Otro" con lo que
-        /// escribio ("Otro (sin detalle)" si no escribio nada).
+        /// "Ninguno" sin problema, el valor de la lista (el Tag del chip, no la
+        /// etiqueta que se lee: Consultas.EtiquetaDeFalla), u "Otro" con lo que
+        /// escribio (OtrosConDetalle ya comprobo que escribio algo).
         /// </summary>
         private void LeerArea(string area, out string falla, out string comentario)
         {
             RadioButton elegida = chipsArea[area].Controls.OfType<RadioButton>().FirstOrDefault(c => c.Checked);
-            string texto = elegida == null ? SinProblema : elegida.Text;
+            string texto = elegida == null ? SinProblema : elegida.Tag as string ?? elegida.Text;
             comentario = "";
             if (texto == SinProblema)
             {
@@ -1937,6 +2309,7 @@ namespace DigBit
                 comentario = otroArea[area].Text.Trim();
                 if (comentario.Length == 0)
                 {
+                    // No deberia llegar (OtrosConDetalle): por si acaso, que se note.
                     comentario = "Otro (sin detalle)";
                 }
             }
@@ -1944,6 +2317,35 @@ namespace DigBit
             {
                 falla = texto;
             }
+        }
+
+        /// <summary>
+        /// Cada area con "Otro" marcado lleva escrito que falla, como "Reportar una
+        /// falla" del docente: "Otro (sin detalle)" no le sirve a quien revisa el
+        /// equipo. Si falta, lo dice debajo de esa caja (y abajo, junto al boton), la
+        /// trae a la vista con el foco y devuelve false: no se registra.
+        /// </summary>
+        private bool OtrosConDetalle()
+        {
+            foreach (string area in Consultas.AreasDeFalla)
+            {
+                TextBox texto = otroArea[area];
+                bool conOtro = chipsArea[area].Controls.OfType<RadioButton>().Any(c => c.Checked && c.Text == Otro);
+                if (!conOtro || texto.Text.Trim().Length > 0)
+                {
+                    continue;
+                }
+
+                string mensaje = "Escribe qué falla en «Otro» (" + etiquetasArea[area].Text + ").";
+                errorOtroArea[area].Text = mensaje;
+                MostrarErrorPaso2(mensaje);
+                Colocar();
+                contenedor.ScrollControlIntoView(errorOtroArea[area].Visible ? (Control)errorOtroArea[area] : texto);
+                texto.Focus();
+                return false;
+            }
+
+            return true;
         }
 
         private void Registrar()
@@ -1965,6 +2367,12 @@ namespace DigBit
             }
             else if (rbFalla.Checked)
             {
+                // "Otro" sin escribir que falla no se registra (lo dice junto a la caja).
+                if (!OtrosConDetalle())
+                {
+                    return;
+                }
+
                 valores = new string[6];
                 for (int i = 0; i < Consultas.AreasDeFalla.Length; i++)
                 {
@@ -2020,17 +2428,8 @@ namespace DigBit
             if (ventana.EsUsoLibre && ventana.Restante <= TimeSpan.Zero)
             {
                 Log.Info("Uso libre de " + matricula + " vencido antes de registrar (hasta " + ventana.Fin.ToString("HH:mm") + "): se vuelve a elegir.");
-                string fin = ventana.Fin.ToString("HH:mm");
-                codigoAceptado = null;
-                ventana = null;
-                Datos_User.VentanaActual = null;
-                Datos_User.SesionSinConexion = null;
-                lnkOtroCodigo.Visible = false;
-                TextosPaso1();
-                MostrarErrorCodigo("El uso libre terminó a las " + fin + ": tu bitácora va en lo que toca ahora, elígelo abajo si no se elige solo. "
+                SoltarClase("El uso libre terminó a las " + ventana.Fin.ToString("HH:mm") + ": tu bitácora va en lo que toca ahora, elígelo abajo si no se elige solo. "
                     + "Lo que marcaste se conserva.");
-                ActualizarPaso2();
-                ActualizarDatos();
                 return;
             }
 
@@ -2045,12 +2444,33 @@ namespace DigBit
             finally
             {
                 Cursor = Cursors.Default;
-                btnRegistrar.Enabled = true;
+                btnRegistrar.Enabled = QueFalta().Length == 0;
             }
 
             if (guardado == ResultadoGuardado.NoGuardada)
             {
-                // GuardarBitacora ya dijo por que (codigo vencido, ya registrado...).
+                // Antes lo decia una ventana de Windows y, al cerrarla, la pantalla quedaba
+                // igual, con Registrar activo y sin camino. Ahora, en la pantalla y con la salida.
+                MotivoNoGuardada motivo = consultas.UltimoMotivo;
+                string mensaje = string.IsNullOrEmpty(consultas.UltimoMensaje)
+                    ? "No se pudo guardar tu bitácora. Inténtalo de nuevo; si sigue, " + MensajeDeFallo.AvisaAlLaboratorio + "."
+                    : consultas.UltimoMensaje;
+                Log.Info("Bitacora de " + matricula + " no guardada (" + motivo + ").");
+                if (motivo == MotivoNoGuardada.Duplicada)
+                {
+                    // Solo cuenta la primera: ya la tiene, no es un error.
+                    MostrarYaRegistrado(ventana, Datos_User.SesionSinConexion);
+                }
+                else if (motivo == MotivoNoGuardada.Terminada || motivo == MotivoNoGuardada.NoExiste)
+                {
+                    // Esa clase ya no sirve: al paso 1, como el uso libre vencido.
+                    SoltarClase(mensaje);
+                }
+                else
+                {
+                    MostrarErrorPaso2(mensaje);
+                }
+
                 return;
             }
 
@@ -2070,12 +2490,12 @@ namespace DigBit
             // Lo dice el resultado y no SinConexion.Activo: la red tambien puede
             // caerse justo al guardar, o volver entre el codigo y el registro.
             // Guardada aqui, su docente no la ve hasta que se envie: en una clase,
-            // que le avise ya (la asistencia solo se la puede dar mientras dura).
+            // que le avise ya (la asistencia solo se la puede dar mientras dura). Es
+            // lo unico que le toca hacer: va aparte y en grande (lblAvisoDocente).
             bool enEsteEquipo = guardado == ResultadoGuardado.EnEsteEquipo;
             bool avisarAlDocente = enEsteEquipo && !ventana.EsUsoLibre;
-            lblListoDetalle.Text = (avisarAlDocente
-                    ? "Se guardó en este equipo y se enviará sola en cuanto haya conexión, pero tu docente aún no la ve: "
-                      + "avísale ahora para que te dé la asistencia. "
+            lblAvisoDocente.Text = avisarAlDocente ? AvisoAlDocente : "";
+            lblListoDetalle.Text = (avisarAlDocente ? "Se enviará sola en cuanto haya conexión. "
                     : enEsteEquipo ? "Se guardó en este equipo y se enviará sola en cuanto haya conexión. " : "")
                 + (equiposSinInternet != null ? "También quedó tu aviso: sin internet en " + EstiloAdmin.Enumerar(equiposSinInternet.Split(',').ToList()) + ". " : "")
                 + "Puedes usar este equipo " + HastaLas(ventana.Fin.TimeOfDay) + ".";
@@ -2090,6 +2510,9 @@ namespace DigBit
             conEntendido = avisarAlDocente;
             segundosParaEntregar = avisarAlDocente ? SegundosParaLeerElAviso : 0;
             btnEntendido.Text = "Entendido (" + SegundosParaLeerElAviso + ")";
+            Colocar();
+            // Arriba del todo: el "listo" (y el aviso) en lugar de los pasos.
+            contenedor.AutoScrollPosition = Point.Empty;
             Colocar();
             if (conEntendido)
             {
@@ -2113,6 +2536,109 @@ namespace DigBit
         }
 
         /// <summary>
+        /// Suelta la clase aceptada y vuelve al paso 1 con el porque en su error (sin
+        /// perder lo marcado en los pasos 2 y 3): el uso libre vencio, o al guardar la
+        /// clase ya habia terminado o su sesion ya no existe.
+        /// </summary>
+        private void SoltarClase(string mensaje)
+        {
+            codigoAceptado = null;
+            ventana = null;
+            Datos_User.VentanaActual = null;
+            Datos_User.SesionSinConexion = null;
+            TextosPaso1();
+            MostrarErrorCodigo(mensaje);
+            ActualizarPaso2();
+            ActualizarDatos();
+            if (lblErrorCodigo.Visible)
+            {
+                contenedor.ScrollControlIntoView(lblErrorCodigo);
+            }
+        }
+
+        /// <summary>
+        /// Ya tenia su bitacora de esta sesion (en el servidor o en la cola de este
+        /// equipo) y no se reanudo: la clase termino, fuera del kiosco no hay equipo
+        /// que liberar, dijo que no a "Volver a usar el equipo", o al guardar ya habia
+        /// una. Antes salia como un error rojo y quien volvia tras un apagon (con Deep
+        /// Freeze pasa seguido) creia que habia perdido su registro. Ahora, con calma:
+        /// su clase, que ya la tiene y la salida. registrada puede ser null.
+        /// </summary>
+        private void MostrarYaRegistrado(VentanaCodigo registrada, SesionLocal sesionLocal)
+        {
+            bool enLaCola = registrada != null && EnLaColaDeEsteEquipo(registrada, sesionLocal);
+            bool libre = registrada != null && registrada.EsUsoLibre;
+            Log.Info("El alumno " + matricula + " ya tenia su bitacora de esta sesion" + (enLaCola ? " (en la cola de este equipo)" : "") + ".");
+            registrado = true;
+            yaRegistrado = true;
+            conEntendido = false;
+            if (registrada != null)
+            {
+                if (libre)
+                {
+                    MostrarClase("Uso libre del laboratorio (sin clase), " + HastaLas(registrada.Fin.TimeOfDay) + ".", true);
+                }
+                else
+                {
+                    MostrarFicha(registrada.Materia, registrada.Grupo, registrada.Profesor, registrada.Inicio.TimeOfDay, registrada.Fin.TimeOfDay,
+                        true, false, null, AspectoDe(registrada.IdProfesor, registrada.IdMateria, registrada.IdGrupo));
+                }
+            }
+
+            lblListo.Text = libre ? "Ya tienes tu bitácora de uso libre" : "Ya tienes tu bitácora de esta clase";
+            // Si sigue en la cola de este equipo y la clase no ha terminado, su docente aun
+            // no la ve y la asistencia solo se la puede dar mientras dura: lo mismo que al
+            // registrar sin conexion (Registrar), y no "no tienes que hacer nada mas".
+            // Restante es con la hora del servidor de ahora (no la de cuando se leyo).
+            bool avisarAlDocente = enLaCola && !libre && registrada.Restante > TimeSpan.Zero;
+            lblAvisoDocente.Text = avisarAlDocente ? AvisoAlDocente : "";
+            lblListoDetalle.Text = avisarAlDocente
+                ? "Tu primer registro es el que cuenta. Está guardada en este equipo y se enviará sola en cuanto haya conexión."
+                : "Tu primer registro es el que cuenta. No tienes que hacer nada más."
+                    + (enLaCola ? " Está guardada en este equipo y se enviará sola." : "");
+            lblErrorCodigo.Text = "";
+            lblErrorPaso2.Text = "";
+            // Enter ya no pulsa "Continuar" (escondido), ni nada: la salida es "Cerrar sesion".
+            AcceptButton = null;
+            ActiveControl = null;
+            VigilarYaRegistrado();
+            contenedor.AutoScrollPosition = Point.Empty;
+            Colocar();
+        }
+
+        /// <summary>Si esa bitacora suya sigue en la cola de este equipo sin enviar.</summary>
+        private bool EnLaColaDeEsteEquipo(VentanaCodigo registrada, SesionLocal sesionLocal)
+        {
+            try
+            {
+                SesionLocal sesion = sesionLocal ?? SesionLocal.DesdeVentana(registrada);
+                return ColaBitacoras.YaRegistrada(sesion.Clave, matricula);
+            }
+            catch (Exception ex)
+            {
+                Log.Aviso("Pantalla del alumno: no se pudo ver si su bitacora sigue en la cola de este equipo: " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Con "ya tienes tu bitacora" la sesion tambien se cierra sola si se queda sin
+        /// nadie (en el kiosco, para el siguiente), con un aviso que no dice que falta
+        /// registrar: la vigilancia de OnShown solo cuenta mientras no ha registrado.
+        /// </summary>
+        private void VigilarYaRegistrado()
+        {
+            if (vigilancia == null)
+            {
+                return;
+            }
+
+            vigilancia.Dispose();
+            vigilancia = Inactividad.Vigilar(this, EsperaInactividad, CuentaAtrasInactividad, () => !SesionEquipo.Activa,
+                "Nadie ha tocado el teclado ni el mouse en " + Inactividad.Duracion(EsperaInactividad)
+                    + ". Ya tienes tu bitácora: si ya no estás aquí, tu sesión se cierra para dejar el equipo listo para otra persona.");
+        }
+        /// <summary>
         /// Entrega el equipo a quien acaba de registrar, hasta la hora de salida. Una
         /// sola vez, aunque lo pidan a la vez la cuenta y "Entendido" (al abrir el
         /// escritorio se siguen atendiendo los mensajes de la ventana).
@@ -2133,6 +2659,8 @@ namespace DigBit
             }
 
             btnEntendido.Enabled = false;
+            // Fuera del kiosco la pantalla sigue a la vista: "Entendido" deja paso a "Cerrar sesion".
+            Colocar();
 
             // La clase termino mientras leia: ya no hay tiempo que darle. Se vuelve al
             // inicio en vez de abrir el escritorio para cerrar la sesion de Windows
@@ -2196,8 +2724,28 @@ namespace DigBit
             }
         }
 
+        /// <summary>"Mi perfil (nombre, correo y contraseña)": el de la barra de abajo y el del bloque "Ahora no puedes registrar...".</summary>
+        private LinkLabel CrearEnlacePerfil()
+        {
+            LinkLabel enlace = new LinkLabel
+            {
+                AutoSize = true,
+                Font = new DrawingFont("Century Gothic", 10.5F),
+                LinkColor = Color.DarkGreen,
+                ActiveLinkColor = Color.Green,
+                Text = "Mi perfil (nombre, correo y contraseña)"
+            };
+            enlace.LinkClicked += (s, e) => AbrirPerfil();
+            return enlace;
+        }
+
         private void AbrirPerfil()
         {
+            if (!conPerfil)
+            {
+                return;
+            }
+
             if (perfil == null || perfil.IsDisposed)
             {
                 perfil = new editar_Perfil("alumno");
@@ -2231,7 +2779,7 @@ namespace DigBit
             // en la misma clase lo libera sin registrar otra vez).
             vigilancia = Inactividad.Vigilar(this, EsperaInactividad, CuentaAtrasInactividad,
                 () => !registrado && !SesionEquipo.Activa,
-                "Nadie ha tocado el teclado ni el ratón en " + Inactividad.Duracion(EsperaInactividad)
+                "Nadie ha tocado el teclado ni el mouse en " + Inactividad.Duracion(EsperaInactividad)
                     + " y tu bitácora aún no está registrada. Si ya no estás aquí, tu sesión se cierra para que nadie la registre por ti.");
         }
 
@@ -2408,7 +2956,9 @@ namespace DigBit
                 }
             }
 
-            if (codigoAceptado != null)
+            // Con el codigo ya aceptado, o ya con su bitacora (tambien "ya la tenias"), lo
+            // de arriba es su clase: una respuesta tardia no la cambia.
+            if (codigoAceptado != null || registrado)
             {
                 // El circulo de su clase, por si lo personal llego despues de aceptar el codigo.
                 if (ventana != null && !ventana.EsUsoLibre && fichaClase.Visible)
@@ -2421,11 +2971,14 @@ namespace DigBit
 
             if (!LaboratorioEquipo.Resuelto)
             {
+                // Arriba solo el equipo; que no tiene laboratorio y que hacer lo dice una
+                // vez el bloque "Ahora no puedes registrar..." (Colocar, MotivoSinNada).
                 OcultarFicha();
-                lblClaseTitulo.Text = "Este equipo no tiene laboratorio asignado";
-                lblClaseTitulo.ForeColor = Rojo;
-                lblClaseDetalle.Text = "Avisa a la persona responsable del laboratorio: sin eso no se puede registrar la bitácora.";
+                lblClaseTitulo.Text = "Equipo " + LaboratorioEquipo.NumeroMaquina + ", sin laboratorio asignado";
+                lblClaseTitulo.ForeColor = LetraAviso;
+                lblClaseDetalle.Text = "";
                 pnlClase.BackColor = FondoAviso;
+                Colocar();
                 return;
             }
 

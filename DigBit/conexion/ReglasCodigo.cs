@@ -61,6 +61,17 @@ namespace DigBit.conexion
         public static readonly TimeSpan FinDelDia = new TimeSpan(23, 59, 59);
 
         /// <summary>
+        /// Lo que se le dice al alumno si su codigo no existe (con el servidor y con la
+        /// copia local): que revisar y a quien pedirselo. Antes, "Código no válido.
+        /// Revisa que esté bien escrito.", sin decir que se suele confundir.
+        /// </summary>
+        public static string NoExisteElCodigo(string codigo)
+        {
+            return "No existe el código «" + (codigo ?? "").Trim() + "». Revísalo letra por letra (no confundas la O con el 0 ni la I con el 1) "
+                + "o pide a tu docente que lo repita.";
+        }
+
+        /// <summary>
         /// Sin codigos y sin clase (uso libre, db/14): el tramo sin clase en que cae
         /// ahora, desde el fin de la ultima clase que ya termino (o las 00:00) hasta
         /// que se abre la siguiente, 15 minutos antes de su inicio (o el fin del

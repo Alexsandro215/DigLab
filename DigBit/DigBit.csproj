@@ -168,12 +168,16 @@
     <Compile Include="conexion\Usuario.cs" />
     <Compile Include="conexion\VentanaCodigo.cs" />
     <Compile Include="conexion\HorariosDatos.cs" />
+    <Compile Include="conexion\HorariosDatos.PorAsignar.cs" />
     <Compile Include="conexion\AlumnosDatos.cs" />
     <Compile Include="conexion\CatalogosDatos.cs" />
     <Compile Include="conexion\ReglasCodigo.cs" />
     <Compile Include="conexion\ModosDeAcceso.cs" />
     <Compile Include="conexion\RecuperacionContrasena.cs" />
     <Compile Include="conexion\AjustesDatos.cs" />
+    <Compile Include="conexion\InicioConSiia.cs" />
+    <Compile Include="conexion\Consultas.Siia.cs" />
+    <Compile Include="conexion\EnlacesSiia.cs" />
     <Compile Include="conexion\AlertasDatos.cs" />
     <Compile Include="conexion\ReportesProfesorDatos.cs" />
     <Compile Include="conexion\SesionDeHoy.cs" />
@@ -203,6 +207,9 @@
     </Compile>
     <Compile Include="VisorPdf.cs">
       <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="VistaPreviaPdf.cs">
+      <SubType>UserControl</SubType>
     </Compile>
     <Compile Include="AdministrarHorarios.cs">
       <SubType>Form</SubType>
@@ -236,6 +243,15 @@
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="EditarBitacoraAdministrador.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Deslizamiento.cs" />
+    <Compile Include="BotonesApagados.cs" />
+    <Compile Include="VentanaFaltaAsignar.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Login.Diseno.cs">
+      <DependentUpon>Login.cs</DependentUpon>
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Login.cs">
@@ -274,6 +290,12 @@
     <Compile Include="DialogoAjustes.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="DialogoEnlazarSiia.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="VentanaEnlacePendiente.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="DialogoReporteFalla.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -295,6 +317,23 @@
     <Compile Include="PiezasEstadisticas.cs">
       <SubType>Component</SubType>
     </Compile>
+    <Compile Include="GraficasEstadisticas.cs" />
+    <Compile Include="ContenidoGraficas.cs" />
+    <Compile Include="PestanaGraficas.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="ReporteAuditoriaPdf.cs" />
+    <Compile Include="SelectorDePeriodo.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="conexion\FichaDocenteDatos.cs" />
+    <Compile Include="FichaDocente.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="VentanaListaDeClase.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="ContenidoFichaDocente.cs" />
     <Compile Include="AdministrarEncargados.cs">
       <SubType>Form</SubType>
     </Compile>

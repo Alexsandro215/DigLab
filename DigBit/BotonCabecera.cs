@@ -38,6 +38,8 @@ namespace DigBit
         private static readonly Color FondoRojo = Color.FromArgb(253, 228, 224);
         private static readonly Color FondoRojoEncima = Color.FromArgb(250, 214, 209);
         private static readonly Color FondoRojoPulsado = Color.FromArgb(248, 206, 200);
+        private static readonly Color VerdePrincipalEncima = Color.FromArgb(0, 96, 55);
+        private static readonly Color VerdePrincipalPulsado = Color.FromArgb(0, 84, 48);
 
         private const TextFormatFlags FormatoTexto = TextFormatFlags.Left | TextFormatFlags.VerticalCenter
             | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
@@ -98,6 +100,30 @@ namespace DigBit
         /// Vacio: el del contenedor.
         /// </summary>
         public Color FondoDetras { get; set; }
+
+        /// <summary>
+        /// La accion que importa ahora (en Mis grupos, "Dar asistencia..." mientras
+        /// dura la clase): rellena del verde de la escuela con la letra blanca, como
+        /// EstiloAdmin.BotonPrincipal. Sin ella, la pastilla blanca de siempre.
+        /// </summary>
+        public bool Principal
+        {
+            get
+            {
+                return principal;
+            }
+
+            set
+            {
+                if (principal != value)
+                {
+                    principal = value;
+                    Invalidate();
+                }
+            }
+        }
+
+        private bool principal;
 
         protected override void OnTextChanged(EventArgs e)
         {
@@ -248,6 +274,13 @@ namespace DigBit
             Color fondo = alerta
                 ? (pulsado ? FondoRojoPulsado : encima ? FondoRojoEncima : FondoRojo)
                 : (pulsado ? FondoPulsado : encima ? FondoEncima : Color.White);
+            if (principal && !alerta)
+            {
+                // Los verdes de EstiloAdmin.BotonPrincipal (normal, con el raton encima y pulsado).
+                fondo = pulsado ? VerdePrincipalPulsado : encima ? VerdePrincipalEncima : EstiloHorarios.VerdeTeschi;
+                borde = fondo;
+                texto = Color.White;
+            }
 
             // La pastilla, con el borde de 2 px por dentro (como TarjetaOpcion).
             Rectangle vis = Rectangle.Inflate(ClientRectangle, -MargenFoco, -MargenFoco);
@@ -327,7 +360,7 @@ namespace DigBit
     }
 
     /// <summary>
-    /// Una opcion de la tarjeta del codigo del profesor ("Bitacora", "Asistencia"):
+    /// Una opcion de la tarjeta del codigo del profesor ("Quien registro", "Lista de asistencia"):
     /// un recuadro redondeado como las cifras de encima, pero con borde verde de
     /// 2 px para que se lea como boton; su titulo y, debajo, una linea de que hay
     /// (Descripcion). Compacta (cuando no sobra alto, como a 1366x768): solo el

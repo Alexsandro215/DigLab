@@ -17,15 +17,28 @@ namespace DigBit
     /// con tres equivocadas en la sesion (contando las de DialogoContrasenaAdmin)
     /// la sesion se cierra sola. El encargado, en solo consulta, cambia su correo
     /// y su contrasena, no su nombre (MiPerfilDatos). Ninguna contrasena va al log.
+    /// El docente que entro con el SIIA (Ajustes) no cambia aqui su contrasena:
+    /// es la del SIIA y se cambia alli.
     /// </summary>
     public partial class editar_Perfil : Form
     {
         private const int Ancho = 640;
-        private const int Fila = 62;
+        // Cada campo: su etiqueta, 6 px, la caja y aire hasta el siguiente.
+        private const int Fila = 66;
+        // Tres columnas de 186 con 16 entre ellas, de 24 a 616.
+        private const int Columna2 = 227;
+        private const int Columna3 = 430;
+        private const int AnchoCampo = 186;
         private const int Intentos = 3;
         private static readonly Color TextoSecundario = Color.FromArgb(90, 90, 90);
 
         private readonly MiPerfilDatos datos = new MiPerfilDatos();
+        // Docente que entro con el SIIA encendido (Ajustes): su contrasena es la del
+        // SIIA y se cambia alli; aqui solo se escribe para cambiar el correo.
+        private readonly bool contrasenaDelSiia = Datos_User.ContrasenaDelSiia
+            && (Datos_User.TipoUsuario == TiposUsuario.Profesor || Datos_User.TipoUsuario == TiposUsuario.Alumno);
+        // Con el SIIA: el NIP, que va con la contrasena en su huella (InicioConSiia.Combinar).
+        private TextBox txtNip;
         private readonly CatalogosDatos catalogos = new CatalogosDatos();
         private readonly ToolTip ayuda;
         // Lo que se leyo al abrir: sin el (sin conexion) no se guarda nada.
@@ -78,7 +91,7 @@ namespace DigBit
         {
             // Los datos (nombre, correo y, el alumno, su carrera) y debajo la contrasena.
             int finDatos = 84 + Fila * (EsAlumno ? 3 : 2);
-            int finContrasena = finDatos + 74 + Fila;
+            int finContrasena = finDatos + 90 + Fila;
             // Debajo, la linea de error (tres renglones) y los botones.
             EstiloHorarios.PrepararDialogo(this, "Mi perfil", new Size(Ancho, finContrasena + 62 + 64));
             // Sin modal (alumno y profesor) CenterParent no se aplica.
@@ -111,9 +124,9 @@ namespace DigBit
 
             int y = 84;
             bool cambiaNombre = datos.CambiaSuNombre;
-            txtNombre = Campo(cambiaNombre ? "Nombre(s) *" : "Nombre(s)", 24, y, 190);
-            txtPaterno = Campo(cambiaNombre ? "Apellido paterno *" : "Apellido paterno", 225, y, 190);
-            txtMaterno = Campo("Apellido materno", 426, y, 190);
+            txtNombre = Campo(cambiaNombre ? "Nombre(s) *" : "Nombre(s)", 24, y, AnchoCampo);
+            txtPaterno = Campo(cambiaNombre ? "Apellido paterno *" : "Apellido paterno", Columna2, y, AnchoCampo);
+            txtMaterno = Campo("Apellido materno", Columna3, y, AnchoCampo);
             foreach (TextBox nombre in new[] { txtNombre, txtPaterno, txtMaterno })
             {
                 nombre.MaxLength = 80;
@@ -128,7 +141,8 @@ namespace DigBit
 
             y += Fila;
             // El administrador no recupera su contrasena por correo (api/recuperar.php).
-            txtCorreo = Campo(EsAdministrador ? "Correo" : "Correo (para recuperar tu contraseña)", 24, y, 392);
+            // Con el SIIA, la contrasena se recupera en el SIIA, no con este correo.
+            txtCorreo = Campo(EsAdministrador || contrasenaDelSiia ? "Correo" : "Correo (para recuperar tu contraseña)", 24, y, Columna2 + AnchoCampo - 24);
             // En la base de la escuela correo es VARCHAR(45).
             txtCorreo.MaxLength = ReglasCuenta.LargoMaximoCorreo;
             y += Fila;
@@ -136,49 +150,65 @@ namespace DigBit
             if (EsAlumno)
             {
                 Controls.Add(EstiloHorarios.CrearEtiqueta("Carrera *", new Point(24, y)));
-                cboCarrera = EstiloHorarios.CrearCombo(new Point(24, y + 23), 392);
+                cboCarrera = EstiloHorarios.CrearCombo(new Point(24, y + 26), Columna2 + AnchoCampo - 24);
                 cboCarrera.SelectedIndexChanged += (s, e) => Limpiar(cboCarrera);
                 Controls.Add(cboCarrera);
-                Controls.Add(EstiloHorarios.CrearEtiqueta("Semestre", new Point(426, y)));
-                cboSemestre = EstiloHorarios.CrearCombo(new Point(426, y + 23), 120);
+                Controls.Add(EstiloHorarios.CrearEtiqueta("Semestre", new Point(Columna3, y)));
+                cboSemestre = EstiloHorarios.CrearCombo(new Point(Columna3, y + 26), 120);
                 Controls.Add(cboSemestre);
                 y += Fila;
             }
 
             // La contrasena, separada de los datos con una linea como la de la cabecera del panel.
-            Controls.Add(new Label { AutoSize = false, BackColor = Color.FromArgb(215, 222, 215), Location = new Point(24, y + 4), Size = new Size(Ancho - 48, 1) });
+            Controls.Add(EstiloAdmin.Separador(new Point(24, y + 6), Ancho - 48));
             Label tituloContrasena = new Label
             {
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 11F, FontStyle.Bold),
                 ForeColor = Color.DarkGreen,
-                Location = new Point(24, y + 16),
+                Location = new Point(24, y + 20),
                 Text = "Contraseña"
             };
             Controls.Add(tituloContrasena);
+            // La explicacion y, 12 px mas abajo, las cajas (antes iban pegadas).
             Controls.Add(new Label
             {
                 AutoSize = false,
                 Font = new DrawingFont("Century Gothic", 9F),
                 ForeColor = TextoSecundario,
-                Location = new Point(24, y + 40),
+                Location = new Point(24, y + 44),
                 Size = new Size(Ancho - 48, 34),
-                Text = "Para cambiar tu contraseña o tu correo, escribe la actual. Si no quieres otra contraseña, deja vacías las otras dos."
+                Text = contrasenaDelSiia
+                    ? "Tu contraseña es la del SIIA del TESCHI: se cambia en el SIIA, no aquí. Para cambiar tu correo, escribe la contraseña y el NIP con los que entraste."
+                    : "Para cambiar tu contraseña o tu correo, escribe la actual. Si no quieres otra contraseña, deja vacías las otras dos."
             });
-            y += 74;
+            y += 90;
 
-            txtActual = Campo("Contraseña actual", 24, y, 190);
+            txtActual = Campo(contrasenaDelSiia ? "Tu contraseña (la del SIIA)" : "Contraseña actual", 24, y, AnchoCampo);
             txtActual.MaxLength = 200;
-            txtNueva = Campo("Contraseña nueva", 225, y, 190);
+            if (contrasenaDelSiia)
+            {
+                // No se ensenan: vacias, Guardar nunca cambia la contrasena.
+                txtNueva = new TextBox();
+                txtRepetida = new TextBox();
+                Controls.Add(EstiloHorarios.CrearEtiqueta("Tu NIP del SIIA", new Point(Columna2, y)));
+                txtNip = CajaNip.Crear(new Point(Columna2, y + 26));
+                txtNip.TextChanged += (s, e) => Limpiar(txtNip);
+                Controls.Add(txtNip);
+            }
+            else
+            {
+                txtNueva = Campo("Contraseña nueva", Columna2, y, AnchoCampo);
+                txtRepetida = Campo("Repite la nueva", Columna3, y, AnchoCampo);
+                ayuda.SetToolTip(txtNueva, "Déjala en blanco para no cambiarla. Al menos " + ReglasCuenta.LargoMinimoContrasena + " caracteres.");
+            }
+
             txtNueva.MaxLength = ReglasCuenta.LargoMaximoContrasena;
-            txtRepetida = Campo("Repite la nueva", 426, y, 190);
             txtRepetida.MaxLength = ReglasCuenta.LargoMaximoContrasena;
             foreach (TextBox contrasena in new[] { txtActual, txtNueva, txtRepetida })
             {
                 contrasena.UseSystemPasswordChar = true;
             }
-
-            ayuda.SetToolTip(txtNueva, "Déjala en blanco para no cambiarla. Al menos " + ReglasCuenta.LargoMinimoContrasena + " caracteres.");
 
             // A la derecha del titulo de la seccion; despues de las cajas en el orden de Tab.
             CheckBox mostrar = new CheckBox
@@ -263,7 +293,7 @@ namespace DigBit
         private TextBox Campo(string etiqueta, int x, int y, int ancho)
         {
             Controls.Add(EstiloHorarios.CrearEtiqueta(etiqueta, new Point(x, y)));
-            TextBox texto = EstiloHorarios.CrearTexto(new Point(x, y + 23), ancho);
+            TextBox texto = EstiloHorarios.CrearTexto(new Point(x, y + 26), ancho);
             texto.TextChanged += (s, e) => Limpiar(texto);
             Controls.Add(texto);
             return texto;
@@ -409,6 +439,11 @@ namespace DigBit
                 }
             }
 
+            if (pideActual && contrasenaDelSiia && !InicioConSiia.NipValido(txtNip.Text))
+            {
+                Marcar(txtNip, "Para cambiar tu correo, escribe también tu NIP del SIIA (4 números).", errores, ref primero);
+            }
+
             if (primero != null)
             {
                 List<string> frases = new List<string>();
@@ -447,7 +482,8 @@ namespace DigBit
 
             if (!HayCambios(nuevos))
             {
-                if (txtActual.Text.Length > 0)
+                // Con el SIIA no hay contrasena nueva que pedir: nada que guardar.
+                if (txtActual.Text.Length > 0 && !contrasenaDelSiia)
                 {
                     // Escribio la actual y nada mas: le falta la nueva. Con otros cambios
                     // se guardan sin tocar la contrasena y la actual no se comprueba.
@@ -470,7 +506,8 @@ namespace DigBit
             btnGuardar.Enabled = false;
             try
             {
-                datos.Guardar(nuevos, pideActual ? txtActual.Text : null);
+                // Con el SIIA, lo guardado es la huella de la contrasena y el NIP juntos.
+                datos.Guardar(nuevos, !pideActual ? null : contrasenaDelSiia ? InicioConSiia.Combinar(txtActual.Text, txtNip.Text) : txtActual.Text);
                 guardado = true;
             }
             catch (ContrasenaIncorrecta)
@@ -533,6 +570,10 @@ namespace DigBit
         {
             int fallidos = ++Datos_User.ConfirmacionesFallidas;
             txtActual.Clear();
+            if (txtNip != null)
+            {
+                txtNip.Clear();
+            }
             Log.Aviso("Mi perfil: contrasena actual equivocada de " + (datos.Identificador ?? "-") + " (" + fallidos + " de " + Intentos + ").");
             if (fallidos >= Intentos)
             {
@@ -552,7 +593,8 @@ namespace DigBit
                 return;
             }
 
-            lblError.Text = "La contraseña actual no es correcta. " + Quedan(fallidos);
+            lblError.Text = (contrasenaDelSiia ? "La contraseña o el NIP no son los del SIIA con los que entraste. " : "La contraseña actual no es correcta. ")
+                + Quedan(fallidos);
             txtActual.BackColor = EstiloAdmin.FondoError;
             txtActual.Focus();
         }

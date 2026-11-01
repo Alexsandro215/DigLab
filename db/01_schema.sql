@@ -124,6 +124,12 @@ CREATE TABLE usuarios (
     -- el administrador. En una base ya existente se anade con
     -- db/12_color_profesor.sql.
     color_horario        VARCHAR(7)   NULL,
+    -- Solo profesores: cuando la administracion enlazo su cuenta con su numero
+    -- de empleado del SIIA (NULL: sin enlazar). Con el inicio de sesion con el
+    -- SIIA encendido en Ajustes, solo entra un docente enlazado. Lo escribe solo
+    -- digbit_admin: digbit_equipo no tiene permiso en esta columna (db/07). En
+    -- una base ya existente se anade con db/24_docentes_siia.sql.
+    siia_enlazado_en     DATETIME     NULL,
     PRIMARY KEY (idusuarios),
     UNIQUE KEY uq_usuarios_numero_identificador (numero_identificador),
     UNIQUE KEY uq_usuarios_codigo_clase (codigo_clase)
@@ -663,7 +669,8 @@ CREATE TABLE personalizacion_clases (
 -- historial de Alertas. Sin claves foraneas: no se borra con nada. "cuando" sin
 -- DEFAULT (MariaDB 5.5 no admite DEFAULT CURRENT_TIMESTAMP en DATETIME): lo
 -- pone DigBit con NOW(). digbit_admin lo escribe, digbit_consulta solo lo lee
--- (db/18) y digbit_equipo no lo toca (db/07).
+-- (db/18) y digbit_equipo solo anade el alta de un estudiante con el SIIA
+-- (db/07 y db/24).
 CREATE TABLE historial_cambios (
     idhistorial_cambios  INT           NOT NULL AUTO_INCREMENT,
     cuando               DATETIME      NOT NULL,
@@ -686,4 +693,69 @@ CREATE TABLE historial_cambios (
     KEY ix_historial_cambios_cuando (cuando),
     KEY ix_historial_cambios_tipo (tipo, cuando),
     KEY ix_historial_cambios_registro (tabla, registro_id)
+) ENGINE=InnoDB;
+
+-- Quien entro con su contrasena del SIIA y espera que la administracion lo
+-- enlace con su cuenta de docente (db/24). La deja el equipo en que entro, con
+-- lo que dio el SIIA (nombre, correo y tipo de cuenta), nunca la contrasena. La
+-- administracion la enlaza con un docente (usuarios.siia_enlazado_en), la
+-- descarta, o la vuelve a dejar pendiente al desenlazar. digbit_equipo la lee,
+-- la anade y actualiza solo los datos del SIIA, los intentos y el estado (db/07);
+-- digbit_consulta solo la lee (db/18). Sin claves foraneas, como el historial.
+CREATE TABLE siia_solicitudes (
+    idsiia_solicitudes  INT           NOT NULL AUTO_INCREMENT,
+    numero_empleado     VARCHAR(45)   NOT NULL,
+    nombre              VARCHAR(100)  NULL,
+    apellido_paterno    VARCHAR(100)  NULL,
+    apellido_materno    VARCHAR(100)  NULL,
+    nombre_completo     VARCHAR(255)  NULL,
+    correo              VARCHAR(120)  NULL,
+    -- 'P' docente, 'A' administrativo, 'E' estudiante (este no deja solicitud).
+    tipo_siia           VARCHAR(4)    NULL,
+    primer_intento      DATETIME      NOT NULL,
+    ultimo_intento      DATETIME      NOT NULL,
+    intentos            INT           NOT NULL DEFAULT 1,
+    -- pendiente | enlazada | descartada.
+    estado              VARCHAR(12)   NOT NULL DEFAULT 'pendiente',
+    usuario_id          INT           NULL,
+    numero_anterior     VARCHAR(45)   NULL,
+    resuelta_en         DATETIME      NULL,
+    resuelta_por        INT           NULL,
+    PRIMARY KEY (idsiia_solicitudes),
+    UNIQUE KEY uq_siia_solicitudes_numero (numero_empleado),
+    KEY ix_siia_solicitudes_estado (estado, ultimo_intento)
+) ENGINE=InnoDB;
+
+-- Las horas que le faltan a una clase en el horario en uso (db/25): las que le
+-- quito otra clase al ponerse en su lugar en el mismo laboratorio
+-- ('desplazada') o las que se quitaron con "Quitar horas" para darlas en otro
+-- horario ('quitada'). Horario semanal las ensena en "Falta asignar: N h";
+-- bajan solas al ponerle horas a la clase (lo mas antiguo primero) o se dan
+-- por resueltas ("Ya no hace falta"). Nunca se borra un renglon. Sin claves
+-- foraneas, como el historial. Fechas sin DEFAULT (MariaDB 5.5): las pone
+-- DigBit con NOW(). digbit_admin la escribe, digbit_consulta solo la lee
+-- (db/18) y digbit_equipo nada.
+CREATE TABLE horas_por_asignar (
+    idhoras_por_asignar  INT           NOT NULL AUTO_INCREMENT,
+    clases_idclases      INT           NOT NULL,
+    -- Lo que falta (baja al asignar) y lo que faltaba al crearse, en minutos.
+    minutos              INT           NOT NULL,
+    minutos_originales   INT           NOT NULL,
+    -- De donde salieron: laboratorio, dia (1 = lunes) y horas.
+    laboratorio_id       INT           NULL,
+    dia_semana           TINYINT       NOT NULL,
+    hora_inicio          TIME          NOT NULL,
+    hora_fin             TIME          NOT NULL,
+    desde                DATE          NOT NULL,
+    -- 'desplazada' o 'quitada'.
+    motivo               VARCHAR(12)   NOT NULL,
+    creada_en            DATETIME      NOT NULL,
+    creada_por           INT           NULL,
+    -- pendiente | asignada | no_hace_falta.
+    estado               VARCHAR(14)   NOT NULL DEFAULT 'pendiente',
+    resuelta_en          DATETIME      NULL,
+    resuelta_por         INT           NULL,
+    PRIMARY KEY (idhoras_por_asignar),
+    KEY ix_horas_por_asignar_estado (estado, clases_idclases, creada_en),
+    KEY ix_horas_por_asignar_clase (clases_idclases)
 ) ENGINE=InnoDB;

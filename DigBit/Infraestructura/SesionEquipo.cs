@@ -84,7 +84,8 @@ namespace DigBit.Infraestructura
         /// </summary>
         /// <param name="enEsteEquipoEnClase">
         /// La bitacora quedo en este equipo (sin conexion) y es de una clase: el globo
-        /// de bienvenida le recuerda avisar a su docente, que aun no la ve.
+        /// de bienvenida le recuerda avisar a su docente, que aun no la ve. Al
+        /// reanudar, si la suya sigue en la cola de este equipo.
         /// </param>
         public static void Liberar(VentanaCodigo ventana, string usuario, string codigo, bool reanudada = false, bool enEsteEquipoEnClase = false)
         {
@@ -95,7 +96,8 @@ namespace DigBit.Infraestructura
             }
 
             // Despues de Limpiar, que lo borra; antes de Iniciar, que escribe el globo.
-            recordarAlDocente = enEsteEquipoEnClase && !reanudada;
+            // Tambien al reanudar: si la suya sigue en la cola, su docente aun no la ve.
+            recordarAlDocente = enEsteEquipoEnClase;
 
             DateTime ahora = DateTime.Now;
             sesion = new SesionActiva
@@ -241,7 +243,8 @@ namespace DigBit.Infraestructura
             switch (comienzo)
             {
                 case Comienzo.Reanudada:
-                    return "Puedes volver a usar este equipo " + hasta + aviso;
+                    return (recordarAlDocente ? "Tu bitácora sigue guardada en este equipo: recuerda avisarle a tu docente para que te dé la asistencia. " : "")
+                        + "Puedes volver a usar este equipo " + hasta + aviso;
                 case Comienzo.Relanzada:
                     return "Tu sesión en este equipo sigue " + hasta + aviso;
                 default:

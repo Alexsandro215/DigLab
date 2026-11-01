@@ -186,22 +186,20 @@ namespace DigBit
             cerrar.Click += (s, e) => Close();
             CancelButton = cerrar;
             SeparacionAbajo(20);
-            btnExportar = BotonAbajo("Exportar sus datos...", 200);
-            btnExportar.Click += (s, e) => Exportar();
-            btnVer = BotonAbajo("Ver la sesión", 150);
-            btnVer.Click += (s, e) => VerSesion();
-            ayuda.SetToolTip(btnVer, "Quién más registró en esa clase ese día y qué reportaron. También con doble clic.");
-            if (Permisos.SoloConsulta)
+            // Entregarle sus datos a quien los pide es cosa de la administracion: la
+            // persona responsable (solo consulta) nunca lo hace, asi que no lo ve (un
+            // boton siempre apagado parecia descompuesto).
+            if (!Permisos.SoloConsulta)
             {
-                // Entregarle sus datos a quien los pide es cosa del administrador: el
-                // encargado lo ve apagado y, al pasar el raton, el motivo.
-                Permisos.Desactivar(ayuda, btnExportar, "Solo la administración de DigBit entrega los datos personales. Si te los piden, avísale.");
-            }
-            else
-            {
+                btnExportar = BotonAbajo("Exportar sus datos...", 200);
+                btnExportar.Click += (s, e) => Exportar();
                 ayuda.SetToolTip(btnExportar, "Guarda sus datos y todas sus bitácoras en un archivo CSV que se abre con Excel, "
                     + "para entregárselos si los pide.");
             }
+
+            btnVer = BotonAbajo("Ver la sesión", 150);
+            btnVer.Click += (s, e) => VerSesion();
+            ayuda.SetToolTip(btnVer, "Quién más registró en esa clase ese día y qué reportaron. También con doble clic.");
 
             ActiveControl = txtBuscar;
             ActualizarBotones();
@@ -455,7 +453,7 @@ namespace DigBit
             }
 
             btnVer.Enabled = Seleccionado<Registro>() != null;
-            if (!Permisos.SoloConsulta)
+            if (btnExportar != null)
             {
                 btnExportar.Enabled = leida;
             }
@@ -714,6 +712,19 @@ namespace DigBit
             // Lo elegido corre cuando el menu ya se cerro: abre ventanas modales y,
             // mientras, el menu se libera.
             ContextMenuStrip menu = new ContextMenuStrip { Font = new DrawingFont("Century Gothic", 10F), ShowItemToolTips = true };
+            LlenarMenu(menu.Items, boton, persona, exportar, anonimizar);
+            menu.Closed += (s, e) => boton.BeginInvoke(new Action(menu.Dispose));
+            menu.Show(boton, new Point(0, boton.Height));
+        }
+
+        /// <summary>
+        /// Las dos opciones de MostrarMenu en esa lista de opciones (un menu propio o el
+        /// submenu "Datos personales" de "Mas acciones" en Docentes). Lo elegido corre
+        /// con BeginInvoke de dueno, cuando el menu ya se cerro.
+        /// </summary>
+        public static void LlenarMenu(ToolStripItemCollection opciones, Control dueno, UsuarioInfo persona, Action exportar, Action anonimizar)
+        {
+            Control boton = dueno;
             ToolStripMenuItem opcionExportar = new ToolStripMenuItem("Exportar sus datos (CSV)...", null, (s, e) => boton.BeginInvoke(exportar))
             {
                 Enabled = !persona.Anonimizada,
@@ -727,10 +738,8 @@ namespace DigBit
                 ToolTipText = "Si pide que se cancelen sus datos: borra su nombre, sus apellidos, su correo y su identificador, "
                     + "y conserva sus registros sin su nombre. No se puede deshacer."
             };
-            menu.Items.Add(opcionExportar);
-            menu.Items.Add(opcionAnonimizar);
-            menu.Closed += (s, e) => boton.BeginInvoke(new Action(menu.Dispose));
-            menu.Show(boton, new Point(0, boton.Height));
+            opciones.Add(opcionExportar);
+            opciones.Add(opcionAnonimizar);
         }
 
         // =====================================================================

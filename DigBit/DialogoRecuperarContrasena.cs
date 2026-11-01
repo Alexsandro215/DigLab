@@ -40,6 +40,9 @@ namespace DigBit
         private readonly Label lblError;
         private readonly Button btnSiguiente;
         private readonly ApiRecuperacion api;
+        // Con el SIIA encendido en Ajustes: la contrasena de un docente se recupera
+        // en el SIIA, no aqui. Null si esta apagado.
+        private readonly ConfiguracionSiia siia;
         // Con aviso de privacidad (Ajustes): una linea abajo con su enlace. Null sin aviso.
         private readonly LinkLabel lnkPrivacidad;
         private const int AltoAvisoPrivacidad = 42;
@@ -49,10 +52,10 @@ namespace DigBit
         /// <summary>La matricula con la que se cambio la contrasena (para ponerla en el inicio de sesion).</summary>
         public string Matricula { get; private set; }
 
-        /// <summary>True si se cambio la contrasena.</summary>
-        public static bool Mostrar(IWin32Window dueno, ApiRecuperacion api, string matriculaEscrita, out string matricula)
+        /// <summary>True si se cambio la contrasena. siia: null si los docentes no entran con el SIIA.</summary>
+        public static bool Mostrar(IWin32Window dueno, ApiRecuperacion api, string matriculaEscrita, ConfiguracionSiia siia, out string matricula)
         {
-            using (DialogoRecuperarContrasena dialogo = new DialogoRecuperarContrasena(api, matriculaEscrita))
+            using (DialogoRecuperarContrasena dialogo = new DialogoRecuperarContrasena(api, matriculaEscrita, siia))
             {
                 bool cambiada = dialogo.ShowDialog(dueno) == DialogResult.OK;
                 matricula = cambiada ? dialogo.Matricula : null;
@@ -60,9 +63,10 @@ namespace DigBit
             }
         }
 
-        private DialogoRecuperarContrasena(ApiRecuperacion api, string matriculaEscrita)
+        private DialogoRecuperarContrasena(ApiRecuperacion api, string matriculaEscrita, ConfiguracionSiia siia)
         {
             this.api = api;
+            this.siia = siia != null && siia.Activo ? siia : null;
             // El aviso de privacidad del TESCHI, si la administracion lo puso en Ajustes:
             // aqui se piden la matricula y el correo, asi que va su linea abajo.
             AvisoDePrivacidad aviso = AvisoDePrivacidad.Leer();
@@ -97,6 +101,7 @@ namespace DigBit
                 Location = new Point(0, 70),
                 Size = new Size(Ancho - 48, 60),
                 Text = "Si tu cuenta no tiene correo, o no te llega, pide a la administración de DigBit que te ponga una contraseña nueva."
+                    + (this.siia != null ? " " + InicioConSiia.TextoSiEresDocente(this.siia) : "")
             });
             Controls.Add(pnlPaso1);
 
@@ -271,6 +276,16 @@ namespace DigBit
                 return;
             }
 
+            // La de quien entra con el SIIA es la del SIIA: no se le manda ningun codigo.
+            if (siia != null && EntraConSiia(matricula))
+            {
+                Log.Info("Recuperar contrasena: '" + matricula + "' entra con el SIIA: se le manda a la pagina del SIIA.");
+                MostrarPaso1();
+                lblError.Text = "";
+                VentanaPaginaSiia.Recuperar(this, siia);
+                return;
+            }
+
             Ejecutar("Enviando el código...", () => RecuperacionContrasena.Solicitar(api, matricula), respuesta =>
             {
                 if (respuesta.Ok)
@@ -334,6 +349,30 @@ namespace DigBit
                 Error(respuesta.Mensaje, txtCodigo);
                 txtCodigo.SelectAll();
             });
+        }
+
+        /// <summary>
+        /// Si ese numero entra con el SIIA (un docente o un estudiante con su
+        /// interruptor encendido, o un numero que DigBit no tiene); si no se puede
+        /// saber, false (sigue la API, como antes).
+        /// </summary>
+        private bool EntraConSiia(string numero)
+        {
+            Cursor anterior = Cursor.Current;
+            Cursor.Current = Cursors.WaitCursor;
+            try
+            {
+                return siia.ParaElTipo(InicioConSiia.TipoDeCuenta(numero));
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Recuperar contrasena: saber si '" + numero + "' entra con el SIIA", ex);
+                return false;
+            }
+            finally
+            {
+                Cursor.Current = anterior;
+            }
         }
 
         /// <summary>La llamada a la API en segundo plano (puede tardar unos segundos) y su respuesta de vuelta aqui.</summary>
@@ -576,6 +615,259 @@ namespace DigBit
             using (VentanaAvisoDePrivacidad dialogo = new VentanaAvisoDePrivacidad(this))
             {
                 dialogo.ShowDialog(dueno);
+            }
+        }
+    }
+
+    /// <summary>La caja del NIP del SIIA: 4 numeros, oculta como una contrasena (tambien al pegar, solo se quedan las cifras).</summary>
+    internal static class CajaNip
+    {
+        public static TextBox Crear(Point posicion)
+        {
+            TextBox caja = EstiloHorarios.CrearTexto(posicion, 100);
+            caja.MaxLength = 4;
+            caja.UseSystemPasswordChar = true;
+            SoloCifras(caja);
+            return caja;
+        }
+
+        /// <summary>Que en esa caja solo se escriban cifras (las teclas de control, como borrar, siguen).</summary>
+        public static void SoloCifras(TextBox caja)
+        {
+            caja.KeyPress += (s, e) =>
+            {
+                if (!char.IsControl(e.KeyChar) && (e.KeyChar < '0' || e.KeyChar > '9'))
+                {
+                    e.Handled = true;
+                }
+            };
+            caja.TextChanged += (s, e) =>
+            {
+                string cifras = new string(caja.Text.Where(c => c >= '0' && c <= '9').Take(4).ToArray());
+                if (cifras != caja.Text)
+                {
+                    caja.Text = cifras;
+                    caja.SelectionStart = cifras.Length;
+                }
+            };
+        }
+    }
+
+    /// <summary>
+    /// Una pagina del SIIA para quien entra con el: recuperar la contrasena o el
+    /// NIP (con la CURP), o crear el NIP la primera vez. DigBit no recupera ni
+    /// crea nada. Recuperar, fuera del kiosco, abre la pagina del SIIA directo en
+    /// el navegador; en el kiosco nunca (seria una salida al escritorio): ahi, y
+    /// para crear el NIP, una ventana que dice que hacer, con la direccion escrita
+    /// y su codigo QR (para abrirla en el celular) y, fuera del kiosco, "Abrir la
+    /// pagina del SIIA". La direccion es solo una https completa (ConfiguracionSiia).
+    /// </summary>
+    internal sealed class VentanaPaginaSiia : Form
+    {
+        private const int Ancho = 560;
+        private const int LadoQr = 150;
+
+        /// <summary>
+        /// "Olvidaste tu contrasena?" (o tu NIP) de quien entra con el SIIA: directo
+        /// a la pagina de recuperacion del SIIA. En el kiosco (o si el navegador no
+        /// abre), la ventana con la direccion y el QR.
+        /// </summary>
+        public static void Recuperar(IWin32Window dueno, ConfiguracionSiia siia)
+        {
+            string url = siia != null ? siia.RecuperarUrl : InicioConSiia.RecuperarPorOmision;
+            if (!Kiosco.Activo && AbrirEnNavegador(url))
+            {
+                return;
+            }
+
+            Mostrar(dueno, "Recuperar contraseña", "Recuperar tu contraseña", InicioConSiia.TextoRecuperarEnSiia,
+                url, "La página del SIIA para recuperarla:");
+        }
+
+        /// <summary>Quien aun no tiene NIP del SIIA: que lo cree en el SIIA (DigBit no lo crea).</summary>
+        public static void CrearNip(IWin32Window dueno, ConfiguracionSiia siia)
+        {
+            Mostrar(dueno, "Falta tu NIP del SIIA", "Falta tu NIP del SIIA", InicioConSiia.TextoSinNip,
+                siia != null ? siia.PaginaUrl : InicioConSiia.PaginaPorOmision, "La página del SIIA:");
+        }
+
+        private static void Mostrar(IWin32Window dueno, string tituloVentana, string titulo, string texto, string url, string etiqueta)
+        {
+            using (VentanaPaginaSiia ventana = new VentanaPaginaSiia(tituloVentana, titulo, texto, url, etiqueta))
+            {
+                ventana.ShowDialog(dueno);
+            }
+        }
+
+        private VentanaPaginaSiia(string tituloVentana, string titulo, string texto, string url, string etiqueta)
+        {
+            bool abrir = !Kiosco.Activo && InicioConSiia.EsPaginaHttps(url);
+            Bitmap qr = InicioConSiia.EsPaginaHttps(url) ? CodigoQr(url, LadoQr) : null;
+            // Con el QR a la derecha, los textos van mas angostos.
+            int anchoTexto = Ancho - 48 - (qr != null ? LadoQr + 16 : 0);
+            EstiloHorarios.PrepararDialogo(this, tituloVentana, new Size(Ancho, qr != null ? 318 : 292));
+            // Sin dueno (desde el inicio de sesion), encima: tambien en el kiosco.
+            StartPosition = FormStartPosition.CenterScreen;
+            TopMost = Kiosco.Activo;
+            Controls.Add(EstiloAdmin.TituloDialogo(titulo, Ancho - 48));
+            Controls.Add(new Label
+            {
+                AutoSize = false,
+                Font = new DrawingFont("Century Gothic", 10.5F),
+                ForeColor = Color.FromArgb(40, 40, 40),
+                Location = new Point(24, 58),
+                Size = new Size(anchoTexto, qr != null ? 66 : 48),
+                Text = texto
+            });
+            int y = qr != null ? 128 : 110;
+            Controls.Add(new Label
+            {
+                AutoSize = false,
+                Font = new DrawingFont("Century Gothic", 9.5F, FontStyle.Bold),
+                ForeColor = Color.DarkGreen,
+                Location = new Point(24, y),
+                Size = new Size(anchoTexto, 20),
+                Text = etiqueta
+            });
+            TextBox direccion = new TextBox
+            {
+                ReadOnly = true,
+                BackColor = Color.White,
+                Font = new DrawingFont("Century Gothic", 9.5F),
+                Location = new Point(24, y + 22),
+                Size = new Size(anchoTexto, 26),
+                Text = url,
+                AccessibleName = "Dirección de la página del SIIA"
+            };
+            Controls.Add(direccion);
+            Controls.Add(new Label
+            {
+                AutoSize = false,
+                Font = new DrawingFont("Century Gothic", 9F),
+                ForeColor = Color.FromArgb(90, 90, 90),
+                Location = new Point(24, y + 54),
+                Size = new Size(anchoTexto, 54),
+                Text = Kiosco.Activo
+                    ? "En este equipo no se abre el navegador: escanea el código con tu celular o entra desde otro equipo. Después vuelve aquí."
+                    : "Después vuelve aquí y entra con tu número (o tu matrícula), tu contraseña y tu NIP del SIIA."
+            });
+
+            if (qr != null)
+            {
+                PictureBox codigo = new PictureBox
+                {
+                    Image = qr,
+                    Location = new Point(Ancho - 24 - LadoQr, 58),
+                    Size = new Size(LadoQr, LadoQr),
+                    SizeMode = PictureBoxSizeMode.CenterImage,
+                    AccessibleName = "Código QR de la página del SIIA"
+                };
+                Controls.Add(codigo);
+                Controls.Add(new Label
+                {
+                    AutoSize = false,
+                    Font = new DrawingFont("Century Gothic", 8.5F),
+                    ForeColor = Color.FromArgb(90, 90, 90),
+                    Location = new Point(Ancho - 24 - LadoQr, 58 + LadoQr + 2),
+                    Size = new Size(LadoQr, 36),
+                    Text = "Escanéalo con tu celular",
+                    TextAlign = ContentAlignment.TopCenter
+                });
+                FormClosed += (s, e) => qr.Dispose();
+            }
+
+            Button cerrar = EstiloHorarios.CrearBoton("Cerrar", new Point(Ancho - 24 - 120, ClientSize.Height - 56), new Size(120, 40));
+            cerrar.DialogResult = DialogResult.Cancel;
+            Controls.Add(cerrar);
+            CancelButton = cerrar;
+            AcceptButton = cerrar;
+            if (abrir)
+            {
+                Button btnAbrir = EstiloAdmin.BotonPrincipal("Abrir la página del SIIA", new Point(cerrar.Left - 10 - 220, ClientSize.Height - 56), new Size(220, 40));
+                btnAbrir.Click += (s, e) => Abrir(url);
+                Controls.Add(btnAbrir);
+                AcceptButton = btnAbrir;
+            }
+
+            Shown += (s, e) =>
+            {
+                direccion.Select(0, 0);
+                ((Control)AcceptButton).Focus();
+            };
+        }
+
+        private void Abrir(string url)
+        {
+            if (AbrirEnNavegador(url))
+            {
+                DialogResult = DialogResult.OK;
+                return;
+            }
+
+            if (!Kiosco.Activo)
+            {
+                MessageBox.Show(this, "No se pudo abrir el navegador. Copia la dirección y ábrela tú.", Text,
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        /// <summary>El navegador predeterminado con esa pagina: solo una https completa, y nunca en el kiosco. True si abrio.</summary>
+        private static bool AbrirEnNavegador(string url)
+        {
+            Uri uri;
+            if (Kiosco.Activo || !Uri.TryCreate(url, UriKind.Absolute, out uri) || uri.Scheme != Uri.UriSchemeHttps)
+            {
+                return false;
+            }
+
+            try
+            {
+                Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+                Log.Info("SIIA: se abre una pagina del SIIA en el navegador (" + uri.Host + uri.AbsolutePath + ").");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Abrir en el navegador una pagina del SIIA", ex);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// El codigo QR de la direccion (con iTextSharp, que ya usa DigBit para los
+        /// PDF), en cuadros enteros de pixeles para que el celular lo lea. Null si
+        /// no se pudo hacer: la ventana sigue sin el.
+        /// </summary>
+        private static Bitmap CodigoQr(string texto, int lado)
+        {
+            try
+            {
+                iTextSharp.text.pdf.qrcode.ByteMatrix matriz = new iTextSharp.text.pdf.qrcode.QRCodeWriter().Encode(texto, 1, 1);
+                int n = matriz.GetWidth();
+                int modulo = Math.Max(1, lado / n);
+                Bitmap imagen = new Bitmap(n * modulo, n * modulo);
+                using (Graphics g = Graphics.FromImage(imagen))
+                {
+                    g.Clear(Color.White);
+                    for (int y = 0; y < n; y++)
+                    {
+                        for (int x = 0; x < n; x++)
+                        {
+                            // En la matriz de iTextSharp, 0 es un cuadro negro.
+                            if (matriz.Get(x, y) == 0)
+                            {
+                                g.FillRectangle(Brushes.Black, x * modulo, y * modulo, modulo, modulo);
+                            }
+                        }
+                    }
+                }
+
+                return imagen;
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Hacer el codigo QR de una pagina del SIIA", ex);
+                return null;
             }
         }
     }

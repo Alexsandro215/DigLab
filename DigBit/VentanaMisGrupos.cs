@@ -20,7 +20,8 @@ namespace DigBit
     /// <summary>
     /// "Mis grupos" del panel del profesor. Arriba, una sola linea: el titulo, el
     /// grupo elegido con su materia, cuando se leyo su lista y los botones
-    /// Copiar la lista, Guardar en Excel (CSV), Actualizar (o F5) y Cerrar.
+    /// Copiar la lista, Guardar en Excel (CSV), Actualizar (o F5) y Cerrar; mientras
+    /// dura la clase elegida, antes de ellos, "Dar asistencia..." (relleno de verde).
     /// "Copiar la lista" pone la hoja entera en el portapapeles para pegarla en
     /// Excel y lo dice unos segundos en el estado; "Guardar en Excel (CSV)..." la
     /// guarda en un archivo que Excel abre con doble clic (GuardarCsv). Ninguno de
@@ -49,7 +50,7 @@ namespace DigBit
     /// cambio pide antes su contrasena si no la confirmo en los ultimos 2
     /// minutos (ConfirmarEnKiosco). Las
     /// tarjetas del tablero que se pulsan marcan a sus alumnos en la hoja.
-    /// Tambien la abre "Asistencia" de la tarjeta del codigo, con esa clase elegida.
+    /// Tambien la abre "Lista de asistencia" de la tarjeta del codigo, con esa clase elegida.
     ///
     /// Con db/19, lo que el profesor eligio para cada clase (PersonalizacionClases):
     /// arriba de cada tarjeta, una banda de su color con su circulo, el grupo y el
@@ -139,6 +140,11 @@ namespace DigBit
         private readonly ListBox lista;
         private readonly TableroAsistencia tablero;
         private readonly HojaAsistencia hoja;
+        // "Dar asistencia...": la accion mas urgente durante la clase, en la cabecera antes
+        // de Copiar la lista (en kiosco, antes de Actualizar). Solo mientras la clase elegida
+        // esta en curso y la hoja deja darla (HojaAsistencia.PuedeDarSinLista).
+        private readonly BotonCabecera btnDar;
+        private bool verDar;
         private readonly BotonCabecera btnCopiar;
         // "Guardar en Excel (CSV)...": la hoja en un archivo (GuardarCsv). Como Copiar, nunca en kiosco.
         private readonly BotonCabecera btnGuardarCsv;
@@ -257,6 +263,12 @@ namespace DigBit
             // El Text de los botones no cambia: es lo que buscan las pruebas.
             btnCirculo = new BotonCirculoClase(32) { TabIndex = 3, Visible = false };
             btnCirculo.Click += (s, e) => Personalizar(btnCirculo.ClaseId);
+            // Lo mismo que el enlace de debajo de la hoja: buscar al estudiante por su matricula.
+            // Tambien en kiosco (ahi pide antes la contrasena del docente: ConfirmarEnKiosco).
+            btnDar = new BotonCabecera("Dar asistencia...") { TabIndex = 3, Visible = false, Principal = true };
+            btnDar.Click += (s, e) => DarAsistencia(null);
+            ayuda.SetToolTip(btnDar, "Para quien está en el salón y no pudo registrar su bitácora: lo buscas por su matrícula. "
+                + "A quien ya está en la lista también se la das desde su casilla de hoy. Solo mientras dura la clase.");
             // En kiosco no se ofrece (ver la clase): nunca se ve.
             btnCopiar = new BotonCabecera("Copiar la lista") { TabIndex = 4, Visible = !Kiosco.Activo };
             btnCopiar.Click += (s, e) => CopiarLista();
@@ -322,7 +334,7 @@ namespace DigBit
                 anchoEstado = Math.Max(AnchoEstadoMinimo, TextosDeEstado.Max(t => Medir(g, t, fuenteEstado).Width));
             }
 
-            Controls.AddRange(new Control[] { lblTitulo, btnCirculo, lblGrupo, lblMateria, lblEstado, btnCopiar, btnGuardarCsv, btnActualizar, btnCerrar, lista, lblNota, tablero, hoja });
+            Controls.AddRange(new Control[] { lblTitulo, btnCirculo, lblGrupo, lblMateria, lblEstado, btnDar, btnCopiar, btnGuardarCsv, btnActualizar, btnCerrar, lista, lblNota, tablero, hoja });
             reloj.Tick += (s, e) => Tic();
             relojAviso.Tick += (s, e) => QuitarAviso();
             // Lo que se guarde aqui o en otra ventana (o llegue con otra lectura) se ve al momento.
@@ -416,7 +428,7 @@ namespace DigBit
             }
         }
 
-        /// <summary>Lleva a esa clase (desde "Asistencia" de la tarjeta). Si aun se leen los grupos, se elige al terminar.</summary>
+        /// <summary>Lleva a esa clase (desde "Lista de asistencia" de la tarjeta). Si aun se leen los grupos, se elige al terminar.</summary>
         public void Elegir(int idClase)
         {
             int indice = grupos.FindIndex(g => g.Clase.Id == idClase);
@@ -481,9 +493,21 @@ namespace DigBit
                 btnGuardarCsv.Location = new Point(btnActualizar.Left - 8 - btnGuardarCsv.Width, yBotones);
                 btnCopiar.Location = new Point(btnGuardarCsv.Left - 8 - btnCopiar.Width, yBotones);
                 lblTitulo.SetBounds(margen, amplio ? 15 : 11, Medir(g, lblTitulo.Text, lblTitulo.Font).Width + 2, AltoDe(g, lblTitulo.Font));
-                int inicioEstado = (Kiosco.Activo ? btnActualizar.Left : btnCopiar.Left) - 12 - anchoEstado;
+                int primerBoton = Kiosco.Activo ? btnActualizar.Left : btnCopiar.Left;
+                // Durante la clase, "Dar asistencia..." antes de los demas; el estado mide
+                // entonces solo su texto de ahora (asi la materia no se queda en "..." a 1366).
+                int anchoDelEstado = anchoEstado;
+                if (verDar)
+                {
+                    btnDar.Location = new Point(primerBoton - 8 - btnDar.Width, yBotones);
+                    primerBoton = btnDar.Left;
+                    anchoDelEstado = Math.Min(anchoEstado, Medir(g, lblEstado.Text, lblEstado.Font).Width + 2);
+                }
+
+                btnDar.Visible = verDar;
+                int inicioEstado = primerBoton - 12 - anchoDelEstado;
                 // Va alineado a la derecha: 2 px de mas a la izquierda para que el texto mas largo nunca lleve "...".
-                lblEstado.SetBounds(inicioEstado - 2, amplio ? 20 : 16, anchoEstado + 2, AltoDe(g, lblEstado.Font));
+                lblEstado.SetBounds(inicioEstado - 2, amplio ? 20 : 16, anchoDelEstado + 2, AltoDe(g, lblEstado.Font));
                 // El circulo de la clase elegida (db/19), alineado con el tablero y con
                 // los botones; el grupo y la materia, oficiales, 10 px despues.
                 int xCabecera = x0;
@@ -733,6 +757,7 @@ namespace DigBit
                 btnGuardarCsv.Visible = false;
                 tablero.MostrarSinGrupos();
                 PonerEstado(Actualizado(tarea.Result.Item1), false, AyudaEstado);
+                ActualizarBotonDar();
                 return;
             }
 
@@ -810,6 +835,8 @@ namespace DigBit
                 tablero.MostrarLeyendo();
                 hoja.MostrarCargando(grupo.Clase.Materia, grupo.Clase.Grupo, profesor);
                 PonerEstado("Leyendo la lista...", false, null);
+                // Otro grupo (o Actualizar): hasta tener su lista, sin "Dar asistencia...".
+                ActualizarBotonDar();
             }
 
             int idClase = grupo.Clase.Id;
@@ -925,6 +952,7 @@ namespace DigBit
             }
 
             PonerEstado(Actualizado(grupo.Leida.AhoraServidor), false, EnCurso(grupo) ? AyudaEstadoEnCurso : AyudaEstado);
+            ActualizarBotonDar();
         }
 
         /// <summary>"Actualizado a las 15:23" (hora del servidor), como en el panel del profesor y en el del administrador.</summary>
@@ -1003,6 +1031,8 @@ namespace DigBit
         {
             RepintarLista();
             tablero.ActualizarHora(Ahora);
+            // Al terminar el bloque, "Dar asistencia..." se va sin esperar a la lectura.
+            ActualizarBotonDar();
             GrupoDelProfesor grupo = Elegido;
             if (grupo == null || leyendoGrupos || cambiando || hoja.MenuAbierto)
             {
@@ -1140,7 +1170,11 @@ namespace DigBit
 
             cambiando = true;
             Cursor = Cursors.WaitCursor;
-            Task.Run(() => new AsistenciaDatos().PrepararDar(idClase, idProfesor))
+            // Por matricula, tambien si los estudiantes entran con el SIIA: a quien no tiene
+            // cuenta no se le manda a "Crear cuenta" (con el SIIA no existe; se crea sola).
+            bool porMatricula = alumno == null;
+            Task.Run(() => Tuple.Create(new AsistenciaDatos().PrepararDar(idClase, idProfesor),
+                    porMatricula && InicioConSiia.LeerSinFallar().Estudiantes))
                 .ContinueWith(tarea => EnLaVentana(() =>
                 {
                     Cursor = Cursors.Default;
@@ -1157,7 +1191,8 @@ namespace DigBit
                             return;
                         }
 
-                        PreparacionDar preparacion = tarea.Result;
+                        PreparacionDar preparacion = tarea.Result.Item1;
+                        bool estudiantesConSiia = tarea.Result.Item2;
                         if (preparacion.Problema != null)
                         {
                             MessageBox.Show(this, preparacion.Problema, "Dar la asistencia", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1171,7 +1206,7 @@ namespace DigBit
                         // Quien aun no esta en la lista entra con falta solo si ya hubo clases que cuentan.
                         bool conClasesAntes = lista != null && lista.Dias.Any(d => d.Fecha.Date < hoy.Date);
                         using (DialogoDarAsistencia dialogo = new DialogoDarAsistencia(grupo.Clase.Materia, grupo.Clase.Grupo, preparacion, hoy, alumno,
-                            conClasesAntes, () => DateTime.Now + desfase,
+                            conClasesAntes, estudiantesConSiia, () => DateTime.Now + desfase,
                             matricula => new AsistenciaDatos().BuscarEstudiante(idClase, matricula),
                             id => grupo.Leida == null ? null : grupo.Leida.Alumnos.FirstOrDefault(a => a.Id == id),
                             (id, motivo, equipo, detalle) => new AsistenciaDatos().DarAsistencia(idClase, idProfesor, id, motivo, equipo, detalle)))
@@ -1422,9 +1457,32 @@ namespace DigBit
 
         private void MostrarEstado(string texto, Color color, string detalle)
         {
+            bool otroTexto = lblEstado.Text != texto;
             lblEstado.Text = texto;
             lblEstado.ForeColor = color;
             ayuda.SetToolTip(lblEstado, detalle);
+            if (otroTexto && verDar)
+            {
+                // Con "Dar asistencia..." el estado mide su texto (Acomodar).
+                Acomodar();
+            }
+        }
+
+        /// <summary>
+        /// "Dar asistencia..." de la cabecera: solo con la lista del grupo elegido a
+        /// la vista, uno de sus bloques de hoy en curso y la hoja dejando darla (la
+        /// condicion del enlace de debajo, HojaAsistencia.PuedeDarSinLista). Si cambia,
+        /// se vuelve a colocar la cabecera.
+        /// </summary>
+        private void ActualizarBotonDar()
+        {
+            GrupoDelProfesor grupo = Elegido;
+            bool ver = grupo != null && grupos.Count > 0 && claseMostrada == grupo.Clase.Id && hoja.PuedeDarSinLista && EnCurso(grupo);
+            if (ver != verDar)
+            {
+                verDar = ver;
+                Acomodar();
+            }
         }
 
         /// <summary>Un aviso en el lugar del estado durante 5 s (en verde si salio bien); despues, otra vez el estado.</summary>

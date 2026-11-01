@@ -99,6 +99,8 @@ mysql -u root -p < db\20_vigencia_franjas.sql
 mysql -u root -p < db\21_historial_cambios.sql
 mysql -u root -p < db\22_asistencia_dada.sql
 mysql -u root -p < db\23_horarios_guardados.sql
+mysql -u root -p < db\24_docentes_siia.sql
+mysql -u root -p < db\25_horas_por_asignar.sql
 ```
 
 O todas de una vez, con respaldo antes y revisión, desde PowerShell:
@@ -532,9 +534,13 @@ dieron y qué fallas se reportaron. Solo lee: no escribe nada ni necesita
 migración.
 
 - **Filtros**: el periodo («Este ciclo», que empieza el día en que empezó la
-  clase vigente más antigua; «Ciclo anterior»; «Este mes»; «Esta semana»;
-  «Últimos 30 días»; o «Elegir fechas...», hasta 400 días atrás), el
-  laboratorio, la persona docente y el grupo.
+  clase vigente más antigua, con el nombre de la plantilla si se aplicó en
+  Horarios > Aplicación; un renglón por cada ciclo que ya terminó, como
+  «Ciclo abril-septiembre 2026», que se calcula solo con sus clases y con el
+  derecho a evaluación; «Este mes»; «Esta semana»; «Últimos 30 días»; o
+  «Elegir fechas...», cualquier día desde el 01/01/2000 hasta hoy, con 400
+  días como mucho entre los dos y la casilla «Hasta hoy»), el laboratorio, la
+  persona docente y el grupo.
 - **Cinco cifras**, que al pulsarlas llevan a su pestaña ya ordenada:
   - asistencia de los estudiantes, con cuántos van bajo el 80 %;
   - clases que se dieron: «X de N», donde una clase se dio si alguien registró
@@ -994,6 +1000,60 @@ el correo del código lleva al pie el mismo enlace.
 Cómo se instala la API en el hosting, cómo se saca la contraseña de aplicación
 de Gmail y qué hacer si algo falla: `api/LEEME.md`.
 
+#### Entrar con el SIIA del TESCHI (db/24, versión 1.1)
+
+En **Ajustes → Inicio de sesión con el SIIA → Configurar...** hay dos
+interruptores, apagados por omisión: **los docentes** y **los estudiantes**
+entran con su número de empleado (o su matrícula), su contraseña y su **NIP**
+del SIIA, en dos pasos como el propio SIIA: primero el número y la contraseña
+(`login.ashx`, sin NIP) y luego, en la misma ventana, el NIP (`nip.ashx`, acción
+`verificar`, el paso que solo comprueba). DigBit nunca escribe en el SIIA: no
+crea ni cambia el NIP ni la contraseña; a quien aún no tiene NIP, o la olvidó,
+lo manda a la página del SIIA: «¿Olvidaste tu contraseña?» (o tu NIP) abre
+directo la página de recuperación del SIIA en el navegador; en el kiosco, que
+nunca abre el navegador, enseña la dirección y su código QR para el celular. Las direcciones (`login.ashx`, la página para
+recuperar la contraseña y la de inicio del SIIA) se cambian ahí mismo, con
+**Comprobar** (un GET sin datos, que debe dar 405). La administración y las
+personas responsables de laboratorio siguen con su contraseña de DigBit.
+
+- **Docentes:** la primera vez que un docente entra con el SIIA, DigBit le pide
+  que se acerque con la administración y le diga «Soy el número de empleado
+  ####, enlázame». Queda en **Alertas → Docentes por enlazar** (con
+  notificación de Windows, como mucho una por hora) y en **Docentes**, con la
+  columna «Enlace con el SIIA» (Enlazado / Pendiente / Sin enlazar) y una franja
+  con **Enlazar...**: se busca su número, se elige quién es en la lista (la
+  coincidencia por nombre sale hasta arriba) y **Enlazar**. Desde ese momento
+  entra con ese número y conserva sus clases; si estaba esperando, entra solo en
+  unos segundos. **Descartar solicitud** y **Desenlazar del SIIA** deshacen lo
+  que no corresponde. DigBit no crea ni enlaza docentes por su cuenta.
+- **En el paso del NIP** se ve el nombre que dio el SIIA («Hola, Lucía Pérez
+  Ruiz»), ya con la contraseña comprobada, y, si hay aviso de privacidad en
+  Ajustes, el enlace para leerlo.
+- **Estudiantes:** entran con su cuenta de esa matrícula o, si no la hay, se
+  crea sola con su nombre del SIIA y su carrera (si el área del SIIA casa con
+  una sola carrera de DigBit, sin mayúsculas ni acentos y perdonando una o dos
+  letras: «Ingeneria en Sistemas Computacionales» casa con «INGENIERÍA EN
+  SISTEMAS COMPUTACIONALES»); el kiosco ya no ofrece «Crear cuenta».
+- **Volver a cargar el horario** con `deploy\importar_horarios.ps1` después de
+  enlazar: el docente que en el CSV sigue con su número provisional se encuentra
+  por ese número de antes (lo guarda el enlace) y no se duplica.
+
+> **Para la administración:** antes de encender el inicio de sesión con el SIIA
+> para los docentes, conviene tener a mano la lista de docentes: cada uno, la
+> primera vez que entra con el SIIA, espera a que lo enlaces con su cuenta (la
+> que tiene sus clases), y mientras no lo enlaces no entra. Los que se cargaron
+> con el horario real tienen un número provisional (letras): al enlazarlos pasa
+> a ser su número de empleado. Enciéndelo cuando todos los equipos tengan esta
+> versión de DigBit, y aplica antes `db/24_docentes_siia.sql`.
+
+Si el SIIA no responde (sin internet, más de 9 segundos, una falla o una
+respuesta que no se entiende), solo entra quien ya entró antes con el SIIA en
+DigBit (los docentes, ya enlazados), con la contraseña y el NIP de la última
+vez: se comprueban contra su **huella** (PBKDF2 de los dos juntos). Un
+estudiante sin huella ve «Pide a tu profesor que te dé asistencia». Si el SIIA
+rechaza, dice que la cuenta está inactiva o bloquea por intentos, no se entra.
+La contraseña, el NIP y los tokens del SIIA nunca se guardan ni van al registro.
+
 ### 9. Deep Freeze en los equipos del laboratorio
 
 Los equipos del TESCHI tienen **Deep Freeze**: el disco del sistema vuelve a su
@@ -1183,6 +1243,8 @@ db/
   21_historial_cambios.sql     Para una base que ya existía: quién cambió el horario, los laboratorios o una bitácora, cuándo y qué decía antes
   22_asistencia_dada.sql       Para una base que ya existía: la asistencia que da el docente a quien no pudo registrar su bitácora, con quién, cuándo y por qué
   23_horarios_guardados.sql    Para una base que ya existía (después de la 16): guardar varias configuraciones de horario con nombre, prepararlas y aplicarlas con sus fechas
+  24_docentes_siia.sql         Para una base que ya existía: entrar con el SIIA (el enlace de cada docente con su número de empleado y quién espera que lo enlacen)
+  25_horas_por_asignar.sql     Para una base que ya existía: las horas que faltan por asignar en el horario en uso (las que otra clase desplazó o se quitaron para darlas en otro horario)
 api/                           API en PHP de "¿Olvidaste tu contraseña?" para el hosting de la escuela (ver api/LEEME.md)
   recuperar.php                Solicitar un código, confirmarlo con la contraseña nueva, y probar la instalación
   lib/comun.php, lib/correo.php   Base de datos, contraseñas (PBKDF2 como DigBit) y un cliente SMTP para Gmail
@@ -1246,6 +1308,9 @@ DigBit/
     VigenciaFranjas.cs         Cuándo se da una franja: la vigencia de su clase recortada a la suya (db/20), en SQL y en memoria
     PersonalizacionClasesDatos.cs   Lo que cada docente elige para sus clases (db/19): leerlo ya resuelto por clase, sus imágenes y guardarlo
     RecuperacionContrasena.cs  Habla con la API de recuperación: pedir el código, confirmarlo y probarla
+    InicioConSiia.cs           Habla con el SIIA: número y contraseña (login.ashx), el NIP (nip.ashx, verificar) y «Comprobar»
+    Consultas.Siia.cs          Qué pasa al entrar con el SIIA: docentes (enlazados o en espera) y estudiantes (su cuenta se usa o se crea), y la huella
+    EnlacesSiia.cs             Docentes por enlazar: la solicitud, enlazar, descartar y desenlazar (con su historial)
     AjustesDatos.cs            Ajustes de toda la escuela guardados en la base (la dirección de esa API)
     ReglasCodigo.cs            Qué clase abre el código de cada docente en este laboratorio a esta hora
     AlertasDatos.cs            Alertas de la administración: clases sin bitácoras (como Faltas), en curso sin nadie, fallas por laboratorio y día y cambios de horario de otras personas
@@ -1265,7 +1330,9 @@ DigBit/
   BotonCabecera.cs             Las pastillas de la cabecera del panel de administración (Mi perfil, Ajustes, Códigos, Alertas con campana y globo; Solo consulta)
   DialogoContrasenaAdmin.cs    Vuelve a pedir la contraseña de la administración antes de un cambio delicado; tres fallos cierran la sesión
   DialogoAccesoClases.cs       Cómo entra cada estudiante (por escuela o laboratorio) y el código de una clase abierta por la administración
-  DialogoAjustes.cs            Administración: Ajustes (cambios de horario, la API de recuperación con «Probar» y el aviso de privacidad)
+  DialogoAjustes.cs            Administración: Ajustes (cambios de horario, la API de recuperación con «Probar», el aviso de privacidad y el inicio de sesión con el SIIA)
+  DialogoEnlazarSiia.cs        Administración: «Docentes por enlazar» (quién entró con el SIIA y con qué docente se enlaza)
+  VentanaEnlacePendiente.cs    Lo que ve el docente que el SIIA acepta y aún no está enlazado (se revisa sola y entra en cuanto lo enlazan)
   DialogoRecuperarContrasena.cs   "¿Olvidaste tu contraseña?": matrícula, código del correo y contraseña nueva
   PanelLaboratoriosAhora.cs    El panel: hora anterior, actual y siguiente de cada laboratorio
   PantallaAdmin.cs             Base de las listas de la administración y sus diálogos

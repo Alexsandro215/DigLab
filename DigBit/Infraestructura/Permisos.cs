@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 using DigBit.conexion;
 using MySql.Data.MySqlClient;
@@ -145,6 +148,12 @@ namespace DigBit.Infraestructura
         /// para los lectores de pantalla. Un control deshabilitado no recibe el
         /// raton (Windows se lo da a su contenedor) y su ToolTip no sale: la ayuda
         /// la ensena el contenedor. Si la pantalla lo vuelve a habilitar, se apaga solo.
+        /// LA REGLA (2026-10-31), para que en solo consulta nada parezca descompuesto:
+        /// lo que el rol NUNCA puede hacer no se muestra (Ocultar, o no se crea: un
+        /// boton siempre apagado se pulsa y "no hace nada"); lo que se apaga segun lo
+        /// que se ve (una pestana) lleva su motivo a la vista con MotivoVisible, no solo
+        /// en la ayuda del raton. Desactivar queda para lo que se ve apagado porque
+        /// explica algo que la pantalla no dice de otro modo.
         /// </summary>
         public static void Desactivar(ToolTip ayuda, Control control, string explicacion)
         {
@@ -207,6 +216,103 @@ namespace DigBit.Infraestructura
                     ensenando = false;
                 }
             };
+        }
+
+        /// <summary>
+        /// El motivo de un boton que se apaga segun lo que se ve (una pestana), a la
+        /// vista y no solo al pasar el raton: una linea gris de 8.5 pt en el hueco de
+        /// encima del boton (entre la lista y los botones), alineada a su borde
+        /// derecho y con su mismo Anchor. Sale solo mientras el boton esta apagado y
+        /// se ve. El boton ya debe estar en su contenedor. Devuelve la linea (su Text
+        /// se puede cambiar: se vuelve a medir).
+        /// </summary>
+        public static Label MotivoVisible(Button boton, string texto)
+        {
+            if (boton == null || boton.Parent == null)
+            {
+                return null;
+            }
+
+            Label motivo = new Label
+            {
+                AutoSize = false,
+                Font = new Font("Century Gothic", 8.5F),
+                ForeColor = Color.FromArgb(95, 99, 96),
+                BackColor = Color.Transparent,
+                TextAlign = ContentAlignment.MiddleRight,
+                UseMnemonic = false,
+                Anchor = boton.Anchor,
+                Text = texto ?? ""
+            };
+            Control padre = boton.Parent;
+            Action colocar = () =>
+            {
+                int alto = TextRenderer.MeasureText("Ág", motivo.Font).Height;
+                int ancho = Math.Min(boton.Right, TextRenderer.MeasureText(motivo.Text, motivo.Font).Width + 4);
+                motivo.Anchor = boton.Anchor;
+                motivo.SetBounds(boton.Right - ancho, boton.Top - 4 - alto, ancho, alto);
+                // Mientras la ventana no se ve, Visible del boton es falso aunque se vaya
+                // a ver: entonces cuenta solo si esta apagado.
+                bool seVe = boton.Visible || !padre.Visible;
+                motivo.Visible = seVe && !boton.Enabled && motivo.Text.Length > 0;
+            };
+            boton.EnabledChanged += (s, e) => colocar();
+            boton.VisibleChanged += (s, e) => colocar();
+            boton.LocationChanged += (s, e) => colocar();
+            boton.SizeChanged += (s, e) => colocar();
+            motivo.TextChanged += (s, e) => colocar();
+            padre.Controls.Add(motivo);
+            motivo.BringToFront();
+            colocar();
+            return motivo;
+        }
+
+        /// <summary>
+        /// Lo que puede hacer la persona responsable de laboratorio (solo consulta), en
+        /// viñetas: un titulo corto y su texto. La lista de Excel sale de
+        /// EstadisticasDatos.SeGuardaEnCsv (las pestanas que no llevan nombres); con "Los
+        /// docentes no ven los codigos", donde esta el codigo que le piden.
+        /// </summary>
+        internal static List<KeyValuePair<string, string>> QuePuedeHacer()
+        {
+            List<string> conExcel = Enum.GetValues(typeof(PestanaEstadisticas)).Cast<PestanaEstadisticas>()
+                .Where(p => EstadisticasDatos.SeGuardaEnCsv(p, true))
+                .Select(p => p == PestanaEstadisticas.Graficas ? "Gráficas" : p.ToString())
+                .ToList();
+            List<KeyValuePair<string, string>> lista = new List<KeyValuePair<string, string>>
+            {
+                new KeyValuePair<string, string>("Puedes ver",
+                    "Los laboratorios en vivo, las alertas, las bitácoras, los estudiantes y sus bitácoras, los docentes (con la ficha de cada uno), "
+                    + "los laboratorios, los horarios y las estadísticas."),
+                new KeyValuePair<string, string>("Puedes guardar",
+                    "El PDF de las bitácoras y el de los horarios («Imprimir PDF»), el reporte para auditoría de Estadísticas "
+                    + "(sin lo de cada docente)" + (conExcel.Count == 0 ? "." : " y en Excel sus pestañas " + EstiloAdmin.Enumerar(conExcel)
+                    + ". Lo que lleva nombres solo se ve en pantalla."))
+            };
+            if (CodigosSoloResponsables.Activa)
+            {
+                lista.Add(new KeyValuePair<string, string>("El código de cada clase",
+                    "Los docentes te piden el código de su clase: está en la tarjeta de cada clase de «Los laboratorios ahora», en Docentes y en Horarios."));
+            }
+
+            lista.Add(new KeyValuePair<string, string>("Lo cambia la administración",
+                "Dar de alta, editar o dar de baja a estudiantes, docentes y responsables; los horarios, las clases y los cambios de un día; "
+                + "corregir bitácoras; los códigos de las clases y los ajustes. Si hace falta un cambio, pídeselo a la administración de DigBit."));
+            lista.Add(new KeyValuePair<string, string>("Lo cambias tú", "Tu correo y tu contraseña, en «Mi perfil» del panel."));
+            return lista;
+        }
+
+        /// <summary>
+        /// "Solo consulta": que puede ver, que puede guardar, que hace la administracion
+        /// y donde esta el codigo que le piden (QuePuedeHacer), en un dialogo. Lo abren
+        /// la pastilla del panel y la etiqueta junto al titulo de cada seccion.
+        /// </summary>
+        public static void ExplicarSoloConsulta(IWin32Window dueno)
+        {
+            using (DialogoSoloConsulta dialogo = new DialogoSoloConsulta(QuePuedeHacer()))
+            {
+                dialogo.ShowDialog(dueno);
+            }
         }
 
         private static void Anotar(string accion)

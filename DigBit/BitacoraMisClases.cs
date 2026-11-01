@@ -58,6 +58,8 @@ namespace DigBit
         private DateTime leidaEnUtc;
         // La semana la eligio quien la usa (flechas o "Esta semana"): Actualizar se queda en ella.
         private bool semanaElegida;
+        // Desde la ficha del docente: sin codigos de clase para nadie (la ficha nunca los ensena).
+        private readonly bool ocultarCodigos;
         // Ya salio bien una lectura completa (CargarHorario). Mientras no, cambiar de
         // semana lo vuelve a leer todo: sin sus clases diria que no tiene ninguna.
         private bool horarioLeido;
@@ -103,16 +105,26 @@ namespace DigBit
         /// quien registro ese dia (BitacoraSesion solo lee).
         /// </summary>
         public BitacoraMisClases(int idProfesor, string nombre)
+            : this(idProfesor, nombre, false)
+        {
+        }
+
+        /// <summary>
+        /// Lo mismo; con sinCodigos, sin los codigos de clase aunque quien la abre los vea (la
+        /// ficha del docente nunca los ensena, tampoco en su horario).
+        /// </summary>
+        public BitacoraMisClases(int idProfesor, string nombre, bool sinCodigos)
         {
             soloVer = true;
             this.idProfesor = idProfesor;
             nombreProfesor = nombre ?? "";
+            ocultarCodigos = sinCodigos;
             InicializarComponentes();
             // Quien no ve los codigos de los profesores (el encargado de laboratorio):
             // ni en los cuadros ni en su ayuda, ni el cuadro grande ni el subtitulo
             // (CargarHorario), ni en la bitacora que se abre. Antes de
             // CargarHorario, que pone las franjas.
-            cuadricula.SinCodigos = !Permisos.VeCodigosDeProfesor;
+            cuadricula.SinCodigos = ocultarCodigos || !Permisos.VeCodigosDeProfesor;
 
             Text = "Horario de " + nombreProfesor;
             lblTitulo.Text = "Horario de " + nombreProfesor;
@@ -167,7 +179,10 @@ namespace DigBit
             // renglon, la ayuda (ColocarAyuda), que dice tambien por que no se abre
             // una clase que aun no empieza (MostrarAviso).
             selectorSemana = new SelectorSemana { Location = new Point(30, 79) };
-            selectorSemana.Cambio += CambioDeSemana;
+            // La semana se desliza hacia ese lado (Deslizamiento).
+            selectorSemana.Cambio += () => Deslizamiento.Cambiar(selectorSemana.Direccion, CambioDeSemana, cuadricula);
+            // Aqui no hay laboratorio: las flechas del teclado son la semana.
+            TeclasDeFlechas.Registrar(selectorSemana, false, selectorSemana.Mover);
             selectorSemana.SizeChanged += (s, e) => ColocarAyuda();
 
             lblAyuda = new Label
@@ -376,8 +391,9 @@ namespace DigBit
                 cuadricula.LaboratoriosSinCodigoFijo = sinCodigoFijo;
                 // Quien no ve los codigos, con lo que LeerModos acaba de leer: el
                 // encargado de laboratorio y, si los docentes no ven los codigos
-                // (CodigosSoloResponsables), el profesor en su Mi horario.
-                cuadricula.SinCodigos = !Permisos.VeCodigosDeProfesor;
+                // (CodigosSoloResponsables), el profesor en su Mi horario. Desde la ficha del
+                // docente (ocultarCodigos), nadie.
+                cuadricula.SinCodigos = ocultarCodigos || !Permisos.VeCodigosDeProfesor;
 
                 if (personal)
                 {
@@ -402,6 +418,16 @@ namespace DigBit
                 MessageBox.Show(MensajeDeFallo.Explicar(soloVer ? "No se pudo leer su horario" : "No se pudo leer tu horario", ex, AvisoDeFalloDocente.SiSigue),
                     Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        /// <summary>
+        /// Que ensene la semana de ese dia y no la de hoy ("Ver esa semana en su horario" de la
+        /// ficha del docente). Despues se mueve como siempre (flechas, "Esta semana").
+        /// </summary>
+        internal void EmpezarEnLaSemana(DateTime dia)
+        {
+            selectorSemana.Lunes = CuadriculaSemanal.LunesDe(dia);
+            CambioDeSemana();
         }
 
         /// <summary>
@@ -478,8 +504,11 @@ namespace DigBit
             // lugar que lo pida, siempre que tenga clases en laboratorios con codigo.
             bool pedirCodigo = !soloVer && Permisos.DocenteSinCodigos
                 && (semana.Count > 0 ? semana : franjasDeClase.Values.SelectMany(l => l)).Any(f => !sinCodigos.Contains(f.LaboratorioId));
-            cuadroCodigo.Mostrar(soloVer ? "Su código de clase" : "Tu código de clase", codigos.Count == 1 ? codigos[0] : null,
-                pedirCodigo ? CodigosSoloResponsables.PideElCodigo : null);
+            // Con el aviso en lugar del codigo, como en la tarjeta del panel: "Codigo de
+            // la clase" (no es "tu" codigo: no lo ve), y quien si lo ve, en su ayuda.
+            bool conAviso = pedirCodigo && codigos.Count != 1;
+            cuadroCodigo.Mostrar(conAviso ? "Código de la clase" : soloVer ? "Su código de clase" : "Tu código de clase", codigos.Count == 1 ? codigos[0] : null,
+                pedirCodigo ? CodigosSoloResponsables.PideElCodigo : null, TarjetaCodigo.AyudaDelAviso);
             // Grande, pero sin bajar de y = 104: la cuadricula empieza en 110.
             cuadroCodigo.Top = Math.Max(0, Math.Min(10, contenedorSemana.Top - 6 - cuadroCodigo.Height));
             lblSubtitulo.Text = subtituloBase + (codigos.Count <= 1 ? ""
@@ -867,6 +896,8 @@ namespace DigBit
         private string titulo = "";
         private string codigo = "";
         private string aviso = "";
+        // La ayuda del aviso (quien si ve los codigos), o null.
+        private string ayudaAviso;
         private string textoAyuda;
 
         public CuadroCodigo()
@@ -897,13 +928,15 @@ namespace DigBit
 
         /// <summary>
         /// Pone el codigo, en mayusculas (sin el, se oculta), y se ajusta a el sin
-        /// despegarse del borde derecho. Sin codigo y con aviso, el aviso en su lugar.
+        /// despegarse del borde derecho. Sin codigo y con aviso, el aviso en su
+        /// lugar, con ayudaDelAviso al pasar el raton.
         /// </summary>
-        public void Mostrar(string titulo, string codigo, string aviso = null)
+        public void Mostrar(string titulo, string codigo, string aviso = null, string ayudaDelAviso = null)
         {
             this.titulo = titulo ?? "";
             this.codigo = TarjetaCodigo.Mayusculas(codigo);
             this.aviso = this.codigo.Length == 0 ? (aviso ?? "") : "";
+            ayudaAviso = this.aviso.Length > 0 ? ayudaDelAviso : null;
             int derecha = Right;
             Size medidaTitulo;
             Size medidaCodigo;
@@ -919,7 +952,7 @@ namespace DigBit
                 6 + medidaTitulo.Height + 2 + medidaCodigo.Height + 6);
             Left = derecha - Width;
             Visible = ConContenido;
-            textoAyuda = ConCodigo ? TarjetaCodigo.Deletrear(this.codigo) : null;
+            textoAyuda = ConCodigo ? TarjetaCodigo.Deletrear(this.codigo) : ayudaAviso;
             ayuda.SetToolTip(this, textoAyuda);
 
             // La bocina a la derecha del codigo y centrada en su alto (OnPaint centra los dos juntos).
@@ -944,7 +977,7 @@ namespace DigBit
         {
             base.OnMouseMove(e);
             bool sobreLaBocina = btnEscuchar.Visible && !btnEscuchar.Enabled && btnEscuchar.Bounds.Contains(e.Location);
-            string texto = !ConCodigo || sobreLaBocina ? null : TarjetaCodigo.Deletrear(codigo);
+            string texto = !ConCodigo ? ayudaAviso : sobreLaBocina ? null : TarjetaCodigo.Deletrear(codigo);
             if (texto != textoAyuda)
             {
                 textoAyuda = texto;

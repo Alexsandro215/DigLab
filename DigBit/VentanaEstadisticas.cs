@@ -19,19 +19,24 @@ namespace DigBit
 {
     /// <summary>
     /// Estadisticas de toda la escuela (paquetes 4a y 4b de su especificacion, con
-    /// las decisiones del usuario del 2026-10-21 y 2026-10-22): un periodo y tres
-    /// filtros (laboratorio, docente y grupo), cinco cifras grandes que llevan a su
-    /// pestana y seis pestanas: Estudiantes (con "Sus clases" y "Ver sus
-    /// bitacoras"), Clases (con "Estudiantes de la clase"), Grupos, Docentes (SOLO la
-    /// asistencia de los docentes, con sus clases dia por dia y la bitacora de cada
-    /// una con doble clic), Laboratorios y Equipos.
+    /// las decisiones del usuario del 2026-10-21, 2026-10-22 y 2026-10-31): arriba el
+    /// periodo y cinco cifras grandes de todo el TESCHI, que llevan a su pestana, y
+    /// abajo siete pestanas, cada una con SUS filtros (2026-10-31, el usuario: "estas
+    /// opciones deberian estar en sus secciones y no en la general"; eligio "cada
+    /// apartado, los suyos"): Estudiantes (con "Sus clases" y "Ver sus bitacoras"),
+    /// Clases (con "Estudiantes de la clase"), Grupos, Docentes (SOLO la asistencia de
+    /// los docentes, con sus clases dia por dia y la bitacora de cada una con doble
+    /// clic), Laboratorios, Equipos (de un laboratorio a la vez) y Graficas.
     ///
     /// Nunca lee en el hilo de la pantalla: EstadisticasDatos.Leer va en Task.Run con
-    /// un numero de lectura (la que llega tarde se descarta), y cambiar laboratorio,
-    /// docente o grupo solo vuelve a calcular (EstadisticasDatos.Calcular), sin ir a
-    /// la base. Nunca escribe en la base: la persona responsable del laboratorio la
-    /// ve igual, y solo guarda en CSV Laboratorios, Grupos y Equipos. En kiosco no hay
-    /// CSV ni se puede copiar de sus tablas.
+    /// un numero de lectura (la que llega tarde se descarta). Se lee una vez por
+    /// periodo; cada pestana calcula con sus filtros (EstadisticasDatos.Calcular, en
+    /// segundo plano y sin ir a la base) y lo calculado se guarda por filtro mientras
+    /// no cambien la lectura ni el periodo: dos pestanas con los mismos filtros (o con
+    /// "Todos", como las cifras) comparten el calculo. Nunca escribe en la base: la
+    /// persona responsable del laboratorio la ve igual, y solo guarda en CSV
+    /// Laboratorios, Grupos, Equipos y Graficas. En kiosco no hay CSV ni se puede
+    /// copiar de sus tablas.
     ///
     /// Dos disposiciones, como Mis grupos: amplia desde 1600 x 860 de cliente (todas
     /// las columnas) y compacta por debajo (lo que no cabe va en la ayuda de la fila).
@@ -41,17 +46,30 @@ namespace DigBit
     internal sealed class VentanaEstadisticas : PantallaAdmin
     {
         private const string Titulo = "Estadísticas";
-        private const string Subtitulo = "Cuántas veces entró cada estudiante a sus clases, qué clases se dieron y qué fallas se reportaron, "
-            + "en el periodo que elijas. F5 actualiza.";
+        private const string Subtitulo = "Arriba, las cifras generales del periodo en todo el TESCHI; abajo, cada apartado con sus filtros. F5 actualiza.";
+        private const string AyudaGeneral = "Es de todo el TESCHI en el periodo: no cambia con los filtros de los apartados de abajo.";
         private const string TextoLeyendo = "Leyendo las estadísticas...";
         private const string TextoCalculando = "Calculando...";
         private const string TituloCsv = "Guardar en Excel (CSV)";
         private const string AyudaCsv = "Guarda la pestaña que ves, con todas sus columnas y las filas que deja la búsqueda, "
             + "en un archivo que Excel abre con doble clic.";
+        // Encima del CSV apagado de la persona responsable (Permisos.MotivoVisible); el
+        // texto largo (SinCsvParaSoloConsulta) sigue en la ayuda del raton.
+        private const string MotivoSinCsvALaVista = "Esta pestaña lleva nombres: el Excel te lo da la administración.";
+        // De lo de abajo de las pestanas al borde: 10 px mas en solo consulta, para que
+        // quepa la linea de MotivoVisible entre las pestanas y los botones.
+        private static int AbajoDeLasPestanas
+        {
+            get { return Permisos.SoloConsulta ? 82 : 72; }
+        }
+
         private const int AnchoBuscador = 220;
         private const int Separacion = 10;
         private const int AltoMinimoNormal = 640;
         private const int AltoCifrasBaja = 78;
+        // La primera fila de cada pestana (sus listas y Buscar) y lo que hay entre una lista y la siguiente.
+        private const int AltoFila = 26;
+        private const int EntreListas = 16;
 
         private static readonly Color Gris = Color.FromArgb(150, 150, 150);
         private static readonly Color GrisElegida = Color.FromArgb(105, 105, 105);
@@ -69,13 +87,10 @@ namespace DigBit
         private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
         // Lo ultimo que se eligio, mientras DigBit siga abierto (tambien si se cierra
-        // la sesion), como la casilla de Faltas.
-        private static TipoPeriodo ultimoTipo = TipoPeriodo.Ciclo;
-        private static DateTime ultimoDesde;
-        private static DateTime ultimoHasta;
-        private static int ultimoLaboratorio;
-        private static int ultimoDocente;
-        private static int ultimoGrupo;
+        // la sesion), como la casilla de Faltas: el periodo (tambien un ciclo pasado, por
+        // su primer dia, y "Hasta hoy") y los filtros de cada pestana.
+        private static PeriodoElegido ultimoPeriodo = PeriodoElegido.De(TipoPeriodo.Ciclo);
+        private static readonly Dictionary<PestanaEstadisticas, ClaveDeFiltro> filtrosRecordados = new Dictionary<PestanaEstadisticas, ClaveDeFiltro>();
 
         private readonly DrawingFont fuenteNegrita = new DrawingFont("Century Gothic", 10F, FontStyle.Bold);
         private readonly DrawingFont fuenteNombre = new DrawingFont("Century Gothic", 12F, FontStyle.Bold);
@@ -89,15 +104,10 @@ namespace DigBit
         private readonly bool construida;
         private readonly Label lblSubtitulo;
         private readonly Label lblPeriodo;
-        private readonly Label lblLaboratorio;
-        private readonly Label lblDocente;
-        private readonly Label lblGrupo;
         private readonly ComboBox cboPeriodo;
-        private readonly ComboBox cboLaboratorio;
-        private readonly ComboBox cboDocente;
-        private readonly ComboBox cboGrupo;
         private readonly CifraGrande[] cifras = new CifraGrande[5];
         private readonly TabControl tabs;
+        // Cada pestana con sus listas (Pagina.Filtro), lo que pide y lo que se ve.
         private readonly Dictionary<PestanaEstadisticas, Pagina> paginas = new Dictionary<PestanaEstadisticas, Pagina>();
         private readonly Button btnActualizar;
         private readonly Button btnCsv;
@@ -142,18 +152,46 @@ namespace DigBit
         private readonly Tabla<FilaLaboratorio> tLaboratorios;
         private readonly Tabla<FilaEquipo> tEquipos;
 
+        // Graficas (2026-10-31): las cuatro secciones, la agrupacion y el reporte para auditoria.
+        private static AgrupacionGraficas? agrupacionElegida;
+        private readonly PanelDeGraficas panelGraficas;
+        private readonly Label lblAgrupar;
+        private readonly RadioButton rbPorSemana;
+        private readonly RadioButton rbPorMes;
+        private readonly Button btnReporte;
+        private bool poniendoAgrupacion;
+
         // Lo pedido y lo leido.
         private PeriodoElegido periodo;
+        // El periodo con que se pidio la lectura que se ve (el de lo general): con el calcula
+        // cada pestana y a el se vuelve si otra lectura no se pudo hacer (2026-10-31: tras fallar
+        // "Este ciclo", las pestanas calculaban el ciclo con la lectura del mes que se veia).
+        private PeriodoElegido periodoLeido;
         private LecturaEstadisticas lectura;
-        private ResultadoEstadisticas resultado;
+        // "Ver en Estadisticas" de la ficha del docente (MostrarDocente): la lectura de la ficha y su
+        // periodo, para que la siguiente lectura (sin F5 y con ese mismo periodo) calcule con ella.
+        private LecturaEstadisticas lecturaDeLaFicha;
+        private PeriodoElegido periodoDeLaFicha;
+        // Lo general del periodo (todos los laboratorios, docentes y grupos): las cifras de
+        // arriba (2026-10-31, el usuario: "arriba las generales y abajo las que van por
+        // apartado") y las opciones de las listas de todas las pestanas.
+        private ResultadoEstadisticas resultadoGeneral;
+        // Lo calculado con esta lectura y este periodo, por lo que pidio cada pestana
+        // (laboratorio, docente y grupo): se vacia con cada lectura que llega. Cada calculo
+        // trae todas las tablas: se guardan a lo mas MaximoGuardados (Guardar).
+        private const int MaximoGuardados = 12;
+        private readonly Dictionary<ClaveDeFiltro, ResultadoEstadisticas> calculados = new Dictionary<ClaveDeFiltro, ResultadoEstadisticas>();
+        private readonly List<ClaveDeFiltro> ordenDeGuardados = new List<ClaveDeFiltro>();
         private string error;
+        // No se pudo volver a leer y se sigue viendo lo de antes: lo que dice lblResumen y su ayuda.
+        private string falloDeLectura;
+        private string ayudaDelFallo;
         private int lecturas;
         private bool leyendoBase;
         // Hay una lectura de la base en marcha; lo pedido mientras tanto espera a que acabe.
         private bool baseEnMarcha;
         private bool otraPedida;
         private bool otraForzada;
-        private bool calculando;
         private bool poniendoCombos;
         private bool disposicionAmplia;
         private bool disposicionPuesta;
@@ -180,30 +218,20 @@ namespace DigBit
 
             periodo = PeriodoRecordado();
 
-            // ----- Filtros -----
+            // ----- Periodo (arriba, junto al titulo: es de todo) -----
+            // Con Tab, en el orden en que se ven: el periodo, las cifras generales, las
+            // pestanas y, dentro de cada una, sus filtros, Buscar y la tabla.
             lblPeriodo = Etiqueta("Periodo");
-            lblLaboratorio = Etiqueta("Laboratorio");
-            lblDocente = Etiqueta("Docente");
-            lblGrupo = Etiqueta("Grupo");
-            cboPeriodo = Combo(0, "Periodo");
-            cboLaboratorio = Combo(1, "Laboratorio");
-            cboDocente = Combo(2, "Docente");
-            cboGrupo = Combo(3, "Grupo");
+            cboPeriodo = Combo(this, 0, "Periodo");
             cboPeriodo.DrawItem += DibujarOpcion;
-            cboLaboratorio.DrawItem += DibujarOpcion;
-            cboDocente.DrawItem += DibujarDocente;
-            cboGrupo.DrawItem += DibujarOpcion;
             cboPeriodo.SelectedIndexChanged += (s, e) => { if (!poniendoCombos) PeriodoCambiado(); };
-            cboLaboratorio.SelectedIndexChanged += (s, e) => { if (!poniendoCombos) FiltroCambiado(); };
-            cboDocente.SelectedIndexChanged += (s, e) => { if (!poniendoCombos) FiltroCambiado(); };
-            cboGrupo.SelectedIndexChanged += (s, e) => { if (!poniendoCombos) FiltroCambiado(); };
 
             // ----- Cifras -----
             string[] etiquetas = { "asistencia de los estudiantes", "clases que se dieron", "bitácoras registradas", "fallas reportadas", "equipos avisados sin internet" };
             for (int i = 0; i < cifras.Length; i++)
             {
                 int cual = i;
-                cifras[i] = new CifraGrande { Etiqueta = etiquetas[i], TabIndex = 4 + i };
+                cifras[i] = new CifraGrande { Etiqueta = etiquetas[i], TabIndex = 1 + i };
                 cifras[i].Click += (s, e) => CifraPulsada(cual);
                 Controls.Add(cifras[i]);
             }
@@ -215,7 +243,7 @@ namespace DigBit
                 DrawMode = TabDrawMode.OwnerDrawFixed,
                 SizeMode = TabSizeMode.Fixed,
                 ItemSize = new Size(132, 26),
-                TabIndex = 9
+                TabIndex = 6
             };
             tabs.DrawItem += DibujarPestana;
             tabs.SelectedIndexChanged += (s, e) => PestanaCambiada();
@@ -225,12 +253,25 @@ namespace DigBit
             Pagina clases = NuevaPagina(PestanaEstadisticas.Clases, "Clases", true);
             Pagina grupos = NuevaPagina(PestanaEstadisticas.Grupos, "Grupos", true);
             Pagina docentes = NuevaPagina(PestanaEstadisticas.Docentes, "Docentes", true);
-            Pagina laboratorios = NuevaPagina(PestanaEstadisticas.Laboratorios, "Laboratorios", false);
+            Pagina laboratorios = NuevaPagina(PestanaEstadisticas.Laboratorios, "Laboratorios", true);
             Pagina equipos = NuevaPagina(PestanaEstadisticas.Equipos, "Equipos", true);
+            Pagina graficas = NuevaPagina(PestanaEstadisticas.Graficas, "Gráficas", false);
+
+            // Los filtros de cada pestana, arriba a la izquierda y en este orden (2026-10-31: "cada
+            // apartado, los suyos"); cada una recuerda los suyos mientras DigBit siga abierto.
+            // Laboratorios no tiene: cada fila ya es un laboratorio.
+            AgregarListas(estudiantes, false, TipoDeFiltro.Grupo, TipoDeFiltro.Docente, TipoDeFiltro.Laboratorio);
+            AgregarListas(clases, false, TipoDeFiltro.Docente, TipoDeFiltro.Grupo, TipoDeFiltro.Laboratorio);
+            AgregarListas(grupos, false, TipoDeFiltro.Docente, TipoDeFiltro.Laboratorio);
+            AgregarListas(docentes, false, TipoDeFiltro.Laboratorio, TipoDeFiltro.Grupo);
+            // Equipos y Graficas: el laboratorio entre flechas, como en Horarios. En Equipos sin
+            // "Todos los laboratorios" (los equipos son de uno: "PC-07" hay en todos).
+            AgregarListas(equipos, true, TipoDeFiltro.Laboratorio);
+            AgregarListas(graficas, true, TipoDeFiltro.Laboratorio, TipoDeFiltro.Docente, TipoDeFiltro.Grupo);
 
             // Estudiantes.
             tEstudiantes = CrearTablaEstudiantes();
-            estudiantes.Agregar(tEstudiantes.Grid);
+            estudiantes.Agregar(tEstudiantes.Grid, 10);
             estudiantes.Tabla = tEstudiantes;
             fichaEstudiante = new Ficha(BordeFicha) { Vacio = "Elige un estudiante para ver sus clases.", Font = fuenteValor };
             lblNombreEstudiante = TextoDeFicha(fichaEstudiante, fuenteNombre, Color.DarkGreen);
@@ -249,13 +290,14 @@ namespace DigBit
             ayuda.SetToolTip(btnVerBitacoras, "Cada bitácora que registró, con su clase, el equipo y lo que reportó. También con doble clic o Enter en la tabla.");
             fichaEstudiante.Contenido.Controls.Add(btnVerBitacoras);
             fichaEstudiante.Contenido.Resize += (s, e) => AcomodarFichaEstudiante();
-            estudiantes.Agregar(fichaEstudiante);
+            estudiantes.Agregar(fichaEstudiante, 11);
+            estudiantes.Tablas.AddRange(new ITablaDisposicion[] { tEstudiantes, tSusClases });
             tEstudiantes.Elegida += () => MostrarEstudiante(tEstudiantes.Elegido);
             tEstudiantes.Abrir += VerSusBitacoras;
 
             // Clases.
             tClases = CrearTablaClases();
-            clases.Agregar(tClases.Grid);
+            clases.Agregar(tClases.Grid, 10);
             clases.Tabla = tClases;
             fichaClase = new Ficha(BordeFicha) { Vacio = "Elige una clase para ver a sus estudiantes.", Font = fuenteValor };
             lblTituloClase = TextoDeFicha(fichaClase, fuenteTituloFicha, Color.DarkGreen);
@@ -271,18 +313,20 @@ namespace DigBit
             tLista = CrearTablaLista();
             fichaClase.Contenido.Controls.Add(tLista.Grid);
             fichaClase.Contenido.Resize += (s, e) => AcomodarFichaClase();
-            clases.Agregar(fichaClase);
+            clases.Agregar(fichaClase, 11);
+            clases.Tablas.AddRange(new ITablaDisposicion[] { tClases, tLista });
             tClases.Elegida += () => MostrarClase(tClases.Elegido);
 
             // Grupos.
             tGrupos = CrearTablaGrupos();
-            grupos.Agregar(tGrupos.Grid);
+            grupos.Agregar(tGrupos.Grid, 10);
             grupos.Tabla = tGrupos;
-            tGrupos.Abrir += g => IrAClasesCon(0, g.GrupoId);
+            grupos.Tablas.Add(tGrupos);
+            tGrupos.Abrir += g => IrAClasesCon(grupos, 0, g.GrupoId);
 
             // Docentes: arriba (o a la izquierda) los docentes; debajo, sus clases dia por dia.
             tDocentes = CrearTablaDocentes();
-            docentes.Agregar(tDocentes.Grid);
+            docentes.Agregar(tDocentes.Grid, 10);
             docentes.Tabla = tDocentes;
             fichaDocente = new Ficha(BordeFicha) { Vacio = "Elige a un docente para ver sus clases día por día.", Font = fuenteValor };
             lblNombreDocente = TextoDeFicha(fichaDocente, fuenteNombre, Color.DarkGreen);
@@ -290,19 +334,42 @@ namespace DigBit
             tSusClasesDia = CrearTablaSusClasesDia();
             fichaDocente.Contenido.Controls.Add(tSusClasesDia.Grid);
             fichaDocente.Contenido.Resize += (s, e) => AcomodarFichaDocente();
-            docentes.Agregar(fichaDocente);
+            docentes.Agregar(fichaDocente, 11);
+            docentes.Tablas.AddRange(new ITablaDisposicion[] { tDocentes, tSusClasesDia });
             tDocentes.Elegida += () => MostrarDocente(tDocentes.Elegido);
-            tDocentes.Abrir += d => IrAClasesCon(d.DocenteId, 0);
+            tDocentes.Abrir += d => IrAClasesCon(docentes, d.DocenteId, 0);
             tSusClasesDia.Abrir += AbrirBitacora;
 
             // Laboratorios y Equipos.
             tLaboratorios = CrearTablaLaboratorios();
-            laboratorios.Agregar(tLaboratorios.Grid);
+            laboratorios.Agregar(tLaboratorios.Grid, 10);
             laboratorios.Tabla = tLaboratorios;
+            laboratorios.Tablas.Add(tLaboratorios);
             tLaboratorios.Abrir += l => IrAEquiposDe(l.EsTodos ? 0 : l.LaboratorioId);
             tEquipos = CrearTablaEquipos();
-            equipos.Agregar(tEquipos.Grid);
+            equipos.Agregar(tEquipos.Grid, 10);
             equipos.Tabla = tEquipos;
+            equipos.Tablas.Add(tEquipos);
+
+            // Graficas: las cuatro secciones (ContenidoGraficas) con desplazamiento y, arriba a la
+            // derecha, por semana o por mes y el reporte para auditoria (en kiosco no: no hay archivos).
+            panelGraficas = new PanelDeGraficas();
+            graficas.Agregar(panelGraficas, 10);
+            lblAgrupar = EstiloHorarios.CrearEtiqueta("Agrupar", Point.Empty);
+            rbPorSemana = OpcionDeAgrupacion("Por semana", AgrupacionGraficas.Semana);
+            rbPorMes = OpcionDeAgrupacion("Por mes", AgrupacionGraficas.Mes);
+            graficas.Agregar(lblAgrupar, 4);
+            graficas.Agregar(rbPorSemana, 5);
+            graficas.Agregar(rbPorMes, 6);
+            if (!Kiosco.Activo)
+            {
+                btnReporte = EstiloHorarios.CrearBoton("Reporte para auditoría (PDF)...", Point.Empty, new Size(262, 32));
+                btnReporte.Click += (s, e) => ReporteParaAuditoria();
+                ayuda.SetToolTip(btnReporte, "El reporte de uso de laboratorios con el encabezado del TESCHI, el periodo, los filtros de esta pestaña, estas gráficas y sus tablas, "
+                    + "listo para imprimir o entregar. Se ve antes de guardarlo."
+                    + (EstadisticasDatos.ReporteConDocentes(Permisos.SoloConsulta) ? "" : " Sale sin lo de cada docente: sus nombres solo se ven en pantalla."));
+                graficas.Agregar(btnReporte, 7);
+            }
 
             foreach (Pagina pagina in paginas.Values)
             {
@@ -323,30 +390,37 @@ namespace DigBit
                 // Apagado no recibe el raton: su motivo lo ensena la ventana (como Permisos.Desactivar).
                 MouseMove += (s, e) => AyudaDelCsvApagado(e.Location);
                 MouseLeave += (s, e) => EsconderAyudaDelCsv();
+                // La persona responsable lo ve encenderse y apagarse entre pestanas: el
+                // motivo, a la vista encima del boton mientras esta apagado (no solo al
+                // pasar el raton).
+                if (Permisos.SoloConsulta)
+                {
+                    Permisos.MotivoVisible(btnCsv, MotivoSinCsvALaVista);
+                }
             }
 
             btnActualizar = BotonAbajo("Actualizar", 120);
             btnActualizar.Click += (s, e) => Leer(true);
             ayuda.SetToolTip(btnActualizar, "Vuelve a leer las estadísticas de la base de datos (F5).");
             // Con Tab, de izquierda a derecha como se ven (se crearon de derecha a izquierda).
-            btnActualizar.TabIndex = 10;
+            btnActualizar.TabIndex = 7;
             if (btnCsv != null)
             {
-                btnCsv.TabIndex = 11;
+                btnCsv.TabIndex = 8;
             }
 
-            cerrar.TabIndex = 12;
+            cerrar.TabIndex = 9;
 
             esperaCalculo.Tick += (s, e) =>
             {
                 esperaCalculo.Stop();
-                if (calculando)
+                if (!leyendoBase && FiltroDe(PestanaElegida).Calculando)
                 {
                     lblResumen.Text = TextoCalculando;
                 }
             };
 
-            PonerCombosIniciales();
+            PonerListasIniciales();
             foreach (CifraGrande cifra in cifras)
             {
                 cifra.Leyendo = true;
@@ -355,6 +429,10 @@ namespace DigBit
             construida = true;
             Acomodar();
             PestanaCambiada();
+            // Al abrir, el foco en las pestanas y no en "Periodo": donde hay un laboratorio
+            // entre flechas (Equipos y Graficas), ← y → lo mueven; en una lista elegida con
+            // el raton, eligen en esa lista.
+            ActiveControl = tabs;
         }
 
         // =====================================================================
@@ -367,16 +445,118 @@ namespace DigBit
             get { return tabs.SelectedIndex < 0 ? PestanaEstadisticas.Estudiantes : (PestanaEstadisticas)tabs.SelectedIndex; }
         }
 
-        /// <summary>Lo ultimo calculado (null mientras no hay nada).</summary>
+        /// <summary>Lo calculado para la pestana que se ve, con sus filtros (null mientras no hay nada).</summary>
         internal ResultadoEstadisticas Resultado
         {
-            get { return resultado; }
+            get { return ResultadoDe(PestanaElegida); }
+        }
+
+        /// <summary>Las cifras de arriba: todo el TESCHI en el periodo (null mientras no hay nada).</summary>
+        internal ResultadoEstadisticas ResultadoGeneral
+        {
+            get { return resultadoGeneral; }
+        }
+
+        /// <summary>Lo calculado para esa pestana con sus filtros, o null si aun no se calcula (o no se pudo).</summary>
+        internal ResultadoEstadisticas ResultadoDe(PestanaEstadisticas pestana)
+        {
+            Pagina pagina;
+            return paginas.TryGetValue(pestana, out pagina) ? pagina.Filtro.Resultado : null;
         }
 
         /// <summary>Elige una pestana (la usan las cifras y el doble clic de las tablas).</summary>
         internal void ElegirPestana(PestanaEstadisticas pestana)
         {
             tabs.SelectedIndex = (int)pestana;
+        }
+
+        /// <summary>
+        /// "Ver en Estadisticas" de la ficha del docente: ese periodo y, en cada pestana que lo
+        /// tiene, ese docente (los demas filtros en "Todos"); Docentes, sin laboratorio ni
+        /// grupo. Equipos y Laboratorios no cambian. Pasa a Clases (sus clases con la lista de
+        /// cada una). A proposito cambia lo que Estadisticas recuerda. Antes de la primera
+        /// lectura (recien abierta) solo lo deja pedido: la lectura de OnShown ya lo trae.
+        /// </summary>
+        internal void MostrarDocente(int docente, PeriodoElegido p)
+        {
+            MostrarDocente(docente, p, null);
+        }
+
+        /// <summary>
+        /// Lo mismo con la lectura de la ficha (deLaFicha): si no es la que ya se ve, Estadisticas
+        /// calcula con ella en vez de con la suya (que puede ser de hace mas de 10 minutos, sin las
+        /// clases que se pusieron despues) o de leer otra. Asi sus cifras y sus CSV salen de la
+        /// misma foto que la ficha y su PDF, y su "Leido a las" es el de la ficha.
+        /// </summary>
+        internal void MostrarDocente(int docente, PeriodoElegido p, LecturaEstadisticas deLaFicha)
+        {
+            foreach (Pagina pagina in paginas.Values)
+            {
+                if (pagina.Cual == PestanaEstadisticas.Equipos || pagina.Cual == PestanaEstadisticas.Laboratorios)
+                {
+                    continue;
+                }
+
+                PonerFiltro(pagina, 0, docente, 0);
+            }
+
+            bool otroPeriodo = p != null && !SelectorDePeriodo.Iguales(p, periodo);
+            if (otroPeriodo)
+            {
+                periodo = p;
+                ultimoPeriodo = p;
+                bool antes = poniendoCombos;
+                poniendoCombos = true;
+                try
+                {
+                    LlenarPeriodo(lectura, null);
+                }
+                finally
+                {
+                    poniendoCombos = antes;
+                }
+            }
+
+            // La de la ficha la usa la siguiente lectura (LanzarLectura), tambien la de OnShown
+            // o la que se lance al acabar la que va.
+            bool otraLectura = deLaFicha != null && p != null && deLaFicha != lectura;
+            if (otraLectura)
+            {
+                lecturaDeLaFicha = deLaFicha;
+                periodoDeLaFicha = p;
+            }
+
+            bool sinLeer = lecturas == 0;
+            if (tabs.SelectedIndex != (int)PestanaEstadisticas.Clases)
+            {
+                ElegirPestana(PestanaEstadisticas.Clases);
+            }
+
+            if (sinLeer)
+            {
+                return;
+            }
+
+            if (otroPeriodo || otraLectura)
+            {
+                Leer(false);
+                return;
+            }
+
+            MostrarApartado(paginas[PestanaEstadisticas.Clases]);
+            PonerResumen();
+        }
+
+        private FiltroDeApartado FiltroDe(PestanaEstadisticas pestana)
+        {
+            return paginas[pestana].Filtro;
+        }
+
+        /// <summary>Lo que solo existe con una migracion (ConDadas, ConReportesDocentes, ConAvisos): de la lectura, igual en todas las pestanas.</summary>
+        private bool Con(PestanaEstadisticas pestana, Func<ResultadoEstadisticas, bool> que)
+        {
+            ResultadoEstadisticas r = ResultadoDe(pestana) ?? resultadoGeneral;
+            return r != null && que(r);
         }
 
         // =====================================================================
@@ -395,8 +575,8 @@ namespace DigBit
                 SinCoincidencias = "Nadie coincide con la búsqueda.",
                 ElegirLaUnica = true
             };
-            t.TextoSinFilas = () => TextoSinFilas("Nadie registró su bitácora en las clases de este periodo.");
-            t.SinFilasEsError = SinFilasPorError;
+            t.TextoSinFilas = () => TextoSinFilas(PestanaEstadisticas.Estudiantes, "Nadie registró su bitácora en las clases de este periodo.");
+            t.SinFilasEsError = () => SinFilasPorError(PestanaEstadisticas.Estudiantes);
             t.Agregar(new Columna<FilaEstudiante> { Nombre = "matricula", Titulo = "Matrícula", Ancho = 100, Texto = f => f.Matricula, Clave = f => f.Matricula });
             t.Agregar(new Columna<FilaEstudiante>
             {
@@ -484,12 +664,15 @@ namespace DigBit
             t.Agregar(new Columna<ParDeAsistencia> { Nombre = "materia", Titulo = "Materia", Rellena = true, Ancho = 90, Texto = p => p.Materia, Clave = p => p.Materia });
             t.Agregar(new Columna<ParDeAsistencia> { Nombre = "grupo", Titulo = "Grupo", Ancho = 80, SoloAmplia = true, Texto = p => p.Grupo, Clave = p => p.Grupo });
             t.Agregar(new Columna<ParDeAsistencia> { Nombre = "docente", Titulo = "Docente", Ancho = 150, SoloAmplia = true, Texto = p => p.Docente, Clave = p => p.Docente });
-            AgregarColumnasDeAsistencia(t);
+            AgregarColumnasDeAsistencia(t, PestanaEstadisticas.Estudiantes);
             return t;
         }
 
-        /// <summary>Entro (con su barra), % y la columna del 80 %, comunes a "Sus clases" y "Estudiantes de la clase".</summary>
-        private void AgregarColumnasDeAsistencia(Tabla<ParDeAsistencia> t)
+        /// <summary>
+        /// Entro (con su barra), % y la columna del 80 %, comunes a "Sus clases" y "Estudiantes de
+        /// la clase": su titulo y su texto, con lo calculado para esa pestana (su laboratorio).
+        /// </summary>
+        private void AgregarColumnasDeAsistencia(Tabla<ParDeAsistencia> t, PestanaEstadisticas pestana)
         {
             t.Agregar(new Columna<ParDeAsistencia>
             {
@@ -504,8 +687,14 @@ namespace DigBit
             t.Agregar(new Columna<ParDeAsistencia>
             {
                 Nombre = "derecho", Titulo = "Derecho (80 %)", Ancho = 92,
-                TituloSegun = amplia => resultado == null ? "Derecho (80 %)" : amplia ? resultado.TituloDerecho : resultado.TituloDerechoCorto,
-                Texto = p => p.TextoDerecho(resultado != null && resultado.CicloEntero), Clave = p => p.Veces == 0 ? null : (IComparable)(p.Bajo ? 0 : 1),
+                // Siempre el corto: el largo ("Derecho a evaluacion (80 %)") no cabe en 92 px y
+                // se cortaba; lo explica la ayuda del titulo y va entero en el CSV.
+                TituloSegun = amplia =>
+                {
+                    ResultadoEstadisticas r = ResultadoDe(pestana);
+                    return r == null ? "Derecho (80 %)" : r.TituloDerechoCorto;
+                },
+                Texto = p => p.TextoDerecho(Con(pestana, r => r.CicloEntero)), Clave = p => p.Veces == 0 ? null : (IComparable)(p.Bajo ? 0 : 1),
                 ColorTexto = p => p.Veces == 0 ? (Color?)null : p.Bajo ? RojoTexto : VerdeTexto,
                 Negrita = p => p.Bajo,
                 Ayuda = p => p.NotaPocasClases,
@@ -524,8 +713,8 @@ namespace DigBit
                 AyudaDeFila = AyudaDeClase,
                 SinCoincidencias = "Ninguna clase coincide con la búsqueda."
             };
-            t.TextoSinFilas = () => TextoSinFilas("No hay clases en este periodo con estos filtros.");
-            t.SinFilasEsError = SinFilasPorError;
+            t.TextoSinFilas = () => TextoSinFilas(PestanaEstadisticas.Clases, "No hay clases en este periodo con estos filtros.");
+            t.SinFilasEsError = () => SinFilasPorError(PestanaEstadisticas.Clases);
             t.Agregar(new Columna<FilaClase> { Nombre = "materia", Titulo = "Materia", Rellena = true, Ancho = 125, Peso = 130, Texto = c => c.Materia, Clave = c => c.Materia });
             t.Agregar(new Columna<FilaClase> { Nombre = "grupo", Titulo = "Grupo", Ancho = 75, Texto = c => c.Grupo, Clave = c => c.Grupo });
             t.Agregar(new Columna<FilaClase> { Nombre = "docente", Titulo = "Docente", Rellena = true, Ancho = 120, Peso = 100, SoloAmplia = true, Texto = c => c.Docente, Clave = c => c.Docente });
@@ -587,7 +776,7 @@ namespace DigBit
         /// bitacoras" X de N: las clases del horario contadas como Faltas (pedido del
         /// usuario del 2026-10-22). Clases, Grupos y Laboratorios.
         /// </summary>
-        private static void AgregarColumnasDeClasesDadas<T>(Tabla<T> t, Func<T, int> seDieron, Func<T, int> queContaban, Func<T, int> sinRegistro,
+        internal static void AgregarColumnasDeClasesDadas<T>(Tabla<T> t, Func<T, int> seDieron, Func<T, int> queContaban, Func<T, int> sinRegistro,
             Func<T, int> conBitacoras, bool conBitacorasSiempre) where T : class
         {
             t.Agregar(new Columna<T>
@@ -638,7 +827,7 @@ namespace DigBit
                 Nombre = "estudiante", Titulo = "Estudiante", Rellena = true, Ancho = 105,
                 Texto = p => p.Nombre + (p.Activo ? "" : " (de baja)"), Clave = p => p.Nombre
             });
-            AgregarColumnasDeAsistencia(t);
+            AgregarColumnasDeAsistencia(t, PestanaEstadisticas.Clases);
             return t;
         }
 
@@ -658,8 +847,8 @@ namespace DigBit
                 AyudaDeFila = (g, amplia) => g.SinNada ? "Nada que contar en el periodo." : null,
                 SinCoincidencias = "Ningún grupo coincide con la búsqueda."
             };
-            t.TextoSinFilas = () => TextoSinFilas("No hay grupos con clases en este periodo.");
-            t.SinFilasEsError = SinFilasPorError;
+            t.TextoSinFilas = () => TextoSinFilas(PestanaEstadisticas.Grupos, "No hay grupos con clases en este periodo.");
+            t.SinFilasEsError = () => SinFilasPorError(PestanaEstadisticas.Grupos);
             t.Agregar(new Columna<FilaGrupo> { Nombre = "grupo", Titulo = "Grupo", Rellena = true, Ancho = 150, Texto = g => g.Grupo, Clave = g => g.Grupo });
             t.Agregar(new Columna<FilaGrupo>
             {
@@ -702,8 +891,8 @@ namespace DigBit
                 AyudaDeFila = (d, amplia) => d.SinNada ? "Ninguna de sus clases contaba en el periodo." : null,
                 SinCoincidencias = "Nadie coincide con la búsqueda."
             };
-            t.TextoSinFilas = () => TextoSinFilas("No hay docentes con clases en este periodo.");
-            t.SinFilasEsError = SinFilasPorError;
+            t.TextoSinFilas = () => TextoSinFilas(PestanaEstadisticas.Docentes, "No hay docentes con clases en este periodo.");
+            t.SinFilasEsError = () => SinFilasPorError(PestanaEstadisticas.Docentes);
             t.Agregar(new Columna<FilaDocente>
             {
                 Nombre = "docente", Titulo = "Docente", Rellena = true, Ancho = 170, Texto = d => d.Docente, Clave = d => d.Docente,
@@ -741,14 +930,14 @@ namespace DigBit
             t.Agregar(new Columna<FilaDocente>
             {
                 Nombre = "dadas", Titulo = "Asistencias que dio", Ancho = 95, Derecha = true, PrimeroDescendente = true,
-                Existe = () => resultado != null && resultado.ConDadas,
+                Existe = () => Con(PestanaEstadisticas.Docentes, r => r.ConDadas),
                 Texto = d => EstadisticasDatos.Miles(d.AsistenciasQueDio), Clave = d => d.AsistenciasQueDio,
                 AyudaDelTitulo = "Asistencias que dio en sus clases del periodo a quien no pudo registrar su bitácora (por ejemplo, su equipo no tenía internet). Las anuladas no cuentan."
             });
             t.Agregar(new Columna<FilaDocente>
             {
                 Nombre = "reportes", Titulo = "Sus reportes", Ancho = 85, Derecha = true, PrimeroDescendente = true,
-                Existe = () => resultado != null && resultado.ConReportesDocentes,
+                Existe = () => Con(PestanaEstadisticas.Docentes, r => r.ConReportesDocentes),
                 Texto = d => EstadisticasDatos.Miles(d.SusReportes), Clave = d => d.SusReportes,
                 ColorTexto = d => d.SusReportes > 0 ? NaranjaTexto : (Color?)null,
                 AyudaDelTitulo = "Fallas que reportó desde su panel en sus sesiones del periodo."
@@ -784,13 +973,13 @@ namespace DigBit
             return t;
         }
 
-        private static int OrdenDeEstado(ClaseDiaDocente d)
+        internal static int OrdenDeEstado(ClaseDiaDocente d)
         {
             return d.SinRegistro ? 0 : d.Estado == EstadoEnCalendario.SinBitacorasConAsistencia ? 1 : d.Estado == EstadoEnCalendario.ConBitacoras ? 2 : d.Cancelada ? 3 : 4;
         }
 
         /// <summary>Los colores de Faltas: verde si se dio con bitacoras, ambar con asistencias dadas, rojo sin registro y gris lo demas.</summary>
-        private static Color? FondoDeEstado(ClaseDiaDocente d)
+        internal static Color? FondoDeEstado(ClaseDiaDocente d)
         {
             switch (d.Estado)
             {
@@ -806,7 +995,7 @@ namespace DigBit
             }
         }
 
-        private static Color? TextoDeEstado(ClaseDiaDocente d)
+        internal static Color? TextoDeEstado(ClaseDiaDocente d)
         {
             switch (d.Estado)
             {
@@ -826,16 +1015,19 @@ namespace DigBit
         {
             Tabla<FilaLaboratorio> t = new Tabla<FilaLaboratorio>("Laboratorios", fuenteNegrita)
             {
+                // Buscar deja siempre "Todos" (va arriba).
+                TextoDeBusqueda = l => l.Laboratorio,
                 ClaveDeFila = l => (l.EsTodos ? "todos" : l.LaboratorioId.ToString(Inv)),
                 Arriba = l => l.EsTodos,
                 FilaNegrita = l => l.EsTodos,
                 FondoDeFila = l => l.EsTodos ? FondoTodos : (Color?)null,
                 FilaGris = l => l.AunNo,
                 AyudaDeFila = AyudaDeLaboratorio,
+                SinCoincidencias = "Ningún laboratorio coincide con la búsqueda.",
                 ElegirLaUnica = false
             };
-            t.TextoSinFilas = () => TextoSinFilas("");
-            t.SinFilasEsError = SinFilasPorError;
+            t.TextoSinFilas = () => TextoSinFilas(PestanaEstadisticas.Laboratorios, "");
+            t.SinFilasEsError = () => SinFilasPorError(PestanaEstadisticas.Laboratorios);
             t.Agregar(new Columna<FilaLaboratorio> { Nombre = "laboratorio", Titulo = "Laboratorio", Rellena = true, Ancho = 190, Texto = l => l.Laboratorio, Clave = l => l.Laboratorio });
             t.Agregar(new Columna<FilaLaboratorio>
             {
@@ -855,11 +1047,11 @@ namespace DigBit
                 Texto = l => EstadisticasDatos.Miles(l.Estudiantes), Clave = l => l.Estudiantes,
                 AyudaDelTitulo = "El de «Todos» no es la suma: un estudiante puede ir a varios laboratorios."
             });
-            AgregarColumnasDeFallas(t, l => l.Fallas, l => l.Hardware, l => l.Software, l => l.Red, l => l.DeDocentes, false);
+            AgregarColumnasDeFallas(t, PestanaEstadisticas.Laboratorios, l => l.Fallas, l => l.Hardware, l => l.Software, l => l.Red, l => l.DeDocentes, false);
             t.Agregar(new Columna<FilaLaboratorio>
             {
                 Nombre = "sininternet", Titulo = "Equipos sin internet", Ancho = 90, Derecha = true, PrimeroDescendente = true,
-                Existe = () => resultado != null && resultado.ConAvisos,
+                Existe = () => Con(PestanaEstadisticas.Laboratorios, r => r.ConAvisos),
                 Texto = l => l.EquiposSinInternet.HasValue ? EstadisticasDatos.Miles(l.EquiposSinInternet.Value) : EstadisticasDatos.SinDato,
                 Clave = l => l.EquiposSinInternet, ColorTexto = l => l.EquiposSinInternet > 0 ? NaranjaTexto : (Color?)null,
                 Ayuda = l => l.AvisosSinInternet == 0 ? null : "En " + EstadisticasDatos.Contar(l.AvisosSinInternet, "aviso", "avisos") + ".",
@@ -881,13 +1073,14 @@ namespace DigBit
                 partes.Add("Clases con bitácoras: " + EstadisticasDatos.XdeN(l.ConBitacoras, l.QueContaban) + ".");
             }
 
-            partes.Add(l.EsTodos ? "Doble clic para ver los equipos de todos los laboratorios." : "Doble clic para ver sus equipos.");
+            // Los equipos son de un laboratorio a la vez (IrAEquiposDe con "Todos" pasa al primero).
+            partes.Add(l.EsTodos ? "Doble clic para ver los equipos, un laboratorio a la vez: empieza por el primero." : "Doble clic para ver sus equipos.");
             return string.Join("\n", partes);
         }
 
         /// <summary>Fallas reportadas, Hardware, Software, Red y De docentes (db/15), en Laboratorios y Equipos.</summary>
-        private void AgregarColumnasDeFallas<T>(Tabla<T> t, Func<T, int> fallas, Func<T, int> hardware, Func<T, int> software, Func<T, int> red,
-            Func<T, int> deDocentes, bool docentesSoloAmplia) where T : class
+        private void AgregarColumnasDeFallas<T>(Tabla<T> t, PestanaEstadisticas pestana, Func<T, int> fallas, Func<T, int> hardware, Func<T, int> software,
+            Func<T, int> red, Func<T, int> deDocentes, bool docentesSoloAmplia) where T : class
         {
             t.Agregar(new Columna<T>
             {
@@ -903,7 +1096,7 @@ namespace DigBit
             t.Agregar(new Columna<T>
             {
                 Nombre = "dedocentes", Titulo = "De docentes", Ancho = 80, Derecha = true, PrimeroDescendente = true, SoloAmplia = docentesSoloAmplia,
-                Existe = () => resultado != null && resultado.ConReportesDocentes,
+                Existe = () => Con(pestana, r => r.ConReportesDocentes),
                 Texto = f => EstadisticasDatos.Miles(deDocentes(f)), Clave = f => deDocentes(f),
                 AyudaDelTitulo = "Fallas que reportaron los docentes desde su panel."
             });
@@ -920,15 +1113,15 @@ namespace DigBit
                 SinCoincidencias = "Ningún equipo coincide con la búsqueda.",
                 ElegirLaUnica = false
             };
-            t.TextoSinFilas = () => TextoSinFilas("Ningún equipo tiene fallas ni avisos en este periodo.");
-            t.SinFilasEsError = SinFilasPorError;
+            t.TextoSinFilas = () => TextoSinFilas(PestanaEstadisticas.Equipos, "Ningún equipo tiene fallas ni avisos en este periodo.");
+            t.SinFilasEsError = () => SinFilasPorError(PestanaEstadisticas.Equipos);
             t.Agregar(new Columna<FilaEquipo> { Nombre = "laboratorio", Titulo = "Laboratorio", Rellena = true, Ancho = 150, Peso = 55, Texto = e => e.Laboratorio, Clave = e => e.Laboratorio });
             t.Agregar(new Columna<FilaEquipo>
             {
                 Nombre = "equipo", Titulo = "Equipo", Ancho = 130, Texto = e => e.Equipo, Clave = e => e.Equipo,
                 ColorTexto = e => e.Tipo == TipoFilaEquipo.Equipo ? (Color?)null : TextoGris
             });
-            AgregarColumnasDeFallas(t, e => e.Fallas, e => e.Hardware, e => e.Software, e => e.Red, e => e.DeDocentes, true);
+            AgregarColumnasDeFallas(t, PestanaEstadisticas.Equipos, e => e.Fallas, e => e.Hardware, e => e.Software, e => e.Red, e => e.DeDocentes, true);
             // "Fallo en" va detras de Fallas reportadas (sec. 6.3).
             t.Agregar(new Columna<FilaEquipo>
             {
@@ -942,7 +1135,7 @@ namespace DigBit
             t.Agregar(new Columna<FilaEquipo>
             {
                 Nombre = "avisos", Titulo = "Avisos sin internet", Ancho = 90, Derecha = true, PrimeroDescendente = true,
-                Existe = () => resultado != null && resultado.ConAvisos,
+                Existe = () => Con(PestanaEstadisticas.Equipos, r => r.ConAvisos),
                 Texto = e => EstadisticasDatos.Miles(e.Avisos), Clave = e => e.Avisos, ColorTexto = e => e.Avisos > 0 ? NaranjaTexto : (Color?)null,
                 AyudaDelTitulo = "Bitácoras de otros estudiantes del mismo laboratorio que avisaron que este equipo no tenía internet (una por bitácora)."
             });
@@ -995,8 +1188,11 @@ namespace DigBit
             return partes.Count == 0 ? null : string.Join("\n", partes);
         }
 
-        /// <summary>Lo que se pinta en una tabla sin filas: leyendo, el error o el vacio de esa pestana.</summary>
-        private string TextoSinFilas(string vacio)
+        /// <summary>
+        /// Lo que se pinta en una tabla sin filas: leyendo, el error de la lectura, el del
+        /// calculo de esa pestana, que calcula o el vacio de esa pestana con sus filtros.
+        /// </summary>
+        private string TextoSinFilas(PestanaEstadisticas pestana, string vacio)
         {
             if (leyendoBase)
             {
@@ -1008,18 +1204,24 @@ namespace DigBit
                 return error;
             }
 
-            if (resultado == null)
+            FiltroDeApartado f = FiltroDe(pestana);
+            if (f.Error != null)
             {
-                return TextoLeyendo;
+                return f.Error;
             }
 
-            return resultado.TextoVacio ?? vacio;
+            if (f.Resultado == null)
+            {
+                return lectura == null ? TextoLeyendo : TextoCalculando;
+            }
+
+            return f.Resultado.TextoVacio ?? vacio;
         }
 
-        /// <summary>Lo que se pinta sin filas es el error de la lectura (en rojo).</summary>
-        private bool SinFilasPorError()
+        /// <summary>Lo que se pinta sin filas es un error (de la lectura o del calculo de esa pestana), en rojo.</summary>
+        private bool SinFilasPorError(PestanaEstadisticas pestana)
         {
-            return !leyendoBase && error != null;
+            return !leyendoBase && (error != null || FiltroDe(pestana).Error != null);
         }
 
         // =====================================================================
@@ -1033,7 +1235,7 @@ namespace DigBit
             return etiqueta;
         }
 
-        private ComboBox Combo(int orden, string nombre)
+        private ComboBox Combo(Control padre, int orden, string nombre)
         {
             ComboBox combo = EstiloHorarios.CrearCombo(Point.Empty, 200);
             combo.DrawMode = DrawMode.OwnerDrawFixed;
@@ -1041,8 +1243,71 @@ namespace DigBit
             combo.MaxDropDownItems = 20;
             combo.TabIndex = orden;
             combo.AccessibleName = nombre;
-            Controls.Add(combo);
+            padre.Controls.Add(combo);
             return combo;
+        }
+
+        /// <summary>
+        /// Las listas de los filtros de una pestana (2026-10-31), en ese orden, con lo que
+        /// recordaba esa pestana. Con laboratorioConFlechas, el laboratorio va entre flechas
+        /// (FlechasDeLista, como en Horarios, sin deslizamiento: aqui los numeros se calculan
+        /// despues, en segundo plano); en Equipos se salta "Todos los laboratorios".
+        /// </summary>
+        private void AgregarListas(Pagina pagina, bool laboratorioConFlechas, params TipoDeFiltro[] tipos)
+        {
+            FiltroDeApartado f = pagina.Filtro;
+            ClaveDeFiltro recordado;
+            filtrosRecordados.TryGetValue(pagina.Cual, out recordado);
+            foreach (TipoDeFiltro tipo in tipos)
+            {
+                ListaDeFiltro lista = new ListaDeFiltro { Tipo = tipo };
+                lista.Etiqueta = EstiloHorarios.CrearEtiqueta(NombreDe(tipo), Point.Empty);
+                pagina.Tab.Controls.Add(lista.Etiqueta);
+                lista.Combo = Combo(pagina.Tab, f.Listas.Count, NombreDe(tipo));
+                lista.Combo.Tag = tipo;
+                lista.Combo.DrawItem += tipo == TipoDeFiltro.Docente ? (DrawItemEventHandler)DibujarDocente : DibujarOpcion;
+                // Antes que las flechas (FlechasDeLista.Direccion lo pide asi).
+                lista.Combo.SelectedIndexChanged += (s, e) => { if (!poniendoCombos) ListaCambiada(pagina); };
+                if (laboratorioConFlechas && tipo == TipoDeFiltro.Laboratorio)
+                {
+                    ComboBox combo = lista.Combo;
+                    lista.Flechas = new FlechasDeLista(combo, "Laboratorio");
+                    if (pagina.Cual == PestanaEstadisticas.Equipos)
+                    {
+                        lista.Flechas.Saltar = i => (combo.Items[i] as OpcionCombo)?.Id == 0;
+                    }
+                }
+
+                f.Listas.Add(lista);
+                f.Poner(tipo, recordado.Id(tipo));
+            }
+        }
+
+        private static string NombreDe(TipoDeFiltro tipo)
+        {
+            switch (tipo)
+            {
+                case TipoDeFiltro.Laboratorio:
+                    return "Laboratorio";
+                case TipoDeFiltro.Docente:
+                    return "Docente";
+                default:
+                    return "Grupo";
+            }
+        }
+
+        /// <summary>El "Todos" de cada lista, como los pone EstadisticasDatos (ArmarOpciones).</summary>
+        private static string TextoDeTodos(TipoDeFiltro tipo)
+        {
+            switch (tipo)
+            {
+                case TipoDeFiltro.Laboratorio:
+                    return "Todos los laboratorios";
+                case TipoDeFiltro.Docente:
+                    return "Todo el personal docente";
+                default:
+                    return "Todos los grupos";
+            }
         }
 
         private Pagina NuevaPagina(PestanaEstadisticas cual, string titulo, bool conBuscador)
@@ -1074,6 +1339,8 @@ namespace DigBit
                     }
                 };
                 pagina.Tab.Controls.Add(pagina.EtiquetaBuscar);
+                // Con Tab, despues de las listas de la pestana y antes de su tabla.
+                pagina.Buscador.TabIndex = 5;
                 pagina.Tab.Controls.Add(pagina.Buscador);
             }
 
@@ -1114,16 +1381,8 @@ namespace DigBit
         /// <summary>Una opcion de un combo, cortada con "..." si no cabe (entera en la lista y en la ayuda).</summary>
         private void DibujarOpcion(object sender, DrawItemEventArgs e)
         {
-            ComboBox combo = (ComboBox)sender;
-            e.DrawBackground();
-            if (e.Index >= 0)
-            {
-                TextRenderer.DrawText(e.Graphics, Convert.ToString(combo.Items[e.Index], Inv), e.Font,
-                    new Rectangle(e.Bounds.X + 3, e.Bounds.Y, e.Bounds.Width - 4, e.Bounds.Height), e.ForeColor,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
-            }
-
-            e.DrawFocusRectangle();
+            // Lo mismo que la ficha del docente (con la raya del bloque de las plantillas en Periodo).
+            SelectorDePeriodo.DibujarOpcion((ComboBox)sender, e);
         }
 
         /// <summary>El cuadrito con el color del docente y su nombre (como el combo de Horarios, AdministrarHorarios.DibujarProfesorConColor).</summary>
@@ -1135,7 +1394,8 @@ namespace DigBit
                 return;
             }
 
-            OpcionCombo opcion = cboDocente.Items[e.Index] as OpcionCombo;
+            ComboBox combo = (ComboBox)sender;
+            OpcionCombo opcion = combo.Items[e.Index] as OpcionCombo;
             int x = e.Bounds.X + 4;
             if (opcion != null && opcion.Id != 0)
             {
@@ -1154,7 +1414,7 @@ namespace DigBit
                 x += 20;
             }
 
-            TextRenderer.DrawText(e.Graphics, Convert.ToString(cboDocente.Items[e.Index], Inv), e.Font, new Rectangle(x, e.Bounds.Y, e.Bounds.Right - x, e.Bounds.Height),
+            TextRenderer.DrawText(e.Graphics, Convert.ToString(combo.Items[e.Index], Inv), e.Font, new Rectangle(x, e.Bounds.Y, e.Bounds.Right - x, e.Bounds.Height),
                 e.ForeColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
             e.DrawFocusRectangle();
         }
@@ -1186,10 +1446,10 @@ namespace DigBit
             }
 
             SuspendLayout();
-            int yFiltros = baja ? 50 : 84;
-            AcomodarFiltros(cliente.Width, yFiltros, amplia);
-
-            int yCifras = yFiltros + 42;
+            // Arriba lo de todo (el periodo, junto al titulo, y las cifras generales); los
+            // filtros de cada apartado, dentro de su pestana (AcomodarPagina).
+            AcomodarPeriodo(cliente.Width, amplia);
+            int yCifras = baja ? 50 : 84;
             int anchoCifras = cliente.Width - 2 * Margen;
             int cada = (anchoCifras - 4 * Separacion) / 5;
             // Baja: los tres renglones de la cifra caben en 78 px (se centran solos); asi las tablas ganan una fila.
@@ -1200,9 +1460,16 @@ namespace DigBit
                 cifras[i].SetBounds(x, yCifras, i == cifras.Length - 1 ? Margen + anchoCifras - x : cada, altoCifras);
             }
 
-            int yTabs = yCifras + altoCifras + 10;
+            // Sin la fila de filtros de antes (2026-10-31): las pestanas, justo debajo de las cifras.
+            int yTabs = yCifras + altoCifras + (baja ? 8 : 12);
             disposicionBaja = baja;
-            tabs.SetBounds(Margen, yTabs, cliente.Width - 2 * Margen, Math.Max(150, cliente.Height - 72 - yTabs));
+            tabs.SetBounds(Margen, yTabs, cliente.Width - 2 * Margen, Math.Max(150, cliente.Height - AbajoDeLasPestanas - yTabs));
+            // Las siete pestanas caben siempre: a 1000 px de ancho, sin las flechas de desplazamiento del TabControl.
+            int anchoPestana = Math.Max(100, Math.Min(132, (tabs.Width - 8) / Math.Max(1, tabs.TabPages.Count)));
+            if (tabs.ItemSize.Width != anchoPestana)
+            {
+                tabs.ItemSize = new Size(anchoPestana, 26);
+            }
             if (amplia != disposicionAmplia || !disposicionPuesta)
             {
                 disposicionAmplia = amplia;
@@ -1227,29 +1494,196 @@ namespace DigBit
             return new ITablaDisposicion[] { tEstudiantes, tSusClases, tClases, tLista, tGrupos, tDocentes, tSusClasesDia, tLaboratorios, tEquipos };
         }
 
-        /// <summary>
-        /// Periodo, Laboratorio, Docente y Grupo en una fila (sec. 6.2): 260, 230, 220 y
-        /// 150 px; a 1920, 300, 300, 300 y 160. Si no cabe, Laboratorio y Docente
-        /// encogen hasta 190 y despues todos (el nombre entero va en la ayuda).
-        /// </summary>
-        private void AcomodarFiltros(int ancho, int y, bool amplia)
+        /// <summary>El periodo, arriba a la derecha junto al titulo: es de todo (las cifras generales y los apartados).</summary>
+        private void AcomodarPeriodo(int ancho, bool amplia)
         {
-            Label[] etiquetas = { lblPeriodo, lblLaboratorio, lblDocente, lblGrupo };
-            ComboBox[] combos = { cboPeriodo, cboLaboratorio, cboDocente, cboGrupo };
-            int[] anchos = amplia || ancho >= 1600 ? new[] { 300, 300, 300, 160 } : new[] { 260, 230, 220, 150 };
-            int disponible = ancho - 2 * Margen - etiquetas.Sum(l => l.PreferredSize.Width) - 4 * 6 - 3 * 18;
-            Encoger(anchos, disponible, new[] { 1, 2 }, new[] { 0, 190, 190, 0 });
-            Encoger(anchos, disponible, new[] { 0, 1, 2, 3 }, new[] { 210, 125, 125, 100 });
+            // Con el nombre de la plantilla ("Este ciclo: 2026-2 (desde el 05/08/2026)") pide mas.
+            int anchoCombo = amplia || ancho >= 1600 ? 380 : 340;
+            int x = ancho - Margen - anchoCombo;
+            cboPeriodo.SetBounds(x, 17, anchoCombo, cboPeriodo.Height);
+            lblPeriodo.Location = new Point(x - 6 - lblPeriodo.PreferredSize.Width, 21);
+            AnchoDeLaLista(cboPeriodo);
+        }
 
-            int x = Margen;
-            for (int i = 0; i < combos.Length; i++)
+        /// <summary>
+        /// Las listas de una pestana en una fila, de x hasta "hasta" (sec. 6.2; desde 2026-10-31
+        /// dentro de cada pestana): el laboratorio 300 px, el docente 260 y el grupo 170; con
+        /// mucho ancho, 400, 320 y 200. Entre flechas (Equipos y Graficas) el nombre del
+        /// laboratorio es lo que se lee: si sobra sitio, crece hasta su nombre mas largo. Si no
+        /// caben, encogen por turnos (primero lo que crecio) hasta que se lea entero su "Todos"
+        /// y despues hasta su minimo (el nombre entero va en la ayuda).
+        /// </summary>
+        private void PonerListas(FiltroDeApartado f, int x, int y, int hasta)
+        {
+            List<ListaDeFiltro> listas = f.Listas;
+            if (listas.Count == 0)
             {
-                etiquetas[i].Location = new Point(x, y + 7);
-                x += etiquetas[i].PreferredSize.Width + 6;
-                combos[i].SetBounds(x, y + 3, anchos[i], combos[i].Height);
-                x += anchos[i] + 18;
-                AnchoDeLaLista(combos[i]);
+                return;
             }
+
+            bool ancha = disposicionAmplia || ClientSize.Width >= 1600;
+            int[] preferidos = listas.Select(l => AnchoPreferido(l.Tipo, ancha)).ToArray();
+            int[] anchos = listas.Select((l, i) => l.Flechas == null ? preferidos[i] : Math.Max(preferidos[i], AnchoDelMasLargo(l))).ToArray();
+            int[] comodos = listas.Select(AnchoComodo).ToArray();
+            int[] minimos = listas.Select(l => l.Flechas != null ? 150 : 100).ToArray();
+            int[] todas = Enumerable.Range(0, listas.Count).ToArray();
+            int disponible = hasta - x - AnchoDeEtiquetas(f);
+            Encoger(anchos, disponible, todas, preferidos);
+            Encoger(anchos, disponible, todas, comodos);
+            Encoger(anchos, disponible, todas, minimos);
+            for (int i = 0; i < listas.Count; i++)
+            {
+                ListaDeFiltro lista = listas[i];
+                Size etiqueta = lista.Etiqueta.PreferredSize;
+                lista.Etiqueta.Location = new Point(x, y + (AltoFila - etiqueta.Height) / 2);
+                x += etiqueta.Width + 6;
+                lista.Combo.SetBounds(x, y + (AltoFila - lista.Combo.Height) / 2, anchos[i], lista.Combo.Height);
+                x += anchos[i] + EntreListas;
+                AnchoDeLaLista(lista.Combo);
+            }
+        }
+
+        private static int AnchoPreferido(TipoDeFiltro tipo, bool ancha)
+        {
+            switch (tipo)
+            {
+                case TipoDeFiltro.Laboratorio:
+                    return ancha ? 400 : 300;
+                case TipoDeFiltro.Docente:
+                    return ancha ? 320 : 260;
+                default:
+                    return ancha ? 200 : 170;
+            }
+        }
+
+        /// <summary>Lo que pide un laboratorio entre flechas para que se lea entera su opcion mas larga (sin pasar de 560 px).</summary>
+        private int AnchoDelMasLargo(ListaDeFiltro lista)
+        {
+            int largo = 0;
+            foreach (object opcion in lista.Combo.Items)
+            {
+                largo = Math.Max(largo, TextRenderer.MeasureText(Convert.ToString(opcion, Inv), fuenteNegrita).Width);
+            }
+
+            return Math.Min(560, largo + 2 * (30 + 4) + 10);
+        }
+
+        /// <summary>Lo que pide una lista para que se lea entero su "Todos" (con flechas, entre ellas, en negrita).</summary>
+        private int AnchoComodo(ListaDeFiltro lista)
+        {
+            string todos = TextoDeTodos(lista.Tipo);
+            return lista.Flechas != null
+                ? TextRenderer.MeasureText(todos, fuenteNegrita).Width + 2 * (30 + 4) + 10
+                : TextRenderer.MeasureText(todos, lista.Combo.Font).Width + 12 + SystemInformation.VerticalScrollBarWidth + 6;
+        }
+
+        /// <summary>Las etiquetas de las listas y lo que va entre ellas (sin las listas).</summary>
+        private static int AnchoDeEtiquetas(FiltroDeApartado f)
+        {
+            return f.Listas.Sum(l => l.Etiqueta.PreferredSize.Width + 6) + EntreListas * Math.Max(0, f.Listas.Count - 1);
+        }
+
+        /// <summary>Lo que piden todas las listas de una pestana para leerse enteras, con sus etiquetas.</summary>
+        private int AnchoComodoDeListas(FiltroDeApartado f)
+        {
+            return AnchoDeEtiquetas(f) + f.Listas.Sum(l => AnchoComodo(l));
+        }
+
+        /// <summary>
+        /// Con poco ancho no caben en una fila tres listas (las de Estudiantes y Clases) con su
+        /// "Todos" entero y Buscar: entonces, en todas las pestanas con listas, Buscar pasa a la
+        /// derecha de la linea (asi no salta de sitio al cambiar de pestana).
+        /// </summary>
+        private bool BuscadorEnLaLinea(int anchoPagina)
+        {
+            Pagina referencia = paginas[PestanaEstadisticas.Estudiantes];
+            int buscar = referencia.EtiquetaBuscar.PreferredSize.Width + 8 + AnchoBuscador;
+            return AnchoComodoDeListas(referencia.Filtro) + 24 + buscar > anchoPagina - 16;
+        }
+
+        /// <summary>Buscar a la derecha de esa fila; devuelve hasta donde llega lo que va a su izquierda.</summary>
+        private static int PonerBuscador(Pagina pagina, int derecha, int fila)
+        {
+            if (pagina.Buscador == null)
+            {
+                return derecha;
+            }
+
+            pagina.Buscador.SetBounds(derecha - AnchoBuscador, fila + (AltoFila - pagina.Buscador.Height) / 2, AnchoBuscador, pagina.Buscador.Height);
+            Size etiqueta = pagina.EtiquetaBuscar.PreferredSize;
+            pagina.EtiquetaBuscar.Location = new Point(pagina.Buscador.Left - 8 - etiqueta.Width, fila + (AltoFila - etiqueta.Height) / 2);
+            return pagina.EtiquetaBuscar.Left - 16;
+        }
+
+        /// <summary>"Agrupar", "Por semana" y "Por mes" acabando en "hasta", centrados en esa fila; devuelve donde empiezan.</summary>
+        private int PonerAgrupar(int hasta, int fila, int alto)
+        {
+            int yOpcion = fila + (alto - rbPorMes.PreferredSize.Height) / 2;
+            rbPorMes.Location = new Point(hasta - rbPorMes.PreferredSize.Width, yOpcion);
+            rbPorSemana.Location = new Point(rbPorMes.Left - 10 - rbPorSemana.PreferredSize.Width, yOpcion);
+            lblAgrupar.Location = new Point(rbPorSemana.Left - 6 - lblAgrupar.PreferredSize.Width, fila + (alto - lblAgrupar.PreferredSize.Height) / 2);
+            return lblAgrupar.Left;
+        }
+
+        /// <summary>
+        /// Lo de arriba de Graficas: sus listas a la izquierda y, a la derecha, la agrupacion y
+        /// el reporte; debajo, su linea. Si no cabe todo en una fila, el reporte se queda arriba
+        /// y la agrupacion pasa junto a la linea; con aun menos ancho (1000 px), los dos.
+        /// Devuelve donde acaba la fila de la linea.
+        /// </summary>
+        private int AcomodarArribaDeGraficas(Pagina pagina, int izquierda, int derecha, int y0, int y1)
+        {
+            int anchoAgrupar = lblAgrupar.PreferredSize.Width + 6 + rbPorSemana.PreferredSize.Width + 10 + rbPorMes.PreferredSize.Width;
+            int anchoReporte = btnReporte == null ? 0 : btnReporte.Width;
+            int listas = AnchoComodoDeListas(pagina.Filtro);
+            int disponible = derecha - izquierda;
+            bool agruparArriba = listas + 24 + anchoAgrupar + (anchoReporte > 0 ? 20 + anchoReporte : 0) <= disponible;
+            bool reporteArriba = anchoReporte > 0 && listas + 24 + anchoReporte <= disponible;
+
+            // Con Tab, en el orden en que se leen: si el reporte se queda arriba y la agrupacion baja
+            // a la fila de la linea (con unos 1200 a 1470 px de ancho), primero el reporte; si no, la
+            // agrupacion (a su izquierda en la misma fila).
+            bool reporteAntes = btnReporte != null && reporteArriba && !agruparArriba;
+            lblAgrupar.TabIndex = reporteAntes ? 5 : 4;
+            rbPorSemana.TabIndex = reporteAntes ? 6 : 5;
+            rbPorMes.TabIndex = reporteAntes ? 7 : 6;
+            if (btnReporte != null)
+            {
+                btnReporte.TabIndex = reporteAntes ? 4 : 7;
+            }
+
+            // Hasta donde llegan las listas, hasta donde la linea y el alto de la fila de la linea.
+            int finArriba = derecha;
+            int finLinea = derecha;
+            int altoAbajo = 20;
+            if (btnReporte != null)
+            {
+                if (reporteArriba)
+                {
+                    btnReporte.Location = new Point(derecha - anchoReporte, y0 + (AltoFila - btnReporte.Height) / 2);
+                    finArriba = btnReporte.Left - 20;
+                }
+                else
+                {
+                    btnReporte.Location = new Point(derecha - anchoReporte, y1);
+                    finLinea = btnReporte.Left - 20;
+                    altoAbajo = btnReporte.Height;
+                }
+            }
+
+            if (agruparArriba)
+            {
+                finArriba = PonerAgrupar(finArriba, y0, AltoFila) - 24;
+            }
+            else
+            {
+                altoAbajo = Math.Max(altoAbajo, AltoFila);
+                finLinea = PonerAgrupar(finLinea, y1, altoAbajo) - 16;
+            }
+
+            PonerListas(pagina.Filtro, izquierda, y0, finArriba);
+            pagina.Linea.SetBounds(izquierda, y1 + (altoAbajo - 20) / 2, Math.Max(50, finLinea - izquierda), 20);
+            return y1 + altoAbajo;
         }
 
         /// <summary>Reduce de uno en uno, por turnos, los anchos de esos indices (sin bajar de su minimo) hasta que la suma quepa.</summary>
@@ -1283,11 +1717,16 @@ namespace DigBit
                 pide = Math.Max(pide, TextRenderer.MeasureText(Convert.ToString(opcion, Inv), combo.Font).Width);
             }
 
-            pide += (combo == cboDocente ? 36 : 14) + SystemInformation.VerticalScrollBarWidth;
+            pide += (combo.Tag is TipoDeFiltro && (TipoDeFiltro)combo.Tag == TipoDeFiltro.Docente ? 36 : 14) + SystemInformation.VerticalScrollBarWidth;
             combo.DropDownWidth = Math.Max(combo.Width, Math.Min(pide, 640));
         }
 
-        /// <summary>Dentro de una pestana: la linea y el buscador arriba y debajo su tabla (y su detalle).</summary>
+        /// <summary>
+        /// Dentro de una pestana (2026-10-31): arriba sus listas a la izquierda y Buscar a la
+        /// derecha (en Graficas, la agrupacion y el reporte), debajo su linea y despues su tabla
+        /// (y su detalle). Con poco ancho, Buscar pasa a la fila de la linea; sin listas
+        /// (Laboratorios), la linea y Buscar van juntos en la primera fila.
+        /// </summary>
         private void AcomodarPagina(Pagina pagina)
         {
             if (!construida)
@@ -1301,17 +1740,38 @@ namespace DigBit
                 return;
             }
 
+            int izquierda = 8;
             int derecha = tam.Width - 8;
-            if (pagina.Buscador != null)
+            // La fila de las listas (y0), la de la linea (y1) y lo que se deja antes de la tabla.
+            int y0 = disposicionBaja ? 3 : 6;
+            int y1 = y0 + AltoFila + (disposicionBaja ? 4 : 7);
+            int hueco = disposicionBaja ? 4 : 6;
+            int y;
+            if (pagina.Cual == PestanaEstadisticas.Graficas)
             {
-                pagina.Buscador.SetBounds(derecha - AnchoBuscador, disposicionBaja ? 3 : 5, AnchoBuscador, pagina.Buscador.Height);
-                int anchoEtiqueta = pagina.EtiquetaBuscar.PreferredSize.Width;
-                pagina.EtiquetaBuscar.Location = new Point(pagina.Buscador.Left - 8 - anchoEtiqueta, disposicionBaja ? 6 : 8);
-                derecha = pagina.EtiquetaBuscar.Left - 16;
+                y = AcomodarArribaDeGraficas(pagina, izquierda, derecha, y0, y1) + hueco;
+            }
+            else if (pagina.Filtro.Listas.Count == 0)
+            {
+                int finLinea = PonerBuscador(pagina, derecha, y0);
+                pagina.Linea.SetBounds(izquierda, y0 + 4, Math.Max(50, finLinea - izquierda), 20);
+                y = y0 + AltoFila + hueco;
+            }
+            else if (BuscadorEnLaLinea(tam.Width))
+            {
+                PonerListas(pagina.Filtro, izquierda, y0, derecha);
+                int finLinea = PonerBuscador(pagina, derecha, y1);
+                pagina.Linea.SetBounds(izquierda, y1 + 4, Math.Max(50, finLinea - izquierda), 20);
+                y = y1 + AltoFila + hueco;
+            }
+            else
+            {
+                int finListas = PonerBuscador(pagina, derecha, y0) - 8;
+                PonerListas(pagina.Filtro, izquierda, y0, finListas);
+                pagina.Linea.SetBounds(izquierda, y1, Math.Max(50, derecha - izquierda), 20);
+                y = y1 + 20 + hueco;
             }
 
-            pagina.Linea.SetBounds(8, disposicionBaja ? 7 : 9, Math.Max(50, derecha - 8), 20);
-            int y = disposicionBaja ? 34 : 38;
             int alto = tam.Height - y - 8;
             int ancho = tam.Width - 16;
             bool amplia = disposicionAmplia;
@@ -1346,6 +1806,10 @@ namespace DigBit
                         fichaDocente.SetBounds(8, y + arriba + 8, ancho, Math.Max(80, alto - arriba - 8));
                     }
 
+                    break;
+                case PestanaEstadisticas.Graficas:
+                    // Sin el margen de las tablas: el panel deja el suyo (y su barra de desplazamiento al borde).
+                    panelGraficas.SetBounds(2, y, tam.Width - 4, tam.Height - y - 2);
                     break;
                 default:
                     pagina.Tabla.Grid.SetBounds(8, y, ancho, alto);
@@ -1508,14 +1972,14 @@ namespace DigBit
         }
 
         /// <summary>
-        /// Lee (o toma la lectura guardada si cubre el periodo) en segundo plano y
-        /// calcula con los filtros elegidos. forzar = Actualizar (F5): olvida la guardada.
+        /// Lee (o toma la lectura guardada si cubre el periodo) en segundo plano y calcula
+        /// lo general (las cifras) y la pestana que se ve con sus filtros; las demas, al
+        /// elegirlas. forzar = Actualizar (F5): olvida la guardada.
         /// </summary>
         private void Leer(bool forzar)
         {
             ++lecturas;
             leyendoBase = true;
-            calculando = false;
             esperaCalculo.Stop();
             btnActualizar.Enabled = false;
             lblResumen.Text = TextoLeyendo;
@@ -1525,6 +1989,13 @@ namespace DigBit
                 cifra.Leyendo = true;
             }
 
+            // Lo que aun se calculaba con la lectura de antes ya no se pinta (llega con otro numero).
+            foreach (Pagina pagina in paginas.Values)
+            {
+                pagina.Filtro.Calculando = false;
+                pagina.Filtro.Error = null;
+            }
+
             // Mientras lee no se ensena lo de otro periodo: las tablas dicen que lee.
             error = null;
             VaciarTablas();
@@ -1532,10 +2003,10 @@ namespace DigBit
 
             if (baseEnMarcha)
             {
-                // Una sola lectura de la base a la vez: cambiar el periodo o un filtro
+                // Una sola lectura de la base a la vez: cambiar el periodo (o Actualizar)
                 // mientras lee (con la base remota, varios segundos) no lanza otra. Al
                 // acabar la que va, se lanza la ultima pedida, casi siempre desde la
-                // lectura guardada.
+                // lectura guardada. Los filtros de las pestanas no leen: solo calculan.
                 otraPedida = true;
                 otraForzada |= forzar;
                 return;
@@ -1544,26 +2015,30 @@ namespace DigBit
             LanzarLectura(forzar);
         }
 
-        /// <summary>La lectura de la base en Task.Run, con el periodo y los filtros que se ven ahora.</summary>
+        /// <summary>
+        /// La lectura de la base en Task.Run, con el periodo de ahora; de paso calcula lo
+        /// general y la pestana que se ve con sus filtros (si son "Todos", el mismo calculo).
+        /// </summary>
         private void LanzarLectura(bool forzar)
         {
             int numero = lecturas;
             baseEnMarcha = true;
             PeriodoElegido pedido = periodo;
-            int laboratorio = IdElegido(cboLaboratorio, ultimoLaboratorio);
-            int docente = IdElegido(cboDocente, ultimoDocente);
-            int grupo = IdElegido(cboGrupo, ultimoGrupo);
+            ClaveDeFiltro clave = FiltroDe(PestanaElegida).Clave;
+            // La de la ficha del docente ("Ver en Estadisticas"), una vez: con F5 u otro periodo, se lee.
+            LecturaEstadisticas deLaFicha = !forzar && lecturaDeLaFicha != null && SelectorDePeriodo.Iguales(pedido, periodoDeLaFicha) ? lecturaDeLaFicha : null;
+            lecturaDeLaFicha = null;
+            periodoDeLaFicha = null;
             Task.Run(() =>
             {
-                LecturaEstadisticas leida = EstadisticasDatos.Leer(pedido, forzar);
-                FiltroEstadisticas filtro = EstadisticasDatos.Resolver(pedido, leida, laboratorio, docente, grupo);
-                return Tuple.Create(leida, EstadisticasDatos.Calcular(leida, filtro));
+                LecturaEstadisticas leida = deLaFicha != null && EstadisticasDatos.Cubre(deLaFicha, pedido) ? deLaFicha : EstadisticasDatos.Leer(pedido, forzar);
+                return Calcular(pedido, leida, clave);
             }).ContinueWith(t => EnLaVentana(() =>
             {
                 baseEnMarcha = false;
                 if (otraPedida)
                 {
-                    // Mientras leia se pidio otra (otro periodo o filtro): esta ya no vale.
+                    // Mientras leia se pidio otra (otro periodo o Actualizar): esta ya no vale.
                     bool forzada = otraForzada;
                     otraPedida = false;
                     otraForzada = false;
@@ -1571,46 +2046,50 @@ namespace DigBit
                     return;
                 }
 
-                Recibir(numero, t);
+                Recibir(numero, pedido, clave, t);
             }, t));
         }
 
-        /// <summary>Otro laboratorio, docente o grupo: solo se vuelve a calcular (sin base), en segundo plano.</summary>
-        private void Recalcular()
+        /// <summary>Lo que devuelve la lectura en segundo plano.</summary>
+        private sealed class Calculado
         {
-            if (lectura == null || leyendoBase)
+            public LecturaEstadisticas Lectura;
+            /// <summary>Todos los laboratorios, docentes y grupos: las cifras de arriba.</summary>
+            public ResultadoEstadisticas General;
+            /// <summary>Con los filtros de la pestana que se veia al pedir la lectura.</summary>
+            public ResultadoEstadisticas DelFiltro;
+        }
+
+        /// <summary>Lo general y lo de esos filtros. Solo calcula: la lectura ya esta.</summary>
+        private static Calculado Calcular(PeriodoElegido pedido, LecturaEstadisticas leida, ClaveDeFiltro clave)
+        {
+            ResultadoEstadisticas general = EstadisticasDatos.Calcular(leida, EstadisticasDatos.Resolver(pedido, leida, 0, 0, 0));
+            return new Calculado { Lectura = leida, General = general, DelFiltro = CalcularFiltro(pedido, leida, clave, general) };
+        }
+
+        /// <summary>
+        /// Lo de los filtros de una pestana (en segundo plano: no toca la pantalla). Si
+        /// quedan en "Todos" sin aviso (un laboratorio que ya no existe), es lo general; con
+        /// aviso (un docente o un grupo sin clases en el periodo, sec. 6.5) se calcula
+        /// aparte: el aviso es de la pestana que lo pidio, no de las cifras.
+        /// </summary>
+        private static ResultadoEstadisticas CalcularFiltro(PeriodoElegido pedido, LecturaEstadisticas leida, ClaveDeFiltro clave, ResultadoEstadisticas general)
+        {
+            if (general != null && clave.EsGeneral)
             {
-                Leer(false);
-                return;
+                return general;
             }
 
-            int numero = ++lecturas;
-            calculando = true;
-            esperaCalculo.Stop();
-            esperaCalculo.Start();
-            LecturaEstadisticas leida = lectura;
-            PeriodoElegido pedido = periodo;
-            int laboratorio = IdElegido(cboLaboratorio, 0);
-            int docente = IdElegido(cboDocente, 0);
-            int grupo = IdElegido(cboGrupo, 0);
-            Task.Run(() =>
+            FiltroEstadisticas filtro = EstadisticasDatos.Resolver(pedido, leida, clave.Laboratorio, clave.Docente, clave.Grupo);
+            if (general != null && filtro.Laboratorio == 0 && filtro.Docente == 0 && filtro.Grupo == 0 && filtro.Aviso == null)
             {
-                FiltroEstadisticas filtro = EstadisticasDatos.Resolver(pedido, leida, laboratorio, docente, grupo);
-                return Tuple.Create(leida, EstadisticasDatos.Calcular(leida, filtro));
-            }).ContinueWith(t => EnLaVentana(() =>
-            {
-                // La lectura no cubre el periodo (no deberia pasar al cambiar solo un filtro): se lee.
-                if (t.IsFaulted && numero == lecturas && t.Exception.GetBaseException() is ArgumentException)
-                {
-                    Leer(false);
-                    return;
-                }
+                return general;
+            }
 
-                Recibir(numero, t);
-            }, t));
+            return EstadisticasDatos.Calcular(leida, filtro);
         }
 
-        private void Recibir(int numero, Task<Tuple<LecturaEstadisticas, ResultadoEstadisticas>> tarea)
+        private void Recibir(int numero, PeriodoElegido pedido, ClaveDeFiltro clave, Task<Calculado> tarea)
         {
             if (numero != lecturas || IsDisposed)
             {
@@ -1619,27 +2098,51 @@ namespace DigBit
             }
 
             leyendoBase = false;
-            calculando = false;
             esperaCalculo.Stop();
             btnActualizar.Enabled = true;
             if (tarea.IsFaulted || tarea.IsCanceled)
             {
                 Exception ex = tarea.Exception == null ? new OperationCanceledException() : tarea.Exception.GetBaseException();
                 Log.Error("Estadisticas: leer", ex);
-                if (resultado != null && lectura != null)
+                if (resultadoGeneral != null && lectura != null)
                 {
-                    // Se sigue viendo lo leido, con su periodo y sus filtros.
+                    // Se sigue viendo lo leido, con su periodo y los filtros de cada pestana (lo
+                    // calculado con esa lectura sigue valiendo). El periodo vuelve al de lo leido:
+                    // el combo, lo que calculan las pestanas, F5 y lo que se recuerda, no el que se
+                    // pidio y no se pudo leer.
+                    VolverAlPeriodoLeido();
                     error = null;
-                    PonerResultado();
                     DateTime ahora = DateTime.Now + Desfase(lectura);
-                    lblResumen.Text = "No se pudo actualizar a las " + ahora.ToString("HH:mm", Inv) + " (" + AvisoDeFalloAdmin.Causa(ex) + "): se ve lo leído a las "
+                    falloDeLectura = "No se pudo actualizar a las " + ahora.ToString("HH:mm", Inv) + " (" + AvisoDeFalloAdmin.Causa(ex) + "): se ve lo leído a las "
                         + lectura.AhoraServidor.ToString("HH:mm", Inv) + ".";
-                    ayuda.SetToolTip(lblResumen, AvisoDeFalloAdmin.Texto("No se pudieron leer las estadísticas", ex));
+                    ayudaDelFallo = AvisoDeFalloAdmin.Texto("No se pudieron leer las estadísticas", ex);
+                    PonerGeneral();
+                    foreach (Pagina pagina in paginas.Values)
+                    {
+                        // La que cambio sus filtros mientras se leia se calcula al verse.
+                        if (pagina.Filtro.AlDia)
+                        {
+                            PonerApartado(pagina, pagina.Filtro.Resultado);
+                        }
+                        else
+                        {
+                            pagina.Filtro.Resultado = null;
+                        }
+                    }
+
+                    MostrarApartado(paginas[PestanaElegida]);
+                    PonerResumen();
+                    PonerNota();
                     return;
                 }
 
                 error = AvisoDeFalloAdmin.Texto("No se pudieron leer las estadísticas", ex);
-                resultado = null;
+                resultadoGeneral = null;
+                foreach (Pagina pagina in paginas.Values)
+                {
+                    pagina.Filtro.Resultado = null;
+                }
+
                 foreach (CifraGrande cifra in cifras)
                 {
                     cifra.Mostrar(CifraGrande.SinDato, CifraGrande.ColorGris, "no se pudo leer", null, error);
@@ -1652,65 +2155,358 @@ namespace DigBit
                 return;
             }
 
-            lectura = tarea.Result.Item1;
-            resultado = tarea.Result.Item2;
+            // Otra lectura (u otro periodo): lo calculado antes ya no vale. Se ponen lo general y
+            // la pestana que se ve; las demas, al elegirlas (con "Todos", lo general mismo).
+            Calculado c = tarea.Result;
+            lectura = c.Lectura;
+            // Mientras se leia no se pudo pedir otro periodo sin otra lectura (Leer): es el de ahora.
+            periodoLeido = pedido;
+            resultadoGeneral = c.General;
             error = null;
-            PonerResultado();
+            falloDeLectura = null;
+            ayudaDelFallo = null;
+            calculados.Clear();
+            ordenDeGuardados.Clear();
+            Guardar(ClaveDeFiltro.General, c.General);
+            Guardar(clave, c.DelFiltro);
+            foreach (Pagina pagina in paginas.Values)
+            {
+                pagina.Filtro.Resultado = null;
+                pagina.Filtro.Calculando = false;
+                pagina.Filtro.Error = null;
+                PonerLinea(pagina.Cual, "");
+            }
+
+            PonerGeneral();
+            MostrarApartado(paginas[PestanaElegida]);
+            PonerResumen();
+            PonerNota();
         }
 
         private void VaciarTablas()
         {
-            foreach (ITablaDisposicion tabla in Tablas())
+            foreach (Pagina pagina in paginas.Values)
+            {
+                VaciarApartado(pagina);
+            }
+        }
+
+        /// <summary>Las tablas de una pestana sin filas: pintan "Leyendo...", el error o "Calculando...".</summary>
+        private void VaciarApartado(Pagina pagina)
+        {
+            foreach (ITablaDisposicion tabla in pagina.Tablas)
             {
                 tabla.Vaciar();
             }
 
-            MostrarEstudiante(null);
-            MostrarClase(null);
-            MostrarDocente(null);
-            AcomodarPagina(paginas[PestanaEstadisticas.Docentes]);
+            switch (pagina.Cual)
+            {
+                case PestanaEstadisticas.Estudiantes:
+                    MostrarEstudiante(null);
+                    break;
+                case PestanaEstadisticas.Clases:
+                    MostrarClase(null);
+                    break;
+                case PestanaEstadisticas.Docentes:
+                    MostrarDocente(null);
+                    AcomodarPagina(pagina);
+                    break;
+                case PestanaEstadisticas.Graficas:
+                    panelGraficas.Avisar(TextoSinFilas(PestanaEstadisticas.Graficas, ""), SinFilasPorError(PestanaEstadisticas.Graficas));
+                    break;
+            }
         }
 
-        /// <summary>Lo calculado en la pantalla: combos, cifras, tablas, lineas y pie.</summary>
-        private void PonerResultado()
+        /// <summary>
+        /// Lo general en la pantalla: el periodo, las cinco cifras (de todo el TESCHI) y las
+        /// opciones de las listas de todas las pestanas (todas las del periodo).
+        /// </summary>
+        private void PonerGeneral()
         {
-            ResultadoEstadisticas r = resultado;
-            FiltroEstadisticas filtro = r.Filtro;
-            PonerCombos(r);
-            Recordar(filtro);
+            ResultadoEstadisticas g = resultadoGeneral;
+            // Lo pedido queda como lo que se ve ("Este ciclo" entre ciclos se sigue pidiendo como
+            // "Este ciclo"; un ciclo que ya no esta pasa al que se ve): tambien tras un fallo de lectura.
+            periodo = PeriodoQueQueda(periodo, g.Filtro);
+            ultimoPeriodo = periodo;
+            bool antes = poniendoCombos;
+            poniendoCombos = true;
+            try
+            {
+                LlenarPeriodo(lectura, g);
+                AnchoDeLaLista(cboPeriodo);
+            }
+            finally
+            {
+                poniendoCombos = antes;
+            }
 
-            CifraEstadistica[] cinco = { r.Cifras.Asistencia, r.Cifras.ClasesQueSeDieronCifra, r.Cifras.Bitacoras, r.Cifras.Fallas, r.Cifras.SinInternet };
+            CifrasEstadisticas generales = g.Cifras;
+            CifraEstadistica[] cinco = { generales.Asistencia, generales.ClasesQueSeDieronCifra, generales.Bitacoras, generales.Fallas, generales.SinInternet };
             for (int i = 0; i < cifras.Length; i++)
             {
                 cifras[i].Etiqueta = cinco[i].Etiqueta;
-                cifras[i].Mostrar(cinco[i].Valor, ColorDe(cinco[i].Tono), cinco[i].Detalle, cinco[i].ParteRoja, cinco[i].Ayuda);
+                cifras[i].Mostrar(cinco[i].Valor, ColorDe(cinco[i].Tono), cinco[i].Detalle, cinco[i].ParteRoja,
+                    string.IsNullOrEmpty(cinco[i].Ayuda) ? AyudaGeneral : cinco[i].Ayuda + Environment.NewLine + AyudaGeneral);
             }
 
-            // Solo las columnas (las de db/10, db/15 y db/22 y los titulos): cada tabla se
-            // llena una vez, con lo nuevo (Poner, y las de detalle al elegirse la fila).
+            foreach (Pagina pagina in paginas.Values)
+            {
+                LlenarListas(pagina, g);
+                // Con otras opciones, el laboratorio entre flechas puede pedir otro ancho (PonerListas).
+                if (pagina.Filtro.Flechas != null)
+                {
+                    AcomodarPagina(pagina);
+                }
+            }
+
+            // Las columnas que solo existen con una migracion (db/10, db/15 y db/22) ya se saben
+            // (son de la lectura): asi una cifra puede ordenar por ellas antes de que su pestana calcule.
             foreach (ITablaDisposicion tabla in Tablas())
             {
                 tabla.Columnas(disposicionAmplia);
             }
+        }
 
-            tEstudiantes.Poner(r.Estudiantes);
-            tClases.Poner(r.Clases);
-            tGrupos.Poner(r.Grupos);
-            tDocentes.Poner(r.Docentes);
-            tLaboratorios.Poner(r.Laboratorios);
-            tEquipos.Poner(r.Equipos);
+        /// <summary>
+        /// Que la pestana ensene lo de sus filtros: si ya se tiene (de ella, de otra pestana con
+        /// los mismos filtros o lo general), al momento; si no, se calcula en segundo plano. Un
+        /// calculo que llega tarde (de otra lectura, u otro filtro pedido despues) no se pinta.
+        /// Mientras se lee no hace nada: la lectura, al llegar, pone la pestana que se ve.
+        /// </summary>
+        private void MostrarApartado(Pagina pagina)
+        {
+            if (!construida || lectura == null || leyendoBase || error != null)
+            {
+                return;
+            }
 
-            PonerLinea(PestanaEstadisticas.Estudiantes, r.LineaEstudiantes);
-            PonerLinea(PestanaEstadisticas.Clases, r.LineaClases);
-            PonerLinea(PestanaEstadisticas.Grupos, r.LineaGrupos);
-            PonerLinea(PestanaEstadisticas.Docentes, r.LineaDocentes + " Elige uno para ver sus clases día por día.");
-            PonerLinea(PestanaEstadisticas.Laboratorios, r.LineaLaboratorios);
-            PonerLinea(PestanaEstadisticas.Equipos, r.LineaEquipos);
+            AjustarEquipos(pagina);
+            FiltroDeApartado f = pagina.Filtro;
+            if (f.AlDia)
+            {
+                // Volvio a lo que ya ensena: lo que aun se calculaba (otros filtros) ya no se pinta.
+                if (f.Calculando)
+                {
+                    f.Pedido++;
+                    f.Calculando = false;
+                    if (pagina.Cual == PestanaElegida)
+                    {
+                        esperaCalculo.Stop();
+                        PonerResumen();
+                    }
+                }
 
-            lblResumen.Text = r.LineaResumen;
-            ayuda.SetToolTip(lblResumen, r.LineaResumen);
-            PonerNota();
-            AcomodarPagina(paginas[PestanaEstadisticas.Docentes]);
+                return;
+            }
+
+            ClaveDeFiltro clave = f.Clave;
+            if (f.Calculando && f.EnCurso.Equals(clave))
+            {
+                return;
+            }
+
+            ResultadoEstadisticas guardado;
+            if (calculados.TryGetValue(clave, out guardado))
+            {
+                PonerApartado(pagina, guardado);
+                return;
+            }
+
+            int numero = lecturas;
+            int pedido = ++f.Pedido;
+            f.Calculando = true;
+            f.EnCurso = clave;
+            f.Error = null;
+            if (f.Resultado == null)
+            {
+                // Sin nada que ensenar mientras calcula: sus tablas dicen "Calculando...".
+                VaciarApartado(pagina);
+            }
+
+            if (pagina.Cual == PestanaElegida)
+            {
+                // Si tarda mas de 300 ms, la linea de abajo lo dice.
+                esperaCalculo.Stop();
+                esperaCalculo.Start();
+            }
+
+            LecturaEstadisticas leida = lectura;
+            // Con el periodo de esa lectura (el de lo general y el combo), nunca con uno que se pidio
+            // despues y no se pudo leer: lo de cada pestana es siempre del mismo periodo que lo demas.
+            PeriodoElegido pedidoPeriodo = periodoLeido ?? periodo;
+            ResultadoEstadisticas general = resultadoGeneral;
+            Task.Run(() => CalcularFiltro(pedidoPeriodo, leida, clave, general))
+                .ContinueWith(t => EnLaVentana(() => RecibirApartado(pagina, numero, pedido, clave, t), t));
+        }
+
+        /// <summary>
+        /// Lo calculado con esos filtros, para no volver a calcularlo con esta lectura. Sin pasar
+        /// de MaximoGuardados: se olvida lo mas viejo que ya no ensena ninguna pestana (lo general
+        /// se queda: son las cifras y lo de toda pestana en "Todos").
+        /// </summary>
+        private void Guardar(ClaveDeFiltro clave, ResultadoEstadisticas r)
+        {
+            if (!calculados.ContainsKey(clave))
+            {
+                ordenDeGuardados.Add(clave);
+            }
+
+            calculados[clave] = r;
+            int i = 0;
+            while (calculados.Count > MaximoGuardados && i < ordenDeGuardados.Count)
+            {
+                ClaveDeFiltro vieja = ordenDeGuardados[i];
+                ResultadoEstadisticas guardado = calculados[vieja];
+                if (vieja.EsGeneral || vieja.Equals(clave) || paginas.Values.Any(p => p.Filtro.Resultado == guardado))
+                {
+                    i++;
+                    continue;
+                }
+
+                calculados.Remove(vieja);
+                ordenDeGuardados.RemoveAt(i);
+            }
+        }
+
+        private void RecibirApartado(Pagina pagina, int numero, int pedido, ClaveDeFiltro clave, Task<ResultadoEstadisticas> tarea)
+        {
+            if (numero != lecturas || IsDisposed)
+            {
+                // De otra lectura (u otro periodo): ya no vale.
+                return;
+            }
+
+            FiltroDeApartado f = pagina.Filtro;
+            if (!tarea.IsFaulted && !tarea.IsCanceled)
+            {
+                // Vale para esta lectura aunque la pestana ya pidiera otra cosa: si vuelve a esos filtros, ya esta.
+                Guardar(clave, tarea.Result);
+                if (pedido == f.Pedido)
+                {
+                    PonerApartado(pagina, tarea.Result);
+                }
+
+                return;
+            }
+
+            if (pedido != f.Pedido)
+            {
+                return;
+            }
+
+            f.Calculando = false;
+            Exception ex = tarea.Exception == null ? new OperationCanceledException() : tarea.Exception.GetBaseException();
+            if (ex is ArgumentException && falloDeLectura == null)
+            {
+                // La lectura no cubre el periodo (no deberia pasar: se calcula con el de la lectura): se
+                // lee. Si la ultima lectura ya fallo, aqui no se vuelve a leer (sin red no acabaria): F5.
+                Leer(false);
+                return;
+            }
+
+            Log.Error("Estadisticas: calcular la pestana " + pagina.Cual, ex);
+            f.Resultado = null;
+            f.Error = AvisoDeFalloAdmin.Texto("No se pudieron calcular las estadísticas", ex);
+            VaciarApartado(pagina);
+            if (pagina.Cual == PestanaElegida)
+            {
+                esperaCalculo.Stop();
+                PonerResumen();
+                PonerNota();
+            }
+        }
+
+        /// <summary>
+        /// Lo calculado para una pestana, en ella: sus listas (Resolver pudo volver un docente o
+        /// un grupo a "Todos"), sus columnas, sus filas y su linea; si es la que se ve, tambien
+        /// la linea y la nota de abajo.
+        /// </summary>
+        private void PonerApartado(Pagina pagina, ResultadoEstadisticas r)
+        {
+            FiltroDeApartado f = pagina.Filtro;
+            // Lo que aun se calculaba para ella (otros filtros) ya no se pinta.
+            f.Pedido++;
+            f.Resultado = r;
+            f.Calculando = false;
+            f.Error = null;
+            f.Laboratorio = r.Filtro.Laboratorio;
+            f.Docente = r.Filtro.Docente;
+            f.Grupo = r.Filtro.Grupo;
+            Recordar(pagina);
+            ElegirEnListas(pagina);
+
+            // Solo las columnas (las de db/10, db/15 y db/22 y los titulos): cada tabla se
+            // llena una vez, con lo nuevo (Poner, y las de detalle al elegirse la fila).
+            foreach (ITablaDisposicion tabla in pagina.Tablas)
+            {
+                tabla.Columnas(disposicionAmplia);
+            }
+
+            switch (pagina.Cual)
+            {
+                case PestanaEstadisticas.Estudiantes:
+                    tEstudiantes.Poner(r.Estudiantes);
+                    PonerLinea(pagina.Cual, r.LineaEstudiantes);
+                    break;
+                case PestanaEstadisticas.Clases:
+                    tClases.Poner(r.Clases);
+                    PonerLinea(pagina.Cual, r.LineaClases);
+                    break;
+                case PestanaEstadisticas.Grupos:
+                    tGrupos.Poner(r.Grupos);
+                    PonerLinea(pagina.Cual, r.LineaGrupos);
+                    break;
+                case PestanaEstadisticas.Docentes:
+                    tDocentes.Poner(r.Docentes);
+                    PonerLinea(pagina.Cual, r.LineaDocentes + " Elige uno para ver sus clases día por día.");
+                    AcomodarPagina(pagina);
+                    break;
+                case PestanaEstadisticas.Laboratorios:
+                    tLaboratorios.Poner(r.Laboratorios);
+                    PonerLinea(pagina.Cual, r.LineaLaboratorios);
+                    break;
+                case PestanaEstadisticas.Equipos:
+                    tEquipos.Poner(r.Equipos);
+                    PonerLinea(pagina.Cual, r.LineaEquipos);
+                    break;
+                default:
+                    PonerGraficas();
+                    break;
+            }
+
+            if (pagina.Cual == PestanaElegida)
+            {
+                esperaCalculo.Stop();
+                PonerResumen();
+                PonerNota();
+            }
+        }
+
+        /// <summary>
+        /// La linea de abajo (lblResumen) con lo de la pestana que se ve: las fechas, la hora de
+        /// la lectura y, si lo hay, el aviso de sus filtros (sec. 6.5); o que no se pudo volver a
+        /// leer. Mientras esa pestana calcula por primera vez, la de lo general.
+        /// </summary>
+        private void PonerResumen()
+        {
+            if (!construida || leyendoBase || error != null || resultadoGeneral == null)
+            {
+                return;
+            }
+
+            FiltroDeApartado f = FiltroDe(PestanaElegida);
+            if (f.Error != null)
+            {
+                lblResumen.Text = "No se pudieron calcular las estadísticas.";
+                ayuda.SetToolTip(lblResumen, f.Error);
+                return;
+            }
+
+            ResultadoEstadisticas r = f.Resultado ?? resultadoGeneral;
+            string aviso = f.Resultado == null ? null : f.Resultado.Filtro.Aviso;
+            string texto = falloDeLectura == null ? r.LineaResumen : falloDeLectura + (aviso == null ? "" : " " + aviso);
+            lblResumen.Text = texto;
+            ayuda.SetToolTip(lblResumen, falloDeLectura == null ? texto : ayudaDelFallo);
         }
 
         private void PonerLinea(PestanaEstadisticas cual, string texto)
@@ -1734,16 +2530,23 @@ namespace DigBit
             }
         }
 
-        /// <summary>La nota naranja de mas prioridad que aplica (la de Windows, solo en Equipos), la larga si cabe.</summary>
+        /// <summary>
+        /// La nota naranja de mas prioridad que aplica, con lo de la pestana que se ve (la de
+        /// Windows, solo en Equipos y con su laboratorio), la larga si cabe. Mientras esa
+        /// pestana calcula, las de lo general (las demas notas son de la lectura).
+        /// </summary>
         private void PonerNota()
         {
-            if (resultado == null)
+            ResultadoEstadisticas propio = !construida || leyendoBase ? null : ResultadoDe(PestanaElegida);
+            ResultadoEstadisticas r = !construida || leyendoBase ? null : propio ?? resultadoGeneral;
+            if (r == null)
             {
                 NotaFija = "";
                 return;
             }
 
-            NotaEstadisticas nota = resultado.Notas.FirstOrDefault(n => !n.SoloEnEquipos || PestanaElegida == PestanaEstadisticas.Equipos);
+            bool deEquipos = propio != null && PestanaElegida == PestanaEstadisticas.Equipos;
+            NotaEstadisticas nota = r.Notas.FirstOrDefault(n => !n.SoloEnEquipos || deEquipos);
             if (nota == null)
             {
                 NotaFija = "";
@@ -1754,7 +2557,7 @@ namespace DigBit
             NotaFija = cabe ? nota.TextoLargo : nota.Texto;
         }
 
-        private static TimeSpan Desfase(LecturaEstadisticas leida)
+        internal static TimeSpan Desfase(LecturaEstadisticas leida)
         {
             return leida == null ? TimeSpan.Zero : leida.Asistencia.AhoraServidor - leida.Asistencia.LeidoEnRelojLocal;
         }
@@ -1804,28 +2607,79 @@ namespace DigBit
 
         private static PeriodoElegido PeriodoRecordado()
         {
-            return ultimoTipo == TipoPeriodo.Fechas && ultimoHasta >= ultimoDesde && ultimoDesde > DateTime.MinValue
-                ? PeriodoElegido.EntreFechas(ultimoDesde, ultimoHasta)
-                : PeriodoElegido.De(ultimoTipo == TipoPeriodo.Fechas ? TipoPeriodo.Ciclo : ultimoTipo);
+            return ultimoPeriodo ?? PeriodoElegido.De(TipoPeriodo.Ciclo);
         }
 
-        private static void Recordar(FiltroEstadisticas filtro)
+        /// <summary>
+        /// Lo que queda pedido despues de una lectura (sin pantalla): con fechas, las pedidas
+        /// (o las que se ven, con su "Hasta hoy"); con un ciclo pasado, "Este ciclo" si eso se
+        /// pidio (entre ciclos se ve el ultimo que termino, y el dia que empiece otro se vera
+        /// ese) o el que se ve; con lo demas, "Este ciclo" si se pidio (sin ningun ciclo se
+        /// ven los ultimos 30 dias) o el tipo que se ve. Una plantilla aplicada queda si se ve
+        /// esa misma; si ya no esta en la lista (o se ve otra cosa), "Este ciclo". Asi, tras un
+        /// fallo de lectura, el periodo vuelve a ser el de lo que se ve.
+        /// </summary>
+        internal static PeriodoElegido PeriodoQueQueda(PeriodoElegido pedido, FiltroEstadisticas resuelto)
         {
-            // "Este ciclo" que paso a otro se sigue pidiendo como "Este ciclo".
-            if (!(ultimoTipo == TipoPeriodo.Ciclo && filtro.Tipo != TipoPeriodo.Fechas))
+            if (resuelto.Tipo == TipoPeriodo.Plantilla && resuelto.Plantilla != null)
             {
-                ultimoTipo = filtro.Tipo;
+                return pedido.Tipo == TipoPeriodo.Plantilla && pedido.Plantilla == resuelto.Plantilla.Id ? pedido : PeriodoElegido.DePlantilla(resuelto.Plantilla);
             }
 
-            if (filtro.Tipo == TipoPeriodo.Fechas)
+            if (pedido.Tipo == TipoPeriodo.Plantilla)
             {
-                ultimoDesde = filtro.Desde;
-                ultimoHasta = filtro.Hasta;
+                // La plantilla ya no esta (ResolverPeriodo paso a "Este ciclo"): se pide y se recuerda "Este ciclo".
+                return PeriodoElegido.De(TipoPeriodo.Ciclo);
             }
 
-            ultimoLaboratorio = filtro.Laboratorio;
-            ultimoDocente = filtro.Docente;
-            ultimoGrupo = filtro.Grupo;
+            switch (resuelto.Tipo)
+            {
+                case TipoPeriodo.Fechas:
+                    if (pedido.Tipo == TipoPeriodo.Fechas)
+                    {
+                        return pedido;
+                    }
+
+                    return resuelto.HastaHoy ? PeriodoElegido.DesdeHastaHoy(resuelto.Desde) : PeriodoElegido.EntreFechas(resuelto.Desde, resuelto.Hasta);
+                case TipoPeriodo.CicloPasado:
+                    if (pedido.Tipo == TipoPeriodo.Ciclo
+                        || (pedido.Tipo == TipoPeriodo.CicloPasado && resuelto.Ciclo != null && pedido.Desde == resuelto.Ciclo.Desde))
+                    {
+                        return pedido;
+                    }
+
+                    return resuelto.Ciclo != null ? PeriodoElegido.DelCiclo(resuelto.Ciclo) : PeriodoElegido.De(TipoPeriodo.Ciclo);
+                default:
+                    if (pedido.Tipo == TipoPeriodo.Ciclo || pedido.Tipo == resuelto.Tipo)
+                    {
+                        return pedido;
+                    }
+
+                    return PeriodoElegido.De(resuelto.Tipo);
+            }
+        }
+
+        /// <summary>
+        /// Otra lectura no se pudo hacer y se sigue viendo la de antes: lo pedido (y lo que se
+        /// recuerda) vuelve al periodo de ella. Asi LlenarPeriodo y PeriodoQueQueda quedan como
+        /// cuando se leyo; sin esto, la regla de "Este ciclo" (que se sigue pidiendo como "Este
+        /// ciclo" aunque pase a otro) dejaba pedido el ciclo que fallo junto a lo del mes.
+        /// </summary>
+        private void VolverAlPeriodoLeido()
+        {
+            if (periodoLeido == null)
+            {
+                return;
+            }
+
+            periodo = periodoLeido;
+            ultimoPeriodo = periodoLeido;
+        }
+
+        /// <summary>Los filtros de esa pestana, para la proxima vez que se abra Estadisticas (mientras DigBit siga abierto).</summary>
+        private static void Recordar(Pagina pagina)
+        {
+            filtrosRecordados[pagina.Cual] = pagina.Filtro.Clave;
         }
 
         private static int IdElegido(ComboBox combo, int siNoHay)
@@ -1834,35 +2688,21 @@ namespace DigBit
             return opcion == null ? siNoHay : opcion.Id;
         }
 
-        /// <summary>Antes de la primera lectura: el periodo recordado y "Todos"; los combos se habilitan al leer.</summary>
-        private void PonerCombosIniciales()
+        /// <summary>Antes de la primera lectura: el periodo recordado y, en cada lista, lo que recordaba su pestana.</summary>
+        private void PonerListasIniciales()
         {
             poniendoCombos = true;
             try
             {
                 LlenarPeriodo(null, null);
-                Llenar(cboLaboratorio, new[] { new OpcionCombo { Id = ultimoLaboratorio, Texto = ultimoLaboratorio == 0 ? "Todos los laboratorios" : TextoLeyendo } }, ultimoLaboratorio);
-                Llenar(cboDocente, new[] { new OpcionCombo { Id = ultimoDocente, Texto = ultimoDocente == 0 ? "Todo el personal docente" : TextoLeyendo } }, ultimoDocente);
-                Llenar(cboGrupo, new[] { new OpcionCombo { Id = ultimoGrupo, Texto = ultimoGrupo == 0 ? "Todos los grupos" : TextoLeyendo } }, ultimoGrupo);
-            }
-            finally
-            {
-                poniendoCombos = false;
-            }
-        }
-
-        private void PonerCombos(ResultadoEstadisticas r)
-        {
-            poniendoCombos = true;
-            try
-            {
-                LlenarPeriodo(lectura, r.Filtro);
-                Llenar(cboLaboratorio, r.OpcionesLaboratorio, r.Filtro.Laboratorio);
-                Llenar(cboDocente, r.OpcionesDocente, r.Filtro.Docente);
-                Llenar(cboGrupo, r.OpcionesGrupo, r.Filtro.Grupo);
-                foreach (ComboBox combo in new[] { cboPeriodo, cboLaboratorio, cboDocente, cboGrupo })
+                foreach (Pagina pagina in paginas.Values)
                 {
-                    AnchoDeLaLista(combo);
+                    FiltroDeApartado f = pagina.Filtro;
+                    foreach (ListaDeFiltro lista in f.Listas)
+                    {
+                        int id = f.Id(lista.Tipo);
+                        Llenar(lista, new[] { new OpcionCombo { Id = id, Texto = id == 0 ? TextoDeTodos(lista.Tipo) : TextoLeyendo } }, id);
+                    }
                 }
             }
             finally
@@ -1871,8 +2711,42 @@ namespace DigBit
             }
         }
 
-        private void Llenar(ComboBox combo, IEnumerable<OpcionCombo> opciones, int elegido)
+        /// <summary>Las opciones de las listas de una pestana: las de lo general (todas las del periodo), con lo que ella pide elegido.</summary>
+        private void LlenarListas(Pagina pagina, ResultadoEstadisticas general)
         {
+            FiltroDeApartado f = pagina.Filtro;
+            bool antes = poniendoCombos;
+            poniendoCombos = true;
+            try
+            {
+                foreach (ListaDeFiltro lista in f.Listas)
+                {
+                    Llenar(lista, OpcionesDe(general, lista.Tipo), f.Id(lista.Tipo));
+                    AnchoDeLaLista(lista.Combo);
+                }
+            }
+            finally
+            {
+                poniendoCombos = antes;
+            }
+        }
+
+        private static IEnumerable<OpcionCombo> OpcionesDe(ResultadoEstadisticas r, TipoDeFiltro tipo)
+        {
+            switch (tipo)
+            {
+                case TipoDeFiltro.Laboratorio:
+                    return r.OpcionesLaboratorio;
+                case TipoDeFiltro.Docente:
+                    return r.OpcionesDocente;
+                default:
+                    return r.OpcionesGrupo;
+            }
+        }
+
+        private void Llenar(ListaDeFiltro lista, IEnumerable<OpcionCombo> opciones, int elegido)
+        {
+            ComboBox combo = lista.Combo;
             combo.BeginUpdate();
             EstiloHorarios.Rellenar(combo, opciones, elegido);
             if (combo.SelectedIndex < 0 && combo.Items.Count > 0)
@@ -1881,54 +2755,67 @@ namespace DigBit
             }
 
             combo.EndUpdate();
-            OpcionCombo opcion = combo.SelectedItem as OpcionCombo;
-            ayuda.SetToolTip(combo, opcion == null ? null : opcion.Texto);
+            PonerAyudaDeLista(lista);
+            // Items.Clear no avisa a las flechas (sin laboratorios se quedaria el nombre de antes).
+            if (lista.Flechas != null)
+            {
+                lista.Flechas.Refrescar();
+            }
+        }
+
+        private void PonerAyudaDeLista(ListaDeFiltro lista)
+        {
+            OpcionCombo opcion = lista.Combo.SelectedItem as OpcionCombo;
+            ayuda.SetToolTip(lista.Combo, opcion == null ? null : opcion.Texto);
+        }
+
+        /// <summary>En cada lista de la pestana, lo que ella pide (sin calcular).</summary>
+        private void ElegirEnListas(Pagina pagina)
+        {
+            FiltroDeApartado f = pagina.Filtro;
+            bool antes = poniendoCombos;
+            poniendoCombos = true;
+            try
+            {
+                foreach (ListaDeFiltro lista in f.Listas)
+                {
+                    ElegirEnCombo(lista.Combo, f.Id(lista.Tipo));
+                    PonerAyudaDeLista(lista);
+                }
+            }
+            finally
+            {
+                poniendoCombos = antes;
+            }
         }
 
         /// <summary>
-        /// Las opciones del periodo (R2): "Este ciclo" (o "Ciclo anterior"), "Este mes",
-        /// "Esta semana", "Ultimos 30 dias", las fechas elegidas (si las hay) y "Elegir
-        /// fechas..." al final, que siempre abre el dialogo.
+        /// Lo que pide una pestana (solo los filtros que tiene; los demas, "Todos"), en sus
+        /// listas y en lo que recuerda. No calcula: eso, al verse (MostrarApartado).
         /// </summary>
-        private void LlenarPeriodo(LecturaEstadisticas leida, FiltroEstadisticas filtro)
+        private void PonerFiltro(Pagina pagina, int laboratorio, int docente, int grupo)
         {
-            TipoPeriodo elegido = filtro != null ? filtro.Tipo : periodo.Tipo;
-            cboPeriodo.BeginUpdate();
-            cboPeriodo.Items.Clear();
-            foreach (TipoPeriodo tipo in EstadisticasDatos.OpcionesDePeriodo(leida).Where(t => t != TipoPeriodo.Fechas))
-            {
-                cboPeriodo.Items.Add(new OpcionPeriodo { Tipo = tipo, Texto = EstadisticasDatos.TextoDePeriodo(tipo, leida, null) });
-            }
+            FiltroDeApartado f = pagina.Filtro;
+            f.Laboratorio = f.Tiene(TipoDeFiltro.Laboratorio) ? laboratorio : 0;
+            f.Docente = f.Tiene(TipoDeFiltro.Docente) ? docente : 0;
+            f.Grupo = f.Tiene(TipoDeFiltro.Grupo) ? grupo : 0;
+            Recordar(pagina);
+            ElegirEnListas(pagina);
+        }
 
-            if (elegido == TipoPeriodo.Fechas)
+        /// <summary>
+        /// Las opciones del periodo (sec. 1.1): "Este ciclo" (si hoy vale alguna clase), un
+        /// renglon por cada ciclo que ya termino, "Este mes", "Esta semana", "Ultimos 30
+        /// dias", las fechas elegidas (si las hay) y "Elegir fechas..." al final, que siempre
+        /// abre el dialogo. Elige lo que se ve (r; sin el, lo pedido) y, con r, pone la ayuda.
+        /// </summary>
+        private void LlenarPeriodo(LecturaEstadisticas leida, ResultadoEstadisticas r)
+        {
+            // La misma pieza que la ficha del docente (SelectorDePeriodo.Llenar).
+            periodoAntes = SelectorDePeriodo.Llenar(cboPeriodo, leida, r, periodo);
+            if (r != null)
             {
-                DateTime desde = filtro != null ? filtro.Desde : periodo.Desde;
-                DateTime hasta = filtro != null ? filtro.Hasta : periodo.Hasta;
-                cboPeriodo.Items.Add(new OpcionPeriodo { Tipo = TipoPeriodo.Fechas, Desde = desde, Hasta = hasta, Texto = EstadisticasDatos.DelAl(desde, hasta) });
-            }
-
-            cboPeriodo.Items.Add(new OpcionPeriodo { Tipo = TipoPeriodo.Fechas, ElegirFechas = true, Texto = "Elegir fechas..." });
-            int indice = 0;
-            for (int i = 0; i < cboPeriodo.Items.Count; i++)
-            {
-                OpcionPeriodo opcion = (OpcionPeriodo)cboPeriodo.Items[i];
-                if (!opcion.ElegirFechas && opcion.Tipo == elegido)
-                {
-                    indice = i;
-                    break;
-                }
-            }
-
-            cboPeriodo.SelectedIndex = indice;
-            cboPeriodo.EndUpdate();
-            periodoAntes = indice;
-            if (filtro != null)
-            {
-                DateTime primero = EstadisticasDatos.PrimerDiaElegible(leida.Hoy);
-                DateTime desdeVisto = filtro.Desde < primero ? primero : filtro.Desde;
-                ayuda.SetToolTip(cboPeriodo, EstadisticasDatos.DelAl(desdeVisto, filtro.Hasta) + (filtro.Hasta == leida.Hoy ? " (hoy)." : "."));
-                periodo = filtro.Tipo == TipoPeriodo.Fechas ? PeriodoElegido.EntreFechas(filtro.Desde, filtro.Hasta)
-                    : PeriodoElegido.De(periodo.Tipo == TipoPeriodo.Ciclo && filtro.Tipo != TipoPeriodo.Fechas ? TipoPeriodo.Ciclo : filtro.Tipo);
+                ayuda.SetToolTip(cboPeriodo, EstadisticasDatos.AyudaDelPeriodo(r, leida));
             }
         }
 
@@ -1947,33 +2834,25 @@ namespace DigBit
             }
 
             periodoAntes = cboPeriodo.SelectedIndex;
-            periodo = opcion.Tipo == TipoPeriodo.Fechas ? PeriodoElegido.EntreFechas(opcion.Desde, opcion.Hasta) : PeriodoElegido.De(opcion.Tipo);
-            ultimoTipo = periodo.Tipo;
+            periodo = opcion.Periodo;
+            ultimoPeriodo = periodo;
             Leer(false);
         }
 
-        /// <summary>"Elegir fechas...": el dialogo; con Cancelar vuelve la opcion de antes.</summary>
+        /// <summary>"Elegir fechas...": el dialogo (con "Hasta hoy"); con Cancelar vuelve la opcion de antes.</summary>
         private void ElegirFechas()
         {
-            DateTime hoy = lectura != null ? lectura.Hoy : (DateTime.Now + Desfase(lectura)).Date;
-            DateTime desde = resultado != null ? resultado.Filtro.Desde : hoy.AddDays(-6);
-            DateTime hasta = resultado != null ? resultado.Filtro.Hasta : hoy;
-            using (DialogoFechas dialogo = new DialogoFechas(hoy, desde, hasta))
+            PeriodoElegido elegido = SelectorDePeriodo.PedirFechas(this, lectura, resultadoGeneral, periodo, Desfase(lectura));
+            if (elegido == null)
             {
-                if (dialogo.ShowDialog(this) != DialogResult.OK)
-                {
-                    poniendoCombos = true;
-                    cboPeriodo.SelectedIndex = periodoAntes >= 0 && periodoAntes < cboPeriodo.Items.Count ? periodoAntes : 0;
-                    poniendoCombos = false;
-                    return;
-                }
-
-                periodo = PeriodoElegido.EntreFechas(dialogo.Desde, dialogo.Hasta);
+                poniendoCombos = true;
+                cboPeriodo.SelectedIndex = periodoAntes >= 0 && periodoAntes < cboPeriodo.Items.Count ? periodoAntes : 0;
+                poniendoCombos = false;
+                return;
             }
 
-            ultimoTipo = TipoPeriodo.Fechas;
-            ultimoDesde = periodo.Desde;
-            ultimoHasta = periodo.Hasta;
+            periodo = elegido;
+            ultimoPeriodo = periodo;
             poniendoCombos = true;
             try
             {
@@ -1988,18 +2867,32 @@ namespace DigBit
             Leer(false);
         }
 
-        private void FiltroCambiado()
+        /// <summary>
+        /// Otra opcion en una lista de esa pestana (con el raton, el teclado o sus flechas): solo
+        /// ella vuelve a calcular, sin ir a la base y en segundo plano; las demas no cambian.
+        /// </summary>
+        private void ListaCambiada(Pagina pagina)
         {
-            ultimoLaboratorio = IdElegido(cboLaboratorio, 0);
-            ultimoDocente = IdElegido(cboDocente, 0);
-            ultimoGrupo = IdElegido(cboGrupo, 0);
-            foreach (ComboBox combo in new[] { cboLaboratorio, cboDocente, cboGrupo })
+            FiltroDeApartado f = pagina.Filtro;
+            foreach (ListaDeFiltro lista in f.Listas)
             {
-                OpcionCombo opcion = combo.SelectedItem as OpcionCombo;
-                ayuda.SetToolTip(combo, opcion == null ? null : opcion.Texto);
+                f.Poner(lista.Tipo, IdElegido(lista.Combo, f.Id(lista.Tipo)));
+                PonerAyudaDeLista(lista);
             }
 
-            Recalcular();
+            Recordar(pagina);
+            if (lectura == null)
+            {
+                // Sin nada leido: mientras lee, la lectura calcula la que se ve al llegar; si no se pudo leer, se vuelve a intentar.
+                if (!leyendoBase)
+                {
+                    Leer(false);
+                }
+
+                return;
+            }
+
+            MostrarApartado(pagina);
         }
 
         private void ElegirEnCombo(ComboBox combo, int id)
@@ -2019,34 +2912,46 @@ namespace DigBit
         // Cifras, pestanas y dobles clics
         // =====================================================================
 
-        /// <summary>Cada cifra elige su pestana y su orden (sec. 3.1).</summary>
+        /// <summary>
+        /// Cada cifra elige su pestana y su orden (sec. 3.1), con los filtros de esa pestana en
+        /// "Todos" para que coincida con la cifra (es de todo el TESCHI); Equipos conserva su
+        /// laboratorio (sus equipos son de uno).
+        /// </summary>
         private void CifraPulsada(int cual)
         {
+            PestanaEstadisticas pestana = cual == 0 ? PestanaEstadisticas.Estudiantes
+                : cual == 1 ? PestanaEstadisticas.Docentes
+                : cual == 2 ? PestanaEstadisticas.Laboratorios
+                : PestanaEstadisticas.Equipos;
+            Pagina pagina = paginas[pestana];
+            if (pestana != PestanaEstadisticas.Equipos)
+            {
+                PonerFiltro(pagina, 0, 0, 0);
+            }
+
+            ElegirPestana(pestana);
+            // Si ya se veia, ElegirPestana no avisa: que ensene lo de sus filtros nuevos.
+            MostrarApartado(pagina);
             switch (cual)
             {
                 case 0:
-                    ElegirPestana(PestanaEstadisticas.Estudiantes);
                     tEstudiantes.OrdenPorOmision();
                     tEstudiantes.Grid.Focus();
                     break;
                 case 1:
-                    ElegirPestana(PestanaEstadisticas.Docentes);
                     tDocentes.OrdenPorOmision();
                     tDocentes.Grid.Focus();
                     break;
                 case 2:
-                    ElegirPestana(PestanaEstadisticas.Laboratorios);
                     tLaboratorios.Ordenar("bitacoras", true);
                     tLaboratorios.Grid.Focus();
                     break;
                 case 3:
-                    ElegirPestana(PestanaEstadisticas.Equipos);
                     tEquipos.Ordenar("fallas", true);
                     tEquipos.Grid.Focus();
                     break;
                 default:
-                    ElegirPestana(PestanaEstadisticas.Equipos);
-                    if (resultado != null && resultado.ConAvisos)
+                    if (Con(PestanaEstadisticas.Equipos, r => r.ConAvisos))
                     {
                         tEquipos.Ordenar("avisos", true);
                     }
@@ -2062,51 +2967,102 @@ namespace DigBit
 
         private void PestanaCambiada()
         {
+            if (!construida)
+            {
+                return;
+            }
+
+            // Lo de sus filtros (de lo ya calculado o en segundo plano); Equipos con "Todos"
+            // pasa al primer laboratorio (AjustarEquipos).
+            Pagina pagina = paginas[PestanaElegida];
+            MostrarApartado(pagina);
+            if (pagina.Filtro.Flechas != null)
+            {
+                pagina.Filtro.Flechas.Refrescar();
+            }
+
+            // Al elegir una pestana con el raton (si las pestanas no tenian el foco) o desde el
+            // codigo (ElegirPestana), WinForms pone el foco en su primer control, que ahora es una
+            // lista: ahi una tecla cambiaria el filtro sin querer y ← y → elegirian en ella. Va a
+            // su Buscar, como antes, o, sin Buscar (Graficas), a las pestanas, para que ← y →
+            // muevan su laboratorio.
+            if (pagina.Filtro.Listas.Any(l => l.Combo.Focused))
+            {
+                if (pagina.Buscador != null)
+                {
+                    pagina.Buscador.Focus();
+                }
+                else
+                {
+                    tabs.Focus();
+                }
+            }
+
+            // Si aun calcula (se pidio en otra visita), la linea de abajo lo dira si tarda.
+            if (!pagina.Filtro.Calculando)
+            {
+                esperaCalculo.Stop();
+            }
+            else if (!esperaCalculo.Enabled)
+            {
+                esperaCalculo.Start();
+            }
+
+            PonerResumen();
             ActualizarCsv();
             PonerNota();
             tabs.Invalidate();
         }
 
-        /// <summary>Doble clic en un grupo o en un docente: lo elige en su filtro y pasa a Clases.</summary>
-        private void IrAClasesCon(int docente, int grupo)
+        /// <summary>
+        /// Los equipos son de un laboratorio ("PC-07" hay en todos): Equipos con "Todos los
+        /// laboratorios" pasa al primero; las flechas llevan a los demas.
+        /// </summary>
+        private void AjustarEquipos(Pagina pagina)
         {
-            poniendoCombos = true;
-            try
+            FiltroDeApartado f = pagina.Filtro;
+            if (pagina.Cual != PestanaEstadisticas.Equipos || f.Laboratorio != 0 || f.Listas.Count == 0)
             {
-                if (docente != 0)
-                {
-                    ElegirEnCombo(cboDocente, docente);
-                }
-
-                if (grupo != 0)
-                {
-                    ElegirEnCombo(cboGrupo, grupo);
-                }
-            }
-            finally
-            {
-                poniendoCombos = false;
+                return;
             }
 
-            ElegirPestana(PestanaEstadisticas.Clases);
-            FiltroCambiado();
+            ComboBox combo = f.Listas[0].Combo;
+            OpcionCombo primero = combo.Enabled && combo.Items.Count > 1 ? combo.Items[1] as OpcionCombo : null;
+            if (primero == null || primero.Id == 0)
+            {
+                return;
+            }
+
+            f.Laboratorio = primero.Id;
+            Recordar(pagina);
+            ElegirEnListas(pagina);
         }
 
-        /// <summary>Doble clic en un laboratorio: lo elige en el filtro y pasa a Equipos.</summary>
+        /// <summary>
+        /// Doble clic en un grupo (Grupos) o en un docente (Docentes): Clases con ese grupo o
+        /// ese docente y con los demas filtros con que se conto la fila (el laboratorio de la
+        /// pestana de donde viene y, si lo tiene, su docente o su grupo), y pasa a Clases.
+        /// </summary>
+        private void IrAClasesCon(Pagina origen, int docente, int grupo)
+        {
+            FiltroDeApartado de = origen.Filtro;
+            FiltroEstadisticas visto = de.Resultado == null ? null : de.Resultado.Filtro;
+            int laboratorio = visto != null ? visto.Laboratorio : de.Laboratorio;
+            int suDocente = visto != null ? visto.Docente : de.Docente;
+            int suGrupo = visto != null ? visto.Grupo : de.Grupo;
+            Pagina clases = paginas[PestanaEstadisticas.Clases];
+            PonerFiltro(clases, laboratorio, docente != 0 ? docente : suDocente, grupo != 0 ? grupo : suGrupo);
+            ElegirPestana(PestanaEstadisticas.Clases);
+            MostrarApartado(clases);
+        }
+
+        /// <summary>Doble clic en un laboratorio: Equipos con ese laboratorio ("Todos" pasa al primero) y pasa a Equipos.</summary>
         private void IrAEquiposDe(int laboratorio)
         {
-            poniendoCombos = true;
-            try
-            {
-                ElegirEnCombo(cboLaboratorio, laboratorio);
-            }
-            finally
-            {
-                poniendoCombos = false;
-            }
-
+            Pagina equipos = paginas[PestanaEstadisticas.Equipos];
+            PonerFiltro(equipos, laboratorio, 0, 0);
             ElegirPestana(PestanaEstadisticas.Equipos);
-            FiltroCambiado();
+            MostrarApartado(equipos);
         }
 
         // =====================================================================
@@ -2118,7 +3074,7 @@ namespace DigBit
             if (f == null)
             {
                 fichaEstudiante.ConDatos = false;
-                fichaEstudiante.Vacio = leyendoBase || resultado == null ? "" : "Elige un estudiante para ver sus clases.";
+                fichaEstudiante.Vacio = leyendoBase || ResultadoDe(PestanaEstadisticas.Estudiantes) == null ? "" : "Elige un estudiante para ver sus clases.";
                 tSusClases.Vaciar();
                 return;
             }
@@ -2145,7 +3101,7 @@ namespace DigBit
             if (c == null)
             {
                 fichaClase.ConDatos = false;
-                fichaClase.Vacio = leyendoBase || resultado == null ? "" : "Elige una clase para ver a sus estudiantes.";
+                fichaClase.Vacio = leyendoBase || ResultadoDe(PestanaEstadisticas.Clases) == null ? "" : "Elige una clase para ver a sus estudiantes.";
                 tLista.Vaciar();
                 return;
             }
@@ -2173,7 +3129,7 @@ namespace DigBit
             if (d == null)
             {
                 fichaDocente.ConDatos = false;
-                fichaDocente.Vacio = leyendoBase || resultado == null ? "" : "Elige a un docente para ver sus clases día por día.";
+                fichaDocente.Vacio = leyendoBase || ResultadoDe(PestanaEstadisticas.Docentes) == null ? "" : "Elige a un docente para ver sus clases día por día.";
                 tSusClasesDia.Vaciar();
                 return;
             }
@@ -2332,6 +3288,190 @@ namespace DigBit
         }
 
         // =====================================================================
+        // Graficas y reporte para auditoria (2026-10-31)
+        // =====================================================================
+
+        private RadioButton OpcionDeAgrupacion(string texto, AgrupacionGraficas cual)
+        {
+            RadioButton opcion = new RadioButton
+            {
+                AutoSize = true,
+                Text = texto,
+                Font = fuenteValor,
+                ForeColor = EstiloAdmin.TextoOscuro,
+                BackColor = Color.White,
+                UseMnemonic = false
+            };
+            opcion.CheckedChanged += (s, e) =>
+            {
+                if (opcion.Checked && !poniendoAgrupacion)
+                {
+                    agrupacionElegida = cual;
+                    PonerGraficas();
+                }
+            };
+            // ← → ↑ ↓ eligen la otra opcion, como un grupo de opciones de Windows: no salen a las listas
+            // ni al reporte (ahi una flecha mas cambiaria el laboratorio o el grupo sin querer).
+            opcion.PreviewKeyDown += (s, e) =>
+            {
+                if (EsFlecha(e.KeyData))
+                {
+                    e.IsInputKey = true;
+                }
+            };
+            opcion.KeyDown += (s, e) =>
+            {
+                if (EsFlecha(e.KeyData))
+                {
+                    e.Handled = true;
+                    RadioButton otra = opcion == rbPorSemana ? rbPorMes : rbPorSemana;
+                    otra.Checked = true;
+                    otra.Focus();
+                }
+            };
+            return opcion;
+        }
+
+        /// <summary>Una flecha sola (sin Ctrl, Alt ni Mayus).</summary>
+        private static bool EsFlecha(Keys tecla)
+        {
+            return tecla == Keys.Left || tecla == Keys.Right || tecla == Keys.Up || tecla == Keys.Down;
+        }
+
+        /// <summary>La que eligio (mientras DigBit siga abierto) o, si no eligio, por semana hasta 16 semanas y despues por mes.</summary>
+        private AgrupacionGraficas AgrupacionVista
+        {
+            get
+            {
+                ResultadoEstadisticas r = ResultadoDe(PestanaEstadisticas.Graficas);
+                return agrupacionElegida ?? (r != null ? r.Graficas.Sugerida : AgrupacionGraficas.Semana);
+            }
+        }
+
+        /// <summary>Las cuatro secciones con lo calculado para Graficas con sus filtros (sin base): en pantalla, con lo de cada docente.</summary>
+        private void PonerGraficas()
+        {
+            ResultadoEstadisticas resultado = ResultadoDe(PestanaEstadisticas.Graficas);
+            if (resultado == null || leyendoBase)
+            {
+                panelGraficas.Avisar(TextoSinFilas(PestanaEstadisticas.Graficas, ""), SinFilasPorError(PestanaEstadisticas.Graficas));
+                return;
+            }
+
+            AgrupacionGraficas agrupacion = AgrupacionVista;
+            poniendoAgrupacion = true;
+            try
+            {
+                rbPorSemana.Checked = agrupacion == AgrupacionGraficas.Semana;
+                rbPorMes.Checked = agrupacion == AgrupacionGraficas.Mes;
+            }
+            finally
+            {
+                poniendoAgrupacion = false;
+            }
+
+            // "Ciclo ... , del ... al ...", "Este ciclo (en curso), del ..." o "Del ... al ...": los dias que cuentan.
+            PonerLinea(PestanaEstadisticas.Graficas, EstadisticasDatos.CabezaDelPeriodo(resultado)
+                + (agrupacion == AgrupacionGraficas.Mes ? ", por mes" : ", por semana")
+                + ": uso de los laboratorios, clases y docentes, asistencia y fallas, con los filtros de arriba.");
+            if (resultado.TextoVacio != null)
+            {
+                panelGraficas.Avisar(resultado.TextoVacio, false);
+                return;
+            }
+
+            panelGraficas.Poner(ContenidoGraficas.Armar(resultado, agrupacion, true));
+        }
+
+        /// <summary>
+        /// "Reporte para auditoria (PDF)...": lo de Graficas con el encabezado del TESCHI,
+        /// en el visor de DigBit (de ahi se guarda). La persona responsable del
+        /// laboratorio lo genera sin lo de cada docente (EstadisticasDatos.ReporteConDocentes,
+        /// la regla del CSV de Docentes). En kiosco no hay boton.
+        /// </summary>
+        private void ReporteParaAuditoria()
+        {
+            if (Kiosco.Activo || btnReporte == null)
+            {
+                return;
+            }
+
+            // Con los filtros de Graficas: mientras calcula, lo que se ve aun es lo de los de antes.
+            FiltroDeApartado filtro = FiltroDe(PestanaEstadisticas.Graficas);
+            if (leyendoBase || filtro.Calculando)
+            {
+                Avisar(leyendoBase ? "Espera a que se lean las estadísticas para el reporte." : "Espera a que se calculen las estadísticas para el reporte.");
+                return;
+            }
+
+            ResultadoEstadisticas resultado = filtro.Resultado;
+            if (resultado == null || lectura == null)
+            {
+                Avisar("Aún no hay estadísticas para el reporte: pulsa Actualizar.");
+                return;
+            }
+
+            DatosDelReporte datos = DatosParaElReporte();
+            byte[] pdf;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                pdf = ReporteAuditoriaPdf.Crear(resultado, datos);
+            }
+            catch (Exception ex)
+            {
+                Cursor = Cursors.Default;
+                MostrarError("Estadisticas: reporte para auditoria", ex, "No se pudo preparar el reporte para auditoría");
+                return;
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+
+            Log.Info("Estadisticas: reporte para auditoria del " + datos.Desde.ToString("yyyy-MM-dd", Inv) + " al " + datos.Hasta.ToString("yyyy-MM-dd", Inv)
+                + " (" + pdf.Length + " bytes" + (datos.ConDocentes ? "" : ", sin lo de cada docente") + ").");
+            try
+            {
+                VisorPdf.Mostrar(this, pdf, ReporteAuditoriaPdf.NombreArchivo(datos, resultado.Filtro.Laboratorio != 0));
+            }
+            catch (Exception ex)
+            {
+                // Un fallo de archivo aqui es el temporal de la vista previa, no uno que se eligio.
+                AvisoDeFalloAdmin.MostrarVistaPrevia(this, "Estadisticas: reporte para auditoria (visor)", ex, "No se pudo mostrar el reporte para auditoría", Text);
+            }
+        }
+
+        /// <summary>
+        /// El periodo (su nombre y los dias que de verdad cuentan, de lo calculado: no del texto
+        /// del combo), los filtros de Graficas (como el membrete del CSV), quien y cuando, para
+        /// la ficha del reporte.
+        /// </summary>
+        internal DatosDelReporte DatosParaElReporte()
+        {
+            ResultadoEstadisticas r = ResultadoDe(PestanaEstadisticas.Graficas);
+            FiltroEstadisticas f = r.Filtro;
+            return new DatosDelReporte
+            {
+                Periodo = EstadisticasDatos.NombreDelPeriodo(r),
+                NombreCorto = EstadisticasDatos.NombreCortoDelPeriodo(r),
+                NotaDelPeriodo = EstadisticasDatos.NotaDelPeriodoParaElReporte(r),
+                Desde = r.Desde,
+                Hasta = r.Hasta,
+                Laboratorio = f.Laboratorio == 0 ? "Todos los laboratorios" : NombreDeLaboratorio(f.Laboratorio, r),
+                Docente = f.Docente == 0 ? "Todo el personal docente" : TextoDeOpcion(r.OpcionesDocente, f.Docente),
+                Grupo = f.Grupo == 0 ? "Todos los grupos" : TextoDeOpcion(r.OpcionesGrupo, f.Grupo),
+                Agrupacion = AgrupacionVista,
+                GeneradoPor = (Datos_User.getUser() ?? "-") + (Permisos.SoloConsulta ? " (responsable de laboratorio, solo consulta)" : " (administración de DigBit)"),
+                GeneradoEn = DateTime.Now + Desfase(lectura),
+                LeidoEn = lectura.AhoraServidor,
+                ConDocentes = EstadisticasDatos.ReporteConDocentes(Permisos.SoloConsulta),
+                // Como arriba de la ventana: con un filtro en Graficas, las cifras grandes son las generales.
+                Generales = resultadoGeneral != null && (f.Laboratorio != 0 || f.Docente != 0 || f.Grupo != 0) ? resultadoGeneral.Cifras : null
+            };
+        }
+
+        // =====================================================================
         // Guardar en Excel (CSV) (sec. 8)
         // =====================================================================
 
@@ -2388,8 +3528,8 @@ namespace DigBit
                 return;
             }
 
-            // Mientras lee, las tablas estan vacias; mientras calcula, aun son las de los filtros de antes.
-            if (leyendoBase || calculando)
+            // Mientras lee, las tablas estan vacias; mientras esa pestana calcula, aun son las de sus filtros de antes.
+            if (leyendoBase || FiltroDe(pestana).Calculando)
             {
                 Avisar(leyendoBase ? "Espera a que se lean las estadísticas para guardarlas." : "Espera a que se calculen las estadísticas para guardarlas.");
                 return;
@@ -2443,10 +3583,16 @@ namespace DigBit
             Avisar("Guardado: ábrelo con Excel.");
         }
 
-        /// <summary>"Estadisticas Estudiantes 2026-10-22.csv", con la fecha del servidor.</summary>
+        /// <summary>"Estadisticas Clases 2026-09-30 al 2027-02-28.csv", con los dias que cuentan; sin nada calculado, con la fecha del servidor.</summary>
         internal string NombreDelCsv(PestanaEstadisticas pestana)
         {
-            return "Estadisticas " + NombreDePestana(pestana) + " " + (DateTime.Now + Desfase(lectura)).ToString("yyyy-MM-dd", Inv) + ".csv";
+            ResultadoEstadisticas r = ResultadoDe(pestana);
+            if (r == null)
+            {
+                return "Estadisticas " + NombreDePestana(pestana) + " " + (DateTime.Now + Desfase(lectura)).ToString("yyyy-MM-dd", Inv) + ".csv";
+            }
+
+            return "Estadisticas " + NombreDePestana(pestana) + " " + r.Desde.ToString("yyyy-MM-dd", Inv) + " al " + r.Hasta.ToString("yyyy-MM-dd", Inv) + ".csv";
         }
 
         private static string NombreDePestana(PestanaEstadisticas pestana)
@@ -2463,22 +3609,25 @@ namespace DigBit
                     return "Docentes";
                 case PestanaEstadisticas.Laboratorios:
                     return "Laboratorios";
+                case PestanaEstadisticas.Graficas:
+                    return "Graficas";
                 default:
                     return "Equipos";
             }
         }
 
         /// <summary>
-        /// El texto del CSV de esa pestana, o null si aun no hay nada leido: el
-        /// membrete (sec. 8), una fila vacia y la tabla con todas sus columnas (las "X de
-        /// N" en dos columnas, numeros sin separador de miles y "-" como celda vacia).
-        /// Clases va en formato largo (una fila por clase y estudiante); Docentes lleva
-        /// al final sus clases dia por dia.
+        /// El texto del CSV de esa pestana, o null si aun no hay nada calculado para ella:
+        /// el membrete (sec. 8) con SUS filtros, una fila vacia y la tabla con todas sus
+        /// columnas (las "X de N" en dos columnas, numeros sin separador de miles y "-"
+        /// como celda vacia). Clases va en formato largo (una fila por clase y estudiante);
+        /// Docentes lleva al final sus clases dia por dia.
         /// </summary>
         internal string ComoCsv(PestanaEstadisticas pestana)
         {
-            // Mientras lee, las tablas estan vacias (resultado aun es el de antes).
-            if (resultado == null || lectura == null || leyendoBase)
+            // Mientras lee, las tablas estan vacias (lo calculado aun es lo de antes).
+            ResultadoEstadisticas r = ResultadoDe(pestana);
+            if (r == null || lectura == null || leyendoBase)
             {
                 return null;
             }
@@ -2486,16 +3635,20 @@ namespace DigBit
             string separador = HojaAsistencia.SeparadorDeListas();
             StringBuilder csv = new StringBuilder();
             Action<IEnumerable<string>> renglon = campos => csv.Append(string.Join(separador, campos.Select(c => HojaAsistencia.CampoCsv(c, separador)))).Append("\r\n");
-            ResultadoEstadisticas r = resultado;
             FiltroEstadisticas f = r.Filtro;
-            DateTime primero = EstadisticasDatos.PrimerDiaElegible(lectura.Hoy);
-            DateTime desde = f.Desde < primero ? primero : f.Desde;
-            DateTime hasta = f.Hasta > lectura.Hoy ? lectura.Hoy : f.Hasta;
+            // Los dias que de verdad cuentan (hasta hoy y con 400 como mucho).
+            DateTime desde = r.Desde;
+            DateTime hasta = r.Hasta;
 
             renglon(new[] { "Estadísticas de DigBit" });
             renglon(new[] { "Pestaña: " + NombreDePestana(pestana) });
-            renglon(new[] { "Periodo: del " + EstadisticasDatos.Fecha(desde) + " al " + EstadisticasDatos.Fecha(hasta) });
-            renglon(new[] { "Laboratorio: " + (f.Laboratorio == 0 ? "Todos los laboratorios" : NombreDeLaboratorio(f.Laboratorio)) });
+            renglon(new[] { "Periodo: " + EstadisticasDatos.NombreDelPeriodo(r) + " (del " + EstadisticasDatos.Fecha(desde) + " al " + EstadisticasDatos.Fecha(hasta) + ")" });
+            if (r.CicloCerrado)
+            {
+                renglon(new[] { "Nota: " + EstadisticasDatos.NotaDeCicloCerrado });
+            }
+
+            renglon(new[] { "Laboratorio: " + (f.Laboratorio == 0 ? "Todos los laboratorios" : NombreDeLaboratorio(f.Laboratorio, r)) });
             renglon(new[] { "Docente: " + (f.Docente == 0 ? "todo el personal docente" : TextoDeOpcion(r.OpcionesDocente, f.Docente)) });
             renglon(new[] { "Grupo: " + (f.Grupo == 0 ? "Todos los grupos" : TextoDeOpcion(r.OpcionesGrupo, f.Grupo)) });
             renglon(new[] { "Leído: " + lectura.AhoraServidor.ToString("dd/MM/yyyy HH:mm", Inv) + " (hora del servidor)" });
@@ -2509,32 +3662,83 @@ namespace DigBit
             switch (pestana)
             {
                 case PestanaEstadisticas.Estudiantes:
-                    CsvEstudiantes(renglon);
+                    CsvEstudiantes(r, renglon);
                     break;
                 case PestanaEstadisticas.Clases:
-                    CsvClases(renglon);
+                    CsvClases(r, renglon);
                     break;
                 case PestanaEstadisticas.Grupos:
                     CsvGrupos(renglon);
                     break;
                 case PestanaEstadisticas.Docentes:
-                    CsvDocentes(renglon, csv);
+                    CsvDocentes(r, renglon, csv);
                     break;
                 case PestanaEstadisticas.Laboratorios:
-                    CsvLaboratorios(renglon);
+                    CsvLaboratorios(r, renglon);
+                    break;
+                case PestanaEstadisticas.Graficas:
+                    CsvGraficas(r, renglon, csv);
                     break;
                 default:
-                    CsvEquipos(renglon);
+                    CsvEquipos(r, renglon);
                     break;
             }
 
             return csv.ToString();
         }
 
-        private string NombreDeLaboratorio(int id)
+        /// <summary>
+        /// Graficas: lo que solo esta ahi, sin nombres de personas (la persona responsable
+        /// tambien lo guarda): el uso del horario de cada laboratorio y cada semana (o mes)
+        /// con sus clases, horas y asistencia. Lo demas va en el CSV de su pestana.
+        /// </summary>
+        private void CsvGraficas(ResultadoEstadisticas r, Action<IEnumerable<string>> renglon, StringBuilder csv)
+        {
+            AgrupacionGraficas agrupacion = AgrupacionVista;
+            GraficasEstadisticas g = r.Graficas;
+            Func<double, string> horas = h => h.ToString("0.##", Inv);
+            renglon(new[] { "Uso de los laboratorios:" });
+            renglon(new[]
+            {
+                "Laboratorio", "Horas del horario", "Horas en que se dio clase", "Ocupación (%)", "Clases que se dieron", "Clases que contaban", "Sin registro",
+                "Canceladas", "Horas canceladas"
+            });
+            List<UsoDeLaboratorio> usos = g.Laboratorios.ToList();
+            if (usos.Count != 1)
+            {
+                usos.Add(g.Total);
+            }
+
+            foreach (UsoDeLaboratorio u in usos)
+            {
+                renglon(new[]
+                {
+                    u == g.Total && u.LaboratorioId == 0 ? "Total" : u.Laboratorio, horas(u.HorasDelHorario), horas(u.HorasUsadas), Pct(u.Ocupacion),
+                    N(u.SeDieron), N(u.QueContaban), N(u.SinRegistro), N(u.Canceladas), horas(u.HorasCanceladas)
+                });
+            }
+
+            csv.Append("\r\n");
+            renglon(new[] { agrupacion == AgrupacionGraficas.Mes ? "Por mes:" : "Por semana (de lunes a domingo):" });
+            renglon(new[]
+            {
+                "Desde", "Hasta", "Horas del horario", "Horas en que se dio clase", "Ocupación (%)", "Clases que se dieron", "Clases que contaban", "Con bitácoras",
+                "Con asistencias dadas", "Sin registro", "Canceladas", "Entraron", "Veces que contaban", "Asistencia (%)"
+            });
+            foreach (TramoDelPeriodo t in g.Tramos(agrupacion))
+            {
+                renglon(new[]
+                {
+                    FechaCsv(t.Desde), FechaCsv(t.Hasta), horas(t.HorasDelHorario), horas(t.HorasUsadas), Pct(t.Ocupacion), N(t.SeDieron), N(t.QueContaban),
+                    N(t.ConBitacoras), N(t.ConDadas), N(t.SinRegistro), N(t.Canceladas), N(t.Entraron), N(t.Veces), Pct(t.Asistencia)
+                });
+            }
+        }
+
+        private string NombreDeLaboratorio(int id, ResultadoEstadisticas r)
         {
             LaboratorioLeido laboratorio;
-            return lectura.Laboratorios.TryGetValue(id, out laboratorio) ? laboratorio.Nombre : TextoDeOpcion(resultado.OpcionesLaboratorio, id);
+            return lectura.Laboratorios.TryGetValue(id, out laboratorio) ? laboratorio.Nombre : TextoDeOpcion(r.OpcionesLaboratorio, id);
         }
 
         private static string TextoDeOpcion(IEnumerable<OpcionCombo> opciones, int id)
@@ -2563,10 +3767,10 @@ namespace DigBit
             return dia.HasValue ? dia.Value.ToString("dd/MM/yyyy", Inv) : "";
         }
 
-        private void CsvEstudiantes(Action<IEnumerable<string>> renglon)
+        private void CsvEstudiantes(ResultadoEstadisticas r, Action<IEnumerable<string>> renglon)
         {
             bool conRetiro = lectura.Asistencia.ConRetiro;
-            bool conDadas = resultado.ConDadas;
+            bool conDadas = r.ConDadas;
             List<string> titulos = new List<string> { "Matrícula", "Estudiante", "Cuenta", "Grupo", "Clases", "Entró", "Veces que contaban", "Asistencia (%)", "Faltas", "Clases bajo el 80 %" };
             if (conRetiro)
             {
@@ -2602,15 +3806,15 @@ namespace DigBit
             }
         }
 
-        private void CsvClases(Action<IEnumerable<string>> renglon)
+        private void CsvClases(ResultadoEstadisticas r, Action<IEnumerable<string>> renglon)
         {
             // Formato largo (RF141, listo para tabla dinamica): una fila por clase y estudiante con dias que cuentan.
-            renglon(new[] { "Materia", "Grupo", "Docente", "Matrícula", "Estudiante", "Entró", "Veces que contaban", "Asistencia (%)", resultado.TituloDerecho });
+            renglon(new[] { "Materia", "Grupo", "Docente", "Matrícula", "Estudiante", "Entró", "Veces que contaban", "Asistencia (%)", r.TituloDerecho });
             foreach (FilaClase c in tClases.Visibles)
             {
                 foreach (ParDeAsistencia p in c.Lista.Where(p => p.Veces > 0))
                 {
-                    renglon(new[] { c.Materia, c.Grupo, c.Docente, p.Matricula, p.Nombre, N(p.Entro), N(p.Veces), Pct(p.Porcentaje), p.TextoDerecho(resultado.CicloEntero) });
+                    renglon(new[] { c.Materia, c.Grupo, c.Docente, p.Matricula, p.Nombre, N(p.Entro), N(p.Veces), Pct(p.Porcentaje), p.TextoDerecho(r.CicloEntero) });
                 }
             }
         }
@@ -2633,10 +3837,10 @@ namespace DigBit
             }
         }
 
-        private void CsvDocentes(Action<IEnumerable<string>> renglon, StringBuilder csv)
+        private void CsvDocentes(ResultadoEstadisticas r, Action<IEnumerable<string>> renglon, StringBuilder csv)
         {
-            bool conDadas = resultado.ConDadas;
-            bool conReportes = resultado.ConReportesDocentes;
+            bool conDadas = r.ConDadas;
+            bool conReportes = r.ConReportesDocentes;
             List<string> titulos = new List<string> { "Docente", "Materias", "Sus materias", "Clases que se dieron", "Clases que contaban", "Sin registro", "Canceladas", "Clases con bitácoras" };
             if (conDadas)
             {
@@ -2690,10 +3894,10 @@ namespace DigBit
             }
         }
 
-        private void CsvLaboratorios(Action<IEnumerable<string>> renglon)
+        private void CsvLaboratorios(ResultadoEstadisticas r, Action<IEnumerable<string>> renglon)
         {
-            bool conReportes = resultado.ConReportesDocentes;
-            bool conAvisos = resultado.ConAvisos;
+            bool conReportes = r.ConReportesDocentes;
+            bool conAvisos = r.ConAvisos;
             List<string> titulos = new List<string>
             {
                 "Laboratorio", "Registra sus clases desde", "Clases que se dieron", "Clases que contaban", "Sin registro", "Clases con bitácoras",
@@ -2734,10 +3938,10 @@ namespace DigBit
             }
         }
 
-        private void CsvEquipos(Action<IEnumerable<string>> renglon)
+        private void CsvEquipos(ResultadoEstadisticas r, Action<IEnumerable<string>> renglon)
         {
-            bool conReportes = resultado.ConReportesDocentes;
-            bool conAvisos = resultado.ConAvisos;
+            bool conReportes = r.ConReportesDocentes;
+            bool conAvisos = r.ConAvisos;
             List<string> titulos = new List<string> { "Laboratorio", "Equipo", "Fallas reportadas", "Falló en (sesiones)", "Sesiones en que se usó", "Hardware", "Software", "Red" };
             if (conReportes)
             {
@@ -2832,7 +4036,7 @@ namespace DigBit
         /// abierto (aunque esas ventanas ya se cerraran); lo copiado de una caja de
         /// texto ya cerrada se queda sin dueno y no se toca (solo es lo que se tecleo).
         /// </summary>
-        private static void VaciarPortapapelesDeDigBit()
+        internal static void VaciarPortapapelesDeDigBit()
         {
             try
             {
@@ -2889,24 +4093,24 @@ namespace DigBit
         // Ayudantes de texto
         // =====================================================================
 
-        private static string Guion(string texto)
+        internal static string Guion(string texto)
         {
             return string.IsNullOrWhiteSpace(texto) ? EstadisticasDatos.SinDato : texto;
         }
 
         /// <summary>Para ordenar: null (al final) si esta vacio.</summary>
-        private static IComparable Vacio(string texto)
+        internal static IComparable Vacio(string texto)
         {
             return string.IsNullOrWhiteSpace(texto) ? null : texto;
         }
 
         /// <summary>X / N para ordenar, o null con N = 0 (al final).</summary>
-        private static IComparable Fraccion(int x, int n)
+        internal static IComparable Fraccion(int x, int n)
         {
             return n <= 0 ? null : (IComparable)((double)x / n);
         }
 
-        private static string Unir(params string[] partes)
+        internal static string Unir(params string[] partes)
         {
             List<string> conTexto = partes.Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
             return conTexto.Count == 0 ? null : string.Join("\n", conTexto);
@@ -2917,13 +4121,14 @@ namespace DigBit
         // =====================================================================
 
         /// <summary>Una opcion del combo Periodo.</summary>
-        private sealed class OpcionPeriodo
+        internal sealed class OpcionPeriodo
         {
-            public TipoPeriodo Tipo;
-            public DateTime Desde;
-            public DateTime Hasta;
+            /// <summary>Lo que pide (null en "Elegir fechas...").</summary>
+            public PeriodoElegido Periodo;
             /// <summary>"Elegir fechas...": abre el dialogo.</summary>
             public bool ElegirFechas;
+            /// <summary>Abre un bloque (la primera plantilla aplicada y lo que sigue a la ultima): la lista abierta pinta una raya encima.</summary>
+            public bool AbreBloque;
             public string Texto = "";
 
             public override string ToString()
@@ -2932,7 +4137,7 @@ namespace DigBit
             }
         }
 
-        /// <summary>Lo de cada pestana: su linea de arriba, su buscador y su tabla principal.</summary>
+        /// <summary>Lo de cada pestana: sus filtros, su linea de arriba, su buscador, su tabla principal y todas sus tablas.</summary>
         private sealed class Pagina
         {
             public PestanaEstadisticas Cual;
@@ -2942,6 +4147,9 @@ namespace DigBit
             public TextBox Buscador;
             public Timer Espera;
             public ITablaDisposicion TablaBase;
+            public readonly FiltroDeApartado Filtro = new FiltroDeApartado();
+            /// <summary>Las que se llenan con lo calculado para esta pestana (la principal y su detalle).</summary>
+            public readonly List<ITablaDisposicion> Tablas = new List<ITablaDisposicion>();
 
             public ITablaBuscable Tabla
             {
@@ -2949,14 +4157,154 @@ namespace DigBit
                 set { TablaBase = value; }
             }
 
-            public void Agregar(Control control)
+            /// <summary>Un control de la pestana, con su lugar en el orden de Tab (sus listas van primero).</summary>
+            public void Agregar(Control control, int orden)
             {
+                control.TabIndex = orden;
                 Tab.Controls.Add(control);
             }
         }
 
+        /// <summary>Lo que puede filtrar cada lista de una pestana.</summary>
+        private enum TipoDeFiltro
+        {
+            Laboratorio,
+            Docente,
+            Grupo
+        }
+
+        /// <summary>Una lista de los filtros de una pestana, con su etiqueta y, si va entre flechas, sus flechas.</summary>
+        private sealed class ListaDeFiltro
+        {
+            public TipoDeFiltro Tipo;
+            public Label Etiqueta;
+            public ComboBox Combo;
+            public FlechasDeLista Flechas;
+        }
+
+        /// <summary>
+        /// Los filtros de una pestana (2026-10-31, "cada apartado, los suyos"): sus listas, lo
+        /// que pide (0 = "Todos"; lo que no tiene, siempre 0), lo calculado que ensena y lo que
+        /// aun calcula. Pedido cuenta lo pedido: un calculo que llega con otro numero ya no se pinta.
+        /// </summary>
+        private sealed class FiltroDeApartado
+        {
+            public readonly List<ListaDeFiltro> Listas = new List<ListaDeFiltro>();
+            public int Laboratorio;
+            public int Docente;
+            public int Grupo;
+            /// <summary>Lo que ensenan sus tablas (de esta lectura y este periodo), o null.</summary>
+            public ResultadoEstadisticas Resultado;
+            /// <summary>Su calculo fallo (lo que pintan sus tablas, en rojo), o null.</summary>
+            public string Error;
+            public bool Calculando;
+            public ClaveDeFiltro EnCurso;
+            public int Pedido;
+
+            /// <summary>El laboratorio entre flechas (Equipos y Graficas), o null.</summary>
+            public FlechasDeLista Flechas
+            {
+                get
+                {
+                    ListaDeFiltro lista = Listas.FirstOrDefault(l => l.Flechas != null);
+                    return lista == null ? null : lista.Flechas;
+                }
+            }
+
+            public ClaveDeFiltro Clave
+            {
+                get { return new ClaveDeFiltro(Laboratorio, Docente, Grupo); }
+            }
+
+            /// <summary>Lo que ensena es lo que pide (Resolver ya volvio a "Todos" lo que no tenia clases).</summary>
+            public bool AlDia
+            {
+                get
+                {
+                    return Resultado != null && Resultado.Filtro.Laboratorio == Laboratorio && Resultado.Filtro.Docente == Docente
+                        && Resultado.Filtro.Grupo == Grupo;
+                }
+            }
+
+            public bool Tiene(TipoDeFiltro tipo)
+            {
+                return Listas.Any(l => l.Tipo == tipo);
+            }
+
+            public int Id(TipoDeFiltro tipo)
+            {
+                return tipo == TipoDeFiltro.Laboratorio ? Laboratorio : tipo == TipoDeFiltro.Docente ? Docente : Grupo;
+            }
+
+            public void Poner(TipoDeFiltro tipo, int id)
+            {
+                switch (tipo)
+                {
+                    case TipoDeFiltro.Laboratorio:
+                        Laboratorio = id;
+                        break;
+                    case TipoDeFiltro.Docente:
+                        Docente = id;
+                        break;
+                    default:
+                        Grupo = id;
+                        break;
+                }
+            }
+        }
+
+        /// <summary>Laboratorio, docente y grupo pedidos (0 = "Todos"): la clave de lo calculado.</summary>
+        private struct ClaveDeFiltro : IEquatable<ClaveDeFiltro>
+        {
+            public static readonly ClaveDeFiltro General = new ClaveDeFiltro(0, 0, 0);
+
+            public readonly int Laboratorio;
+            public readonly int Docente;
+            public readonly int Grupo;
+
+            public ClaveDeFiltro(int laboratorio, int docente, int grupo)
+            {
+                Laboratorio = laboratorio;
+                Docente = docente;
+                Grupo = grupo;
+            }
+
+            public bool EsGeneral
+            {
+                get { return Laboratorio == 0 && Docente == 0 && Grupo == 0; }
+            }
+
+            public int Id(TipoDeFiltro tipo)
+            {
+                return tipo == TipoDeFiltro.Laboratorio ? Laboratorio : tipo == TipoDeFiltro.Docente ? Docente : Grupo;
+            }
+
+            public bool Equals(ClaveDeFiltro otra)
+            {
+                return Laboratorio == otra.Laboratorio && Docente == otra.Docente && Grupo == otra.Grupo;
+            }
+
+            public override bool Equals(object obj)
+            {
+                return obj is ClaveDeFiltro && Equals((ClaveDeFiltro)obj);
+            }
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    return (Laboratorio * 397 ^ Docente) * 397 ^ Grupo;
+                }
+            }
+
+            public override string ToString()
+            {
+                return Laboratorio.ToString(Inv) + "/" + Docente.ToString(Inv) + "/" + Grupo.ToString(Inv);
+            }
+        }
+
         /// <summary>Lo que la ventana hace igual con todas las tablas, sin importar su tipo de fila.</summary>
-        private interface ITablaDisposicion
+        internal interface ITablaDisposicion
         {
             /// <summary>Las columnas de esa disposicion y vuelve a llenar (la ayuda de cada fila cambia con ella).</summary>
             void Disposicion(bool amplia);
@@ -2967,7 +4315,7 @@ namespace DigBit
             void Vaciar();
         }
 
-        private interface ITablaBuscable : ITablaDisposicion
+        internal interface ITablaBuscable : ITablaDisposicion
         {
             DataGridView Grid { get; }
 
@@ -2975,7 +4323,7 @@ namespace DigBit
         }
 
         /// <summary>Un recuadro de detalle (a la derecha o debajo de su tabla) con borde suave y su texto cuando no hay nada elegido.</summary>
-        private sealed class Ficha : Panel
+        internal sealed class Ficha : Panel
         {
             private readonly Color borde;
             private bool conDatos;
@@ -3033,7 +4381,7 @@ namespace DigBit
         }
 
         /// <summary>Un dato con su rotulo en mayusculas encima ("MATRICULA" / "2026900001"), como la ficha del docente.</summary>
-        private sealed class Rotulo
+        internal sealed class Rotulo
         {
             private readonly Label titulo;
             private readonly Label valor;
@@ -3068,7 +4416,7 @@ namespace DigBit
         }
 
         /// <summary>Una columna de una tabla de Estadisticas: su texto, como se ordena, su barra y sus colores.</summary>
-        private sealed class Columna<T> where T : class
+        internal sealed class Columna<T> where T : class
         {
             public string Nombre = "";
             public string Titulo = "";
@@ -3113,7 +4461,7 @@ namespace DigBit
         /// ayuda de cada fila y el texto que se pinta cuando no hay filas. Conserva la
         /// fila elegida al volver a llenarse.
         /// </summary>
-        private sealed class Tabla<T> : ITablaBuscable where T : class
+        internal sealed class Tabla<T> : ITablaBuscable where T : class
         {
             private static readonly PropertyInfo DobleBufer = typeof(Control).GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic);
             private static readonly StringComparer PorNombre = StringComparer.Create(CultureInfo.GetCultureInfo("es-MX"), true);
@@ -3153,10 +4501,12 @@ namespace DigBit
                 this.negrita = negrita;
                 grid = EstiloHorarios.CrearGrid(Point.Empty, new Size(200, 120));
                 grid.AccessibleName = nombre;
-                grid.RowTemplate.Height = 26;
+                grid.RowTemplate.Height = 34;
                 // Un titulo largo ("Fallas reportadas") pasa a dos lineas en vez de cortarse, como PantallaAdmin.CrearLista.
                 grid.ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.True;
                 grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+                // Con margen arriba y abajo, como PantallaAdmin.CrearLista.
+                grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(8, 7, 8, 7);
                 // El titulo de la columna de la celda elegida no se pinta con el azul de Windows
                 // (con .NET 4.7.2 la tabla lo marca como elegido): siempre con su fondo y su verde.
                 grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = grid.ColumnHeadersDefaultCellStyle.BackColor;
@@ -3334,6 +4684,30 @@ namespace DigBit
                 orden = c;
                 descendente = desc;
                 Mostrar();
+            }
+
+            /// <summary>
+            /// Elige la primera fila que cumple eso (como si se pulsara: no se quita al verse la
+            /// tabla) y la lleva a la vista; false si no hay ninguna. Lo usa la ficha del docente.
+            /// </summary>
+            public bool ElegirFila(Func<T, bool> cual)
+            {
+                DataGridViewRow fila = grid.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Tag is T && cual((T)r.Tag));
+                if (fila == null)
+                {
+                    return false;
+                }
+
+                hayEleccion = true;
+                DataGridViewColumn primera = grid.Columns.GetFirstColumn(DataGridViewElementStates.Visible);
+                if (primera != null)
+                {
+                    grid.CurrentCell = fila.Cells[primera.Index];
+                }
+
+                grid.ClearSelection();
+                fila.Selected = true;
+                return true;
             }
 
             /// <summary>El orden en que llegan (el de la especificacion para cada pestana).</summary>
@@ -3537,6 +4911,9 @@ namespace DigBit
             {
                 DataGridViewRow fila = new DataGridViewRow();
                 fila.CreateCells(grid);
+                // Una fila hecha a mano no toma el alto de RowTemplate: sin esto
+                // salia de 22 y la barra se encimaba en el texto.
+                fila.Height = grid.RowTemplate.Height;
                 string ayuda = AyudaDeFila == null ? null : AyudaDeFila(f, amplia);
                 for (int i = 0; i < columnas.Count; i++)
                 {
@@ -3733,49 +5110,68 @@ namespace DigBit
             }
         }
 
-        /// <summary>"Elegir fechas" (sec. 6.4): del y al, de los ultimos 400 dias hasta hoy (fecha del servidor).</summary>
-        private sealed class DialogoFechas : Form
+        /// <summary>
+        /// "Elegir fechas" (sec. 1.5): del y al, cualquier dia hasta hoy (fecha del servidor),
+        /// con como mucho 400 dias entre los dos, y "Hasta hoy" (el ultimo dia avanza solo).
+        /// </summary>
+        internal sealed class DialogoFechas : Form
         {
+            private static readonly DateTime PrimerDia = new DateTime(2000, 1, 1);
             private readonly DateTimePicker dtpDesde;
             private readonly DateTimePicker dtpHasta;
+            private readonly CheckBox chkHastaHoy;
             private readonly Label lblError;
             private readonly DateTime hoy;
             private readonly DrawingFont fuenteNota = new DrawingFont("Century Gothic", 9F);
+            private readonly DrawingFont fuenteCasilla = new DrawingFont("Century Gothic", 9.5F);
 
-            public DialogoFechas(DateTime hoy, DateTime desde, DateTime hasta)
+            public DialogoFechas(DateTime hoy, DateTime desde, DateTime hasta, bool hastaHoy)
             {
                 this.hoy = hoy.Date;
-                EstiloHorarios.PrepararDialogo(this, "Elegir fechas", new Size(520, 252));
+                EstiloHorarios.PrepararDialogo(this, "Elegir fechas", new Size(520, 300));
                 Controls.Add(EstiloAdmin.TituloDialogo("Elegir fechas", 472));
-                DateTime primero = EstadisticasDatos.PrimerDiaElegible(this.hoy);
                 Controls.Add(new Label
                 {
                     AutoSize = false,
                     Font = fuenteNota,
                     ForeColor = TextoGris,
                     Location = new Point(24, 50),
-                    Size = new Size(472, 36),
-                    Text = "Las dos fechas cuentan. Puedes elegir de los últimos 400 días: desde el " + EstadisticasDatos.Fecha(primero) + " hasta hoy."
+                    Size = new Size(472, 54),
+                    Text = "Las dos fechas cuentan. Puedes elegir cualquier día hasta hoy, con como mucho 400 días entre las dos. "
+                        + "Para un ciclo completo, con el derecho a evaluación (80 %), elígelo en Periodo."
                 });
 
-                Controls.Add(EstiloHorarios.CrearEtiqueta("Del", new Point(24, 96)));
-                dtpDesde = EstiloHorarios.CrearFechaConDia(this, new Point(24, 119));
-                Controls.Add(EstiloHorarios.CrearEtiqueta("al", new Point(272, 96)));
-                dtpHasta = EstiloHorarios.CrearFechaConDia(this, new Point(272, 119));
+                Controls.Add(EstiloHorarios.CrearEtiqueta("Del", new Point(24, 112)));
+                dtpDesde = EstiloHorarios.CrearFechaConDia(this, new Point(24, 135));
+                Controls.Add(EstiloHorarios.CrearEtiqueta("al", new Point(272, 112)));
+                dtpHasta = EstiloHorarios.CrearFechaConDia(this, new Point(272, 135));
                 foreach (DateTimePicker fecha in new[] { dtpDesde, dtpHasta })
                 {
-                    fecha.MinDate = primero;
+                    // Primero el minimo y despues el maximo: el valor que traen se ajusta a los dos.
+                    fecha.MinDate = PrimerDia;
                     fecha.MaxDate = this.hoy;
                 }
 
-                dtpDesde.Value = Recortar(desde, primero);
-                dtpHasta.Value = Recortar(hasta, primero);
+                dtpDesde.Value = Recortar(desde);
+                dtpHasta.Value = Recortar(hasta);
                 dtpDesde.AccessibleName = "Del";
                 dtpHasta.AccessibleName = "al";
-                lblError = EstiloAdmin.LineaError(new Point(24, 156), 472, 22);
+                chkHastaHoy = new CheckBox
+                {
+                    AutoSize = true,
+                    Checked = hastaHoy,
+                    Font = fuenteCasilla,
+                    Location = new Point(272, 170),
+                    Text = "Hasta hoy (avanza solo cada día)"
+                };
+                Controls.Add(chkHastaHoy);
+                // Dos renglones: el error de los 400 dias (el mismo texto de Faltas) no cabe en uno.
+                lblError = EstiloAdmin.LineaError(new Point(24, 202), 472, 40);
                 Controls.Add(lblError);
                 dtpDesde.ValueChanged += (s, e) => lblError.Text = "";
                 dtpHasta.ValueChanged += (s, e) => lblError.Text = "";
+                chkHastaHoy.CheckedChanged += (s, e) => PonerHastaHoy();
+                PonerHastaHoy();
                 EstiloAdmin.BotonesDialogo(this, "Aceptar", Aceptar);
                 ActiveControl = dtpDesde;
             }
@@ -3785,14 +5181,32 @@ namespace DigBit
                 get { return dtpDesde.Value.Date; }
             }
 
+            /// <summary>El ultimo dia: hoy con "Hasta hoy".</summary>
             public DateTime Hasta
             {
-                get { return dtpHasta.Value.Date; }
+                get { return chkHastaHoy.Checked ? hoy : dtpHasta.Value.Date; }
             }
 
-            private DateTime Recortar(DateTime dia, DateTime primero)
+            public bool HastaHoy
             {
-                return dia.Date < primero ? primero : dia.Date > hoy ? hoy : dia.Date;
+                get { return chkHastaHoy.Checked; }
+            }
+
+            /// <summary>Con "Hasta hoy", "al" se apaga y pasa a hoy.</summary>
+            private void PonerHastaHoy()
+            {
+                if (chkHastaHoy.Checked)
+                {
+                    dtpHasta.Value = hoy;
+                }
+
+                dtpHasta.Enabled = !chkHastaHoy.Checked;
+                lblError.Text = "";
+            }
+
+            private DateTime Recortar(DateTime dia)
+            {
+                return dia.Date < PrimerDia ? PrimerDia : dia.Date > hoy ? hoy : dia.Date;
             }
 
             private void Aceptar()
@@ -3813,6 +5227,7 @@ namespace DigBit
                 if (disposing)
                 {
                     fuenteNota.Dispose();
+                    fuenteCasilla.Dispose();
                 }
             }
         }

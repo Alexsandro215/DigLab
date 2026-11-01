@@ -293,6 +293,20 @@ UNION ALL SELECT
        'falta (la 22 crea la tabla; no toca nada mas: se puede aplicar en horario de clase; antes, actualiza TODOS los equipos; con root, ademas da permiso a digbit_equipo y digbit_consulta)'),
     'info'
 UNION ALL SELECT
+    'Docentes con el SIIA (usuarios.siia_enlazado_en y siia_solicitudes)',
+    IF((SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'siia_solicitudes') > 0,
+       'ya esta',
+       'falta (la 24 anade una columna vacia a usuarios y crea una tabla; no cambia nada hasta encenderlo en Ajustes; con root, ademas da permiso a digbit_equipo y digbit_consulta)'),
+    'info'
+UNION ALL SELECT
+    'Horas que faltan por asignar (horas_por_asignar)',
+    IF((SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'horas_por_asignar') > 0,
+       'ya esta',
+       'falta (la 25 crea la tabla; no toca nada mas: se puede aplicar en horario de clase; con root, ademas deja leerla a digbit_consulta)'),
+    'info'
+UNION ALL SELECT
     'Contrasenas: PBKDF2 / MD5 / total',
     CONCAT(IFNULL(SUM(password LIKE 'pbkdf2-%'), 0), ' / ',
            IFNULL(SUM(CHAR_LENGTH(password) = 32 AND password REGEXP '^[0-9a-f]{32}$'), 0), ' / ',

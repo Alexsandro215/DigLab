@@ -296,6 +296,8 @@ namespace DigBit
         private List<Tarjeta> tarjetas = new List<Tarjeta>();
         private string firmaPintada;
         private bool amplio;
+        // La ve otra persona (la ficha del docente): "Su docente le dio..." en vez de "Le diste...".
+        private bool enTerceraPersona;
         private int? marcada;
         // La tarjeta bajo el raton y la que tiene el foco del teclado (su Numero; 0, ninguna).
         private int encima;
@@ -316,6 +318,13 @@ namespace DigBit
             BackColor = Color.White;
             AccessibleRole = AccessibleRole.Grouping;
             AccessibleName = "Leyendo la lista...";
+        }
+
+        /// <summary>La ve otra persona y no su docente (la ficha del docente): "Su docente le dio..." en vez de "Le diste...". Antes de Mostrar.</summary>
+        public bool EnTerceraPersona
+        {
+            get { return enTerceraPersona; }
+            set { enTerceraPersona = value; }
         }
 
         /// <summary>Tarjetas de 108 px (a partir de 1600 x 860) o compactas de 84; lo decide la ventana en cada Resize.</summary>
@@ -564,7 +573,7 @@ namespace DigBit
             }
             else if (resumen.Alumnos.Count == 0)
             {
-                lista.Add(ArmarSinAlumnos(Rectangle.FromLTRB(Hueco(0).Left, 0, Hueco(2).Right, Height), resumen.Lista != null && resumen.Lista.ConDadas));
+                lista.Add(ArmarSinAlumnos(Rectangle.FromLTRB(Hueco(0).Left, 0, Hueco(2).Right, Height), resumen.Lista != null && resumen.Lista.ConDadas, enTerceraPersona));
                 lista.Add(ArmarHoy(Hueco(3)));
             }
             else
@@ -597,7 +606,7 @@ namespace DigBit
         }
 
         /// <summary>Con 0 alumnos, T1, T2 y T3 juntas: la lista aun no se arma (con db/22, tambien con las asistencias que de el profesor).</summary>
-        private static Tarjeta ArmarSinAlumnos(Rectangle rect, bool conDadas)
+        private static Tarjeta ArmarSinAlumnos(Rectangle rect, bool conDadas, bool tercera)
         {
             Tarjeta t = new Tarjeta(1, rect)
             {
@@ -607,12 +616,12 @@ namespace DigBit
                 ColorCifra = GrisSinAlumnos,
                 // Con db/22, mas corto en el pie para que quepa a 1366 (747 px de unos 765); entero en la ayuda.
                 Pie1 = conDadas
-                    ? "Se arma sola cuando registren su bitácora o les des la asistencia; quien llegue después entra con falta en las clases anteriores."
+                    ? "Se arma sola cuando registren su bitácora o " + (tercera ? "su docente les dé" : "les des") + " la asistencia; quien llegue después entra con falta en las clases anteriores."
                     : "Se arma sola con la primera clase en que registren su bitácora; quien llegue después entra con falta en las clases anteriores.",
                 Accesible = "Lista de asistencia: aún sin estudiantes"
             };
             t.Ayuda = conDadas
-                ? "Se arma sola con la primera clase en que registren su bitácora o les des la asistencia; quien llegue después entra con falta en las clases anteriores."
+                ? "Se arma sola con la primera clase en que registren su bitácora o " + (tercera ? "su docente les dé" : "les des") + " la asistencia; quien llegue después entra con falta en las clases anteriores."
                 : t.Pie1;
             return t;
         }
@@ -665,7 +674,7 @@ namespace DigBit
 
             if (dadas > 0)
             {
-                renglones.Add("Asistencias que diste sin bitácora en el periodo: " + dadas + ".");
+                renglones.Add((enTerceraPersona ? "Asistencias que dio su docente sin bitácora en el periodo: " : "Asistencias que diste sin bitácora en el periodo: ") + dadas + ".");
             }
 
             // Compacto: el segundo renglon del pie pasa a la ayuda.
@@ -851,7 +860,8 @@ namespace DigBit
                     estado = (antesDelPrimero ? "empieza" : "sigue") + " a las " + cuando;
                 }
 
-                ayudas.Add(horario ?? "Esta clase ya no está en tu horario de hoy, pero su columna sigue en la lista mientras dura.");
+                ayudas.Add(horario ?? (enTerceraPersona ? "Esta clase ya no está en su horario de hoy, pero su columna sigue en la lista mientras dura."
+                    : "Esta clase ya no está en tu horario de hoy, pero su columna sigue en la lista mientras dura."));
                 if (!amplio)
                 {
                     ayudas.Add(t.Pie2);
@@ -859,9 +869,12 @@ namespace DigBit
 
                 ayudas.Add(cuentas);
                 // Con db/22 y un bloque en curso, el profesor puede darla (la hoja lo ofrece igual: PuedeCambiar).
+                // En tercera persona (la ficha del docente, solo para ver) la hoja no deja: se dice quien puede.
                 if (enBloque != null && r.Lista != null && r.Lista.ConDadas && hoy.Pendientes > 0)
                 {
-                    ayudas.Add("Si alguno está en el salón y su equipo no pudo registrar, pulsa su casilla de hoy para darle la asistencia.");
+                    ayudas.Add(enTerceraPersona
+                        ? "Si alguno está en el salón y su equipo no pudo registrar, su docente puede darle la asistencia desde Mis grupos."
+                        : "Si alguno está en el salón y su equipo no pudo registrar, pulsa su casilla de hoy para darle la asistencia.");
                 }
 
                 if (t.SePulsa)
@@ -1010,7 +1023,8 @@ namespace DigBit
             t.SePulsa = t.Ids.Count > 0;
             return "Con asistencia: " + hoy.Asistieron + ". Aún no registran (P): " + pendientes + "."
                 + (hoy.Retiradas > 0 ? " Registraron sin estar en el salón: " + hoy.Retiradas + ", se les quitó la asistencia." : "")
-                + (hoy.Dadas > 0 ? (hoy.Dadas == 1 ? " A 1 le diste la asistencia (sin bitácora)." : " A " + hoy.Dadas + " les diste la asistencia (sin bitácora).") : "");
+                + (hoy.Dadas > 0 ? (enTerceraPersona ? (hoy.Dadas == 1 ? " A 1 se la dio su docente (sin bitácora)." : " A " + hoy.Dadas + " se la dio su docente (sin bitácora).")
+                    : hoy.Dadas == 1 ? " A 1 le diste la asistencia (sin bitácora)." : " A " + hoy.Dadas + " les diste la asistencia (sin bitácora).") : "");
         }
 
         /// <summary>Una clase que ya termino (la de hoy o la ultima): cuantos asistieron, faltaron y no estaban en el salon.</summary>
@@ -1047,7 +1061,7 @@ namespace DigBit
 
             return "Con asistencia: " + dia.Asistieron + ". Faltaron: " + faltaron + "."
                 + (dia.Retiradas > 0 ? " Registraron sin estar en el salón: " + dia.Retiradas + ", se les quitó la asistencia." : "")
-                + (dia.Dadas > 0 ? " Le diste la asistencia a " + dia.Dadas + " (sin bitácora)." : "");
+                + (dia.Dadas > 0 ? (enTerceraPersona ? " Su docente le dio la asistencia a " : " Le diste la asistencia a ") + dia.Dadas + " (sin bitácora)." : "");
         }
 
         private static void PonerPastilla(Tarjeta t, string texto, Color fondo, Color letra)

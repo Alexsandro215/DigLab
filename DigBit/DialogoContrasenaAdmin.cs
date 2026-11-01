@@ -31,7 +31,13 @@ namespace DigBit
         // Lo que se anota en el log: la pregunta, o el texto sin datos personales que se dio.
         private readonly string accionParaElLog;
         private readonly TextBox txtContrasena;
+        // Solo para el docente que entro con el SIIA (su NIP); null para los demas.
+        private readonly TextBox txtNip;
+        private readonly bool conNip;
         private readonly Label lblError;
+        // Mientras lblError dice la regla de los intentos (en gris): su letra y su color de error.
+        private DrawingFont fuenteError;
+        private Color colorError;
 
         /// <summary>True si escribio bien su contrasena.</summary>
         /// <param name="accion">La pregunta: "Cambiar como se entra a las clases?"</param>
@@ -92,47 +98,65 @@ namespace DigBit
             this.accionParaElLog = accionParaElLog;
             // La cuenta que vale la dice quien pregunta, no la sesion (ver Confirmar).
             this.tipoEsperado = tipoEsperado;
+            // La pregunta, como el titulo de los demas dialogos (EstiloAdmin.TituloDialogo),
+            // en dos renglones si no cabe en uno.
+            Label titulo = EstiloAdmin.TituloDialogo(accion ?? "", Ancho - 48);
+            titulo.UseMnemonic = false;
+            titulo.Height = Math.Max(titulo.Height, Math.Min(2 * titulo.Font.Height + 4,
+                PiezasConfiguracion.AltoDe(accion ?? "", titulo.Font, Ancho - 48) + 4));
             DrawingFont fuenteDetalle = new DrawingFont("Century Gothic", 10F);
+            int yDetalle = titulo.Bottom + 8;
             int altoDetalle = Math.Min(160, TextRenderer.MeasureText(detalle ?? "", fuenteDetalle, new Size(Ancho - 48, int.MaxValue),
                 TextFormatFlags.WordBreak).Height + 4);
-            int y = 72 + altoDetalle + 14;
+            int y = yDetalle + altoDetalle + 14;
             // El error, en cuatro lineas: el de un fallo de conexion o de permisos dice
             // la causa y que hacer, y el mas largo (AvisoDeFalloAdmin) ocupa cuatro.
             EstiloHorarios.PrepararDialogo(this, "Confirma que eres tú", new Size(Ancho, y + 24 + 36 + 8 + 72 + 72));
             TopMost = Kiosco.Activo;
 
-            Controls.Add(new Label
-            {
-                AutoSize = false,
-                Font = new DrawingFont("Century Gothic", 12F, FontStyle.Bold),
-                ForeColor = Color.FromArgb(30, 30, 30),
-                Location = new Point(24, 20),
-                Size = new Size(Ancho - 48, 48),
-                Text = accion
-            });
+            Controls.Add(titulo);
             Controls.Add(new Label
             {
                 AutoSize = false,
                 AutoEllipsis = true,
                 Font = fuenteDetalle,
                 ForeColor = Color.FromArgb(70, 70, 70),
-                Location = new Point(24, 72),
+                Location = new Point(24, yDetalle),
                 Size = new Size(Ancho - 48, altoDetalle),
                 Text = detalle ?? ""
             });
 
-            Label pedir = EstiloHorarios.CrearEtiqueta("Por seguridad, escribe la contraseña de " + usuario + ":", new Point(24, y));
+            // El docente que entro con el SIIA confirma con su contrasena y su NIP del
+            // SIIA: lo que se guarda es la huella de los dos juntos (InicioConSiia.Combinar).
+            conNip = tipoEsperado == TiposUsuario.Profesor && Datos_User.ContrasenaDelSiia;
+            Label pedir = EstiloHorarios.CrearEtiqueta(conNip ? "Por seguridad, escribe tu contraseña y tu NIP del SIIA:"
+                : "Por seguridad, escribe la contraseña de " + usuario + ":", new Point(24, y));
             Controls.Add(pedir);
             txtContrasena = EstiloHorarios.CrearTexto(new Point(24, y + 24), 300);
             txtContrasena.UseSystemPasswordChar = true;
             txtContrasena.MaxLength = 200;
             Controls.Add(txtContrasena);
+            if (conNip)
+            {
+                txtNip = CajaNip.Crear(new Point(336, y + 24));
+                Controls.Add(txtNip);
+            }
             lblError = EstiloAdmin.LineaError(new Point(24, y + 24 + 36 + 8), Ancho - 48, 72);
             int previos = Datos_User.ConfirmacionesFallidas;
             if (previos > 0)
             {
                 // Volvio a abrirlo despues de fallar: los intentos no empiezan de nuevo.
                 lblError.Text = (previos == 1 ? "Ya fallaste una vez. " : "Ya fallaste " + previos + " veces. ") + Quedan(previos);
+            }
+            else
+            {
+                // La regla desde el principio, en gris (antes solo salia tras el primer
+                // fallo); pasa a rojo con el primero (Error).
+                colorError = lblError.ForeColor;
+                fuenteError = lblError.Font;
+                lblError.ForeColor = EstiloAdmin.TextoSecundario;
+                lblError.Font = new DrawingFont("Century Gothic", 9.5F);
+                lblError.Text = "Tienes " + Intentos + " intentos; si fallas los " + Intentos + ", se cierra la sesión.";
             }
 
             Controls.Add(lblError);
@@ -141,12 +165,34 @@ namespace DigBit
             ActiveControl = txtContrasena;
         }
 
+        /// <summary>Un error en la linea de abajo, en rojo (deja de ser la regla de los intentos, en gris).</summary>
+        private void Error(string texto)
+        {
+            if (fuenteError != null)
+            {
+                DrawingFont gris = lblError.Font;
+                lblError.Font = fuenteError;
+                lblError.ForeColor = colorError;
+                fuenteError = null;
+                gris.Dispose();
+            }
+
+            lblError.Text = texto;
+        }
+
         private void Comprobar()
         {
             if (txtContrasena.Text.Length == 0)
             {
-                lblError.Text = "Escribe tu contraseña.";
+                Error("Escribe tu contraseña.");
                 txtContrasena.Focus();
+                return;
+            }
+
+            if (conNip && !InicioConSiia.NipValido(txtNip.Text))
+            {
+                Error("Escribe tu NIP del SIIA: son 4 números.");
+                txtNip.Focus();
                 return;
             }
 
@@ -155,16 +201,17 @@ namespace DigBit
             bool deProfesor = tipoEsperado == TiposUsuario.Profesor;
             try
             {
-                correcta = new Consultas().ConfirmarContrasena(usuario, txtContrasena.Text, tipoEsperado);
+                correcta = new Consultas().ConfirmarContrasena(usuario,
+                    conNip ? InicioConSiia.Combinar(txtContrasena.Text, txtNip.Text) : txtContrasena.Text, tipoEsperado);
             }
             catch (Exception ex)
             {
                 // No cuenta como intento fallido: no se llego a comparar.
                 Log.Error(deProfesor ? "Confirmar la contrasena del profesor" : "Confirmar la contrasena del administrador", ex);
                 // La causa y que hacer, con lo que le toca a quien tiene la sesion.
-                lblError.Text = deProfesor
+                Error(deProfesor
                     ? MensajeDeFallo.Explicar("No se pudo comprobar la contraseña", ex, AvisoDeFalloDocente.SiSigue)
-                    : AvisoDeFalloAdmin.Texto("No se pudo comprobar la contraseña", ex);
+                    : AvisoDeFalloAdmin.Texto("No se pudo comprobar la contraseña", ex));
                 return;
             }
             finally
@@ -182,6 +229,10 @@ namespace DigBit
 
             int fallidos = ++Datos_User.ConfirmacionesFallidas;
             txtContrasena.Clear();
+            if (txtNip != null)
+            {
+                txtNip.Clear();
+            }
             Log.Aviso("Contrasena equivocada al confirmar como " + usuario + " (" + fallidos + " de " + Intentos + "): " + accionParaElLog);
             if (fallidos >= Intentos)
             {
@@ -197,7 +248,7 @@ namespace DigBit
                 return;
             }
 
-            lblError.Text = "Contraseña incorrecta. " + Quedan(fallidos);
+            Error((conNip ? "La contraseña o el NIP no son correctos. " : "Contraseña incorrecta. ") + Quedan(fallidos));
             txtContrasena.Focus();
         }
 

@@ -6,6 +6,8 @@ using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using DigBit.conexion;
 using DigBit.Infraestructura;
@@ -26,6 +28,11 @@ namespace DigBit
     /// Desde otras pantallas se abre ya filtrada: una alerta (Filtrar), un
     /// profesor (Buscar, su nombre y su numero de empleado) o una sesion del
     /// historial de un alumno (MostrarSesion).
+    /// A la derecha de las dos listas (2026-10-31), la vista previa del PDF de
+    /// la sesion elegida (VistaPreviaPdf): el mismo de "PDF de esta sesión",
+    /// generado en segundo plano cuando la lista se queda quieta. En una pantalla
+    /// donde a su lado no caben las columnas de la lista, empieza escondida (una
+    /// pestana a la derecha la abre).
     /// </summary>
     public class GestionBitacorasAdministrador : PantallaAdmin
     {
@@ -35,6 +42,16 @@ namespace DigBit
         private static readonly Color ColorFallaCelda = Color.FromArgb(255, 176, 79);
         // Avisos de equipos sin internet: texto naranja, el de los avisos del panel.
         private static readonly Color ColorAviso = Color.FromArgb(190, 85, 0);
+        // Abajo, una asistencia que dio su docente (no es una bitacora): verde claro,
+        // como en la Bitacora de la clase.
+        private static readonly Color ColorDada = Color.FromArgb(232, 245, 233);
+        private static readonly Color ColorDadaElegida = Color.FromArgb(205, 232, 210);
+        private static readonly Color TextoDada = Color.FromArgb(0, 96, 55);
+        // La franja con lo que reporto el docente (db/15), como en la Bitacora de la clase.
+        private static readonly Color TituloReportes = Color.FromArgb(160, 75, 0);
+        private static readonly Color TextoReportes = Color.FromArgb(50, 50, 50);
+        private const int BarraFranja = 4;
+        private const int RellenoFranja = 6;
         private static readonly string[] DiasCortos = { "dom", "lun", "mar", "mié", "jue", "vie", "sáb" };
         private static readonly string[] Dias = { "domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado" };
 
@@ -44,6 +61,7 @@ namespace DigBit
         private const string EsteMes = "Este mes";
         private const string UnDia = "Un día...";
         private const string TodosLosLaboratorios = "Todos los laboratorios";
+        private const string TodosLosGrupos = "Todos los grupos";
 
         private readonly Consultas consultas = new Consultas();
         // Las asistencias que dio el profesor a quien no pudo registrar (db/22): no son
@@ -51,7 +69,15 @@ namespace DigBit
         // lleva en su propia tabla.
         private readonly LectorDeDadas lectorDadas = new LectorDeDadas();
         private bool avisoDadas;
+        // Lo que reporto el docente desde su panel (db/15): cuenta en Fallas y, abajo,
+        // va en una franja encima de quien registro. Tambien va en el PDF.
+        private readonly ReportesProfesorDatos reportesDocente = new ReportesProfesorDatos();
+        private bool avisoReportes;
         private readonly int idProfesor;
+        // En "Mis bitacoras" el filtro es por grupo ("ISC-7001 · Programación Web"): el
+        // docente piensa en sus grupos y suele dar clase en uno o dos laboratorios. La
+        // administracion y la responsable siguen filtrando por laboratorio.
+        private readonly bool porGrupo;
         // Ver toda la escuela (idProfesor 0) no es poder corregir: el encargado de
         // laboratorio ve todo, como el administrador, pero en solo consulta.
         private readonly bool puedeCorregir;
@@ -88,6 +114,84 @@ namespace DigBit
         private readonly Button btnLote;
         private readonly Button btnCorregir;
 
+        // --- La vista previa del PDF, a la derecha de las listas ---------------
+        // A la vista (true) o escondida (false) si la persona lo eligio ("Ocultar" o
+        // la pestana), y su ancho si arrastro la division: para todas las Bitacoras
+        // (y Mis bitacoras) mientras DigBit siga abierto. Sin elegir (null), se ve
+        // solo si a su lado caben todas las columnas de la lista de sesiones
+        // (AnchoVistaInicial): en una pantalla angosta empieza escondida.
+        private static bool? vistaElegida;
+        private static int anchoVistaRecordado;
+        // Lo menos al arrastrar; al abrir, entre 420 (la hoja a casi la mitad) y 640
+        // (a tres cuartos), lo que dejen las columnas de la lista de sesiones; con
+        // menos de 420, entre 330 y 420 si asi caben las columnas.
+        private const int MinimoVista = 330;
+        private const int PisoVista = 420;
+        private const int TopeVista = 640;
+        private const int MinimoListas = 520;
+        // Al moverse por la lista con las flechas, el PDF se genera cuando se queda
+        // quieta; uno de los recientes sale antes (ya no hay que generarlo).
+        private const int EsperaVista = 300;
+        private const int EsperaVistaReciente = 120;
+        private const int PdfRecientes = 6;
+        private readonly SplitContainer divisionVista;
+        private readonly Panel cabeceraVista;
+        private readonly Label lblVistaTitulo;
+        private readonly Label lblVistaPagina;
+        private readonly Label lblVistaZoom;
+        private readonly BotonCabecera btnVistaAlejar;
+        private readonly BotonCabecera btnVistaAcercar;
+        private readonly BotonCabecera btnVistaAjustar;
+        private readonly LinkLabel lnkOcultarVista;
+        private readonly VistaPreviaPdf vista;
+        private readonly TiraVistaPrevia tiraVista;
+        private readonly DrawingFont fuenteSignoVista = new DrawingFont("Century Gothic", 12F, FontStyle.Bold);
+        private readonly Timer esperaVista = new Timer { Interval = EsperaVista };
+        // Los ultimos PDF generados para la vista (id de la sesion y el PDF con lo que
+        // llevaba), del mas viejo al mas nuevo.
+        private readonly List<KeyValuePair<int, PdfDeVista>> pdfRecientes = new List<KeyValuePair<int, PdfDeVista>>();
+        // Lo que se leyo abajo de la sesion idSesionMostrada (FirmaDeLaSesion; null si
+        // no se pudo leer): un PDF guardado con otra firma ya es viejo y no se ensena.
+        private string firmaMostrada;
+        // Donde estaba el foco antes de −, + o "Ajustar al ancho" (la lista de
+        // sesiones, la de estudiantes o la hoja), y si se pulsaron con el raton.
+        private Control focoAntesDelZoom;
+        private bool zoomConRaton;
+        // Sube con cada sesion pedida: lo que llegue de una anterior ya no se pinta.
+        private int pedidoVista;
+        // Sube con cada F5: un PDF que se pidio antes ya no entra a los recientes.
+        private int tandaRecientes;
+        // La sesion que la vista ensena o prepara (0: ninguna, con un texto; -1: por decidir).
+        private int idSesionEnVista = -1;
+        private bool llenandoLista;
+        private bool sesionesLeidas;
+        private bool moviendoVista;
+        // La persona arrastra la division (SplitterMoving); un cambio de tamano de la ventana, no.
+        private bool arrastrandoVista;
+        private bool anchoVistaAjustado;
+        // Arriba de quien registro: el titulo y la linea de la sesion (crece a dos renglones si no caben).
+        private readonly Panel encabezadoSesion;
+        // Entre el encabezado y quien registro, lo que reporto el docente (oculta si nada):
+        // el hueco de abajo (8 px) y dentro la franja con su marco y sus renglones.
+        private readonly Panel pnlReportesDocente;
+        private readonly Panel pnlFranjaDocente;
+        private readonly Panel pnlRenglonesDocente;
+        private readonly Label lblReportesDocenteTitulo;
+        private readonly Label lblReportesDocente;
+
+        /// <summary>Un PDF de la vista previa y lo que llevaba cuando se genero (FirmaDeLaSesion).</summary>
+        private sealed class PdfDeVista
+        {
+            public readonly byte[] Pdf;
+            public readonly string Firma;
+
+            public PdfDeVista(byte[] pdf, string firma)
+            {
+                Pdf = pdf;
+                Firma = firma;
+            }
+        }
+
         /// <summary>Una fila de ObtenerSesionesAdministrador, ya interpretada.</summary>
         private sealed class SesionInfo
         {
@@ -103,12 +207,20 @@ namespace DigBit
             public string Laboratorio;
             public int Alumnos;
             public int ConFallas;
+            /// <summary>Las fallas que reporto su docente desde su panel (db/15).</summary>
+            public int ReportesDocente;
             public int SinConexion;
             /// <summary>Equipos que sus alumnos avisaron sin internet (db/10).</summary>
             public List<EquipoSinInternet> SinInternet;
             public string TextoBusqueda;
             /// <summary>Uso libre de un laboratorio sin codigos (db/14): sin clase ni profesor.</summary>
             public bool UsoLibre;
+
+            /// <summary>La columna Fallas: estudiantes con alguna falla mas lo que reporto su docente.</summary>
+            public int Fallas
+            {
+                get { return ConFallas + ReportesDocente; }
+            }
 
             /// <summary>
             /// Hoy y dentro de su horario con la hora del servidor (EstaEnCurso): todavia
@@ -150,15 +262,22 @@ namespace DigBit
         public GestionBitacorasAdministrador(int idProfesor)
             : base(idProfesor == 0 ? "Bitácoras" : "Mis bitácoras",
                 (idProfesor == 0 ? "Cada sesión es una clase en una fecha." : "Cada sesión es una de tus clases en una fecha.")
-                    + " Elige una para ver quién registró y qué reportó. F5 actualiza.",
+                    + " Elige una para ver quién registró, qué reportó y, a la derecha, cómo sale su PDF. F5 actualiza."
+                    // La persona responsable no corrige registros (no ve el boton): a quien avisar.
+                    + (idProfesor == 0 && Permisos.SoloConsulta ? " Si ves un error en un registro, avísale a la administración." : ""),
                 // 1400 de ancho pedidos: a 1366x768 PantallaAdmin la deja en lo que
                 // cabe (unos 1350) y a 10 pt el laboratorio, la materia, la fecha y el
                 // horario no se cortan.
                 new Size(1400, 780))
         {
             this.idProfesor = idProfesor;
+            porGrupo = idProfesor != 0;
             puedeCorregir = idProfesor == 0 && !Permisos.SoloConsulta;
             MinimumSize = new Size(1100, 620);
+            // Con la vista previa del PDF a la derecha de las listas, a pantalla
+            // completa (como Horarios y Estadisticas): la hoja se lee y las listas
+            // siguen con sus columnas.
+            WindowState = FormWindowState.Maximized;
             KeyPreview = true;
 
             // --- Filtros: se aplican al momento, sin boton ---------------------
@@ -167,7 +286,7 @@ namespace DigBit
             ayuda.SetToolTip(txtBuscar, (idProfesor == 0 ? "Materia, docente, grupo" : "Materia, grupo")
                 + (Permisos.VeCodigosDeProfesor ? ", laboratorio, código o fecha (13/07/2026)" : ", laboratorio o fecha (13/07/2026)"));
 
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Fecha", new Point(350, 88)));
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Fecha", new Point(350, 86)));
             cboPeriodo = EstiloHorarios.CrearCombo(new Point(350, 111), 160);
             cboPeriodo.Items.AddRange(new object[] { TodasLasFechas, Hoy, UltimaSemana, EsteMes, UnDia });
             cboPeriodo.SelectedIndex = 0;
@@ -192,9 +311,17 @@ namespace DigBit
             dtpDia.ValueChanged += (s, e) => Aplicar(null);
             Controls.Add(dtpDia);
 
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Laboratorio", new Point(670, 88)));
-            cboLaboratorio = EstiloHorarios.CrearCombo(new Point(670, 111), 220);
+            // Por grupo, mas ancho: "ISC-7001 · Programación Web" entero (al leer las sesiones,
+            // de lo que mida la opcion mas larga: RellenarLaboratorios).
+            int anchoFiltro = porGrupo ? 300 : 220;
+            Controls.Add(EstiloHorarios.CrearEtiqueta(porGrupo ? "Grupo" : "Laboratorio", new Point(670, 86)));
+            cboLaboratorio = EstiloHorarios.CrearCombo(new Point(670, 111), anchoFiltro);
             cboLaboratorio.SelectedIndexChanged += (s, e) => { if (!cargandoFiltros) Aplicar(null); };
+            if (porGrupo)
+            {
+                ayuda.SetToolTip(cboLaboratorio, "Tus grupos, cada uno con su materia.");
+            }
+
             Controls.Add(cboLaboratorio);
 
             chkSoloFallas = new CheckBox
@@ -202,11 +329,11 @@ namespace DigBit
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 10F, FontStyle.Bold),
                 ForeColor = Color.DarkGreen,
-                Location = new Point(910, 113),
+                Location = new Point(cboLaboratorio.Right + 20, 113),
                 Text = "Solo con fallas"
             };
             chkSoloFallas.CheckedChanged += (s, e) => Aplicar(null);
-            ayuda.SetToolTip(chkSoloFallas, "Las sesiones con alguna falla reportada o con algún aviso de equipos sin internet.");
+            ayuda.SetToolTip(chkSoloFallas, "Las sesiones con alguna falla reportada (por sus estudiantes o su docente) o con algún aviso de equipos sin internet.");
             Controls.Add(chkSoloFallas);
 
             lnkQuitarFiltros = new LinkLabel
@@ -215,7 +342,7 @@ namespace DigBit
                 Font = new DrawingFont("Century Gothic", 10F),
                 LinkColor = Color.DarkGreen,
                 ActiveLinkColor = Color.Green,
-                Location = new Point(1050, 114),
+                Location = new Point(cboLaboratorio.Right + 160, 114),
                 Text = "Quitar filtros",
                 Visible = false
             };
@@ -224,6 +351,10 @@ namespace DigBit
 
             // --- Arriba: sesiones ---------------------------------------------
             CrearLista(156);
+            // Diez columnas: con el margen de 8 de las demas listas, a 1366 de ancho
+            // salia la barra de abajo y el docente se cortaba. Aqui, 4.
+            grid.DefaultCellStyle.Padding = new Padding(4, 0, 4, 0);
+            grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(4, 7, 4, 7);
             grid.Columns.Add("fecha", "Fecha");
             grid.Columns.Add("horario", "Horario");
             grid.Columns.Add("laboratorio", "Laboratorio");
@@ -239,11 +370,16 @@ namespace DigBit
             // palabra, enteros. El horario, abajo (con la letra en negrita).
             EstiloHorarios.Pesos(grid, 122, 178, 215, 270, 72, 150, 66, 90, 55, 60);
             grid.Columns["profesor"].Visible = idProfesor == 0;
+            // Llena lo que dejan las demas: con la vista previa al lado (a 1366) no
+            // queda nada y se quedaba en 5 px. Con este minimo sale la barra de abajo.
+            grid.Columns["profesor"].MinimumWidth = 120;
             // El codigo de cada sesion es lo que teclean los alumnos: el encargado de
             // laboratorio no lo ve (la columna, ademas, va vacia: ver LeerSesion).
             grid.Columns["codigo"].Visible = Permisos.VeCodigosDeProfesor;
             grid.Columns["alumnos"].ToolTipText = "Estudiantes que registraron bitácora en la sesión.";
-            grid.Columns["fallas"].ToolTipText = "Estudiantes que reportaron alguna falla o comentario.";
+            grid.Columns["fallas"].ToolTipText = idProfesor == 0
+                ? "Estudiantes que reportaron alguna falla o comentario, más las fallas que reportó su docente."
+                : "Estudiantes que reportaron alguna falla o comentario, más las fallas que reportaste.";
             grid.Columns["sin_internet"].ToolTipText = "Otros equipos que se avisaron sin internet; los más avisados primero.";
             foreach (DataGridViewColumn columna in grid.Columns)
             {
@@ -252,8 +388,9 @@ namespace DigBit
                 columna.SortMode = DataGridViewColumnSortMode.NotSortable;
             }
 
-            // Ya sin ordenar: el encabezado no guarda sitio para la flecha.
-            ColumnasDeLista.EncabezadoEntero(grid, "grupo", "codigo", "alumnos", "fallas", "sin_internet");
+            // Ya sin ordenar, el encabezado no guarda sitio para la flecha: ListaDigBit
+            // vuelve a medir cada titulo (al cambiar el margen y aqui, al no ordenar).
+            PalabraEnteraEnEncabezado(grid.Columns["sin_internet"]);
             grid.Columns["alumnos"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
             grid.Columns["fallas"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
             grid.CellFormatting += FormatoSesion;
@@ -263,7 +400,7 @@ namespace DigBit
             // ensanchaba la columna (TextoEntero solo crece) y a 1366 le quitaba
             // al docente unos 70 px hasta cerrar la ventana. Su minimo, la hora en
             // negrita (TextoEntero la mide con la letra normal).
-            grid.Columns["horario"].MinimumWidth = TextRenderer.MeasureText("00:00 – 00:00", negrita).Width + 8;
+            grid.Columns["horario"].MinimumWidth = TextRenderer.MeasureText("00:00 – 00:00", negrita).Width + 8 + grid.DefaultCellStyle.Padding.Horizontal;
             grid.Columns["horario"].ToolTipText = "En verde y en negrita, la sesión en curso: todavía pueden llegar bitácoras.";
 
             // --- Abajo: alumnos de la sesion elegida ----------------------------
@@ -283,7 +420,6 @@ namespace DigBit
             Controls.Remove(grid);
             grid.Dock = DockStyle.Fill;
             division.Panel1.Controls.Add(grid);
-            grid.Paint += PintarListaVacia;
             // Antes el "2*" solo se explicaba al pasar el raton por la celda.
             lblSinConexion = new Label
             {
@@ -321,6 +457,11 @@ namespace DigBit
             };
             encabezado.Controls.Add(lblSesionTitulo);
             encabezado.Controls.Add(lblSesionDetalle);
+            // Con la vista previa al lado (a 1366) el titulo ya no cabia en un renglon.
+            encabezadoSesion = encabezado;
+            encabezado.Resize += (s, e) => AjustarEncabezadoSesion();
+            lblSesionTitulo.TextChanged += (s, e) => AjustarEncabezadoSesion();
+            lblSesionDetalle.TextChanged += (s, e) => AjustarEncabezadoSesion();
 
             gridAlumnos = EstiloHorarios.CrearGrid(Point.Empty, new Size(400, 200));
             gridAlumnos.Dock = DockStyle.Fill;
@@ -355,11 +496,183 @@ namespace DigBit
                 }
             };
 
+            // Lo que reporto el docente, como en la Bitacora de la clase: fondo naranja
+            // claro, barra a la izquierda y los renglones (ReporteProfesor.Renglon).
+            pnlReportesDocente = new Panel { Dock = DockStyle.Top, BackColor = Color.White, Padding = new Padding(0, 0, 0, 8), Visible = false };
+            pnlFranjaDocente = new Panel { Dock = DockStyle.Fill, BackColor = ColorConFalla };
+            pnlFranjaDocente.Paint += PintarMarcoReportes;
+            pnlRenglonesDocente = new Panel { AutoScroll = true, BackColor = ColorConFalla };
+            lblReportesDocenteTitulo = new Label
+            {
+                AutoSize = true,
+                Font = new DrawingFont("Century Gothic", 9.75F, FontStyle.Bold),
+                ForeColor = TituloReportes,
+                Text = idProfesor == 0 ? "Reportado por su docente:" : "Lo que reportaste:",
+                UseMnemonic = false
+            };
+            lblReportesDocente = new Label
+            {
+                AutoSize = false,
+                Font = new DrawingFont("Century Gothic", 9.75F),
+                ForeColor = TextoReportes,
+                UseMnemonic = false
+            };
+            pnlRenglonesDocente.Controls.Add(lblReportesDocenteTitulo);
+            pnlRenglonesDocente.Controls.Add(lblReportesDocente);
+            pnlFranjaDocente.Controls.Add(pnlRenglonesDocente);
+            pnlReportesDocente.Controls.Add(pnlFranjaDocente);
+            pnlReportesDocente.Resize += (s, e) => AcomodarReportesDocente();
+            division.Panel2.Resize += (s, e) => AcomodarReportesDocente();
+
+            // Se acomodan de atras hacia adelante: el encabezado arriba, la franja
+            // debajo y quien registro en lo que queda.
             division.Panel2.Controls.Add(gridAlumnos);
+            division.Panel2.Controls.Add(pnlReportesDocente);
             division.Panel2.Controls.Add(encabezado);
             gridAlumnos.BringToFront();
-            Controls.Add(division);
+
+            // --- A la derecha: como sale el PDF de la sesion elegida ----------
+            // El mismo de "PDF de esta sesión" (GenerarPdfSesion), a lo ancho de su
+            // panel; las dos listas, a su izquierda como antes. La division se
+            // arrastra; FixedPanel: al agrandar la ventana crecen las listas.
+            divisionVista = new SplitContainer
+            {
+                Orientation = Orientation.Vertical,
+                Location = division.Location,
+                Size = division.Size,
+                Anchor = division.Anchor,
+                BackColor = Color.White,
+                SplitterWidth = 10,
+                FixedPanel = FixedPanel.Panel2,
+                TabStop = false
+            };
+
+            cabeceraVista = new Panel { Dock = DockStyle.Top, Height = 70, BackColor = Color.White };
+            cabeceraVista.Resize += (s, e) => ColocarCabeceraVista();
+            lblVistaTitulo = new Label
+            {
+                AutoSize = true,
+                Font = new DrawingFont("Century Gothic", 11.5F, FontStyle.Bold),
+                ForeColor = Color.DarkGreen,
+                Location = new Point(0, 6),
+                Text = "Vista previa del PDF",
+                UseMnemonic = false
+            };
+            lnkOcultarVista = new LinkLabel
+            {
+                AutoSize = true,
+                Font = new DrawingFont("Century Gothic", 10F),
+                LinkColor = Color.DarkGreen,
+                ActiveLinkColor = Color.Green,
+                Location = new Point(200, 8),
+                Text = "Ocultar"
+            };
+            lnkOcultarVista.LinkClicked += (s, e) => PonerVistaVisible(false, true);
+            ayuda.SetToolTip(lnkOcultarVista, "Esconde la vista previa y las listas se ensanchan. La pestaña «Vista previa del PDF», a la derecha, la vuelve a abrir.");
+            lblVistaPagina = new Label
+            {
+                AutoSize = false,
+                AutoEllipsis = true,
+                Font = new DrawingFont("Century Gothic", 9.75F, FontStyle.Bold),
+                ForeColor = Color.DarkGreen,
+                Size = new Size(120, 24),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            lblVistaZoom = new Label
+            {
+                AutoSize = false,
+                Font = new DrawingFont("Century Gothic", 9.75F, FontStyle.Bold),
+                ForeColor = Color.DarkGreen,
+                Size = new Size(56, 24),
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            btnVistaAlejar = new BotonCabecera("−") { AccessibleName = "Alejar", Font = fuenteSignoVista };
+            btnVistaAcercar = new BotonCabecera("+") { AccessibleName = "Acercar", Font = fuenteSignoVista };
+            btnVistaAjustar = new BotonCabecera("Ajustar al ancho");
+            ayuda.SetToolTip(btnVistaAlejar, "Alejar (Ctrl + rueda del ratón sobre la hoja)");
+            ayuda.SetToolTip(btnVistaAcercar, "Acercar (Ctrl + rueda del ratón sobre la hoja)");
+            ayuda.SetToolTip(btnVistaAjustar, "La hoja a todo el ancho del panel");
+            cabeceraVista.Controls.AddRange(new Control[] { lblVistaTitulo, lnkOcultarVista, lblVistaPagina, btnVistaAlejar, lblVistaZoom, btnVistaAcercar, btnVistaAjustar });
+
+            vista = new VistaPreviaPdf
+            {
+                Dock = DockStyle.Fill,
+                MargenHojas = 14,
+                SeparacionHojas = 14,
+                // Con el foco en la hoja (tras un clic en ella) las flechas la mueven
+                // a ella y no a la lista: un marco verde lo dice.
+                MarcarFoco = true,
+                // Si no se puede ver aqui: en un equipo del laboratorio tampoco hay
+                // lector de PDF (VisorPdf.Mostrar); en los demas, si.
+                AyudaSiFalla = Kiosco.Activo
+                    ? "Ábrelo desde tu propio equipo o desde el de la administración."
+                    : "«PDF de esta sesión» lo abre con el lector de PDF del equipo."
+            };
+            vista.EstadoCambiado += (s, e) => ActualizarCabeceraVista();
+            // El zoom no se lleva el foco: con el raton vuelve a donde estaba (casi
+            // siempre la lista de sesiones, y las flechas siguen cambiando de sesion).
+            btnVistaAlejar.Click += (s, e) => { vista.Alejar(); DevolverFocoTrasZoom(); };
+            btnVistaAcercar.Click += (s, e) => { vista.Acercar(); DevolverFocoTrasZoom(); };
+            btnVistaAjustar.Click += (s, e) => { vista.AjustarAlAncho(); DevolverFocoTrasZoom(); };
+            foreach (BotonCabecera boton in new[] { btnVistaAlejar, btnVistaAcercar, btnVistaAjustar })
+            {
+                // Click llega antes que MouseUp: entre los dos, se sabe que fue con el raton.
+                boton.MouseDown += (s, e) => zoomConRaton = e.Button == MouseButtons.Left;
+                boton.MouseUp += (s, e) => zoomConRaton = false;
+            }
+
+            grid.Enter += (s, e) => focoAntesDelZoom = grid;
+            gridAlumnos.Enter += (s, e) => focoAntesDelZoom = gridAlumnos;
+            vista.Enter += (s, e) => focoAntesDelZoom = vista;
+            divisionVista.Panel2.Controls.Add(vista);
+            divisionVista.Panel2.Controls.Add(cabeceraVista);
+            vista.BringToFront();
+
+            // Escondida, una pestana angosta a la derecha de las listas la vuelve a abrir.
+            tiraVista = new TiraVistaPrevia { Dock = DockStyle.Right, Width = 36, Visible = false };
+            tiraVista.Click += (s, e) => PonerVistaVisible(true, true);
+            ayuda.SetToolTip(tiraVista, AyudaTiraVista);
+
+            division.Dock = DockStyle.Fill;
+            divisionVista.Panel1.Controls.Add(division);
+            divisionVista.Panel1.Controls.Add(tiraVista);
+            division.BringToFront();
+            Controls.Add(divisionVista);
             division.SplitterDistance = division.Height * 45 / 100;
+            try
+            {
+                divisionVista.Panel1MinSize = MinimoListas;
+                divisionVista.Panel2MinSize = MinimoVista;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException || ex is ArgumentException)
+            {
+                // Una ventana mas angosta que los dos minimos (no pasa: MinimumSize): se quedan los de siempre.
+            }
+
+            PonerAnchoVista(AnchoVistaInicial());
+            // Solo lo que arrastra la persona (SplitterMoving solo llega al arrastrar): con
+            // el panel fijo a la derecha, cada cambio de tamano de la ventana tambien mueve
+            // la division y no debe recordarse como su ancho.
+            divisionVista.SplitterMoving += (s, e) => arrastrandoVista = true;
+            divisionVista.SplitterMoved += (s, e) =>
+            {
+                if (arrastrandoVista && !moviendoVista && !divisionVista.Panel2Collapsed)
+                {
+                    anchoVistaRecordado = AnchoVistaActual;
+                }
+
+                arrastrandoVista = false;
+            };
+            esperaVista.Tick += (s, e) => PrepararVista();
+            // Sin elegir, se decide al leer las sesiones por primera vez (OnShown):
+            // AcomodarVistaAlAbrir, con lo que piden las columnas de la lista.
+            if (vistaElegida == false)
+            {
+                PonerVistaVisible(false, false);
+            }
+
+            ColocarCabeceraVista();
+            ActualizarCabeceraVista();
 
             // --- Botones -------------------------------------------------------
             Button cerrar = BotonAbajo("Cerrar", 110);
@@ -374,17 +687,14 @@ namespace DigBit
             SeparacionAbajo(20);
             btnCorregir = BotonAbajo("Corregir registro", 170);
             btnCorregir.Click += (s, e) => CorregirSeleccionado();
-            // Corregir un registro es del administrador; el profesor solo consulta y descarga.
-            btnCorregir.Visible = idProfesor == 0;
+            // Corregir un registro es solo de la administracion: el profesor y la persona
+            // responsable del laboratorio (solo consulta) nunca lo hacen, asi que no lo
+            // ven (un boton siempre apagado parecia descompuesto). A la responsable, el
+            // subtitulo le dice a quien avisar si ve un error.
+            btnCorregir.Visible = puedeCorregir;
             if (puedeCorregir)
             {
                 ayuda.SetToolTip(btnCorregir, "Corrige el equipo o las fallas del registro elegido abajo. También con doble clic.");
-            }
-            else
-            {
-                // El encargado de laboratorio lo ve apagado y, al pasar el raton, el
-                // motivo. Para el profesor no hace nada: ni siquiera lo ve.
-                Permisos.Desactivar(ayuda, btnCorregir, "Solo la administración de DigBit puede corregir un registro. Si ves un error, avísale.");
             }
 
             esperaDetalle.Tick += (s, e) =>
@@ -419,12 +729,24 @@ namespace DigBit
             grid.Columns["codigo"].Visible = Permisos.VeCodigosDeProfesor;
             RellenarLaboratorios();
 
-            // Lo que se ve abajo tambien se vuelve a leer (pudo registrar alguien).
+            // Lo que se ve abajo tambien se vuelve a leer (pudo registrar alguien), y
+            // el PDF de la vista previa se vuelve a generar.
             idSesionMostrada = -1;
+            OlvidarVista();
+            sesionesLeidas = true;
             string elegir = seleccionar ?? sesionPedida;
             sesionPedida = null;
             Aplicar(elegir);
             cargada = true;
+
+            // La primera vez, ya con las sesiones en la lista (y la ventana a su
+            // tamano): el panel de la vista previa, a lo que la lista no necesita, o
+            // escondido si a su lado no caben las columnas.
+            if (!anchoVistaAjustado)
+            {
+                anchoVistaAjustado = true;
+                AcomodarVistaAlAbrir();
+            }
         }
 
         /// <summary>
@@ -528,6 +850,7 @@ namespace DigBit
                 Laboratorio = Texto(fila, "laboratorio"),
                 Alumnos = Entero(fila, "alumnos"),
                 ConFallas = Entero(fila, "con_fallas"),
+                ReportesDocente = fila.Table.Columns.Contains("reportes_docente") ? Entero(fila, "reportes_docente") : 0,
                 SinConexion = Entero(fila, "sin_conexion"),
                 SinInternet = Consultas.ContarSinInternet(new[] { Texto(fila, "sin_internet") }),
                 UsoLibre = fila.Table.Columns.Contains("uso_libre") && Entero(fila, "uso_libre") == 1
@@ -548,21 +871,66 @@ namespace DigBit
             return sesion;
         }
 
+        /// <summary>
+        /// El filtro de arriba con lo que hay en las sesiones leidas: los laboratorios
+        /// o, en Mis bitacoras, los grupos con su materia (ClaseDe).
+        /// </summary>
         private void RellenarLaboratorios()
         {
             string anterior = laboratorioPedido ?? cboLaboratorio.SelectedItem as string;
             laboratorioPedido = null;
             cargandoFiltros = true;
             cboLaboratorio.Items.Clear();
-            cboLaboratorio.Items.Add(TodosLosLaboratorios);
-            foreach (string laboratorio in sesiones.Select(s => s.Laboratorio).Where(l => l.Length > 0).Distinct().OrderBy(l => l))
+            cboLaboratorio.Items.Add(porGrupo ? TodosLosGrupos : TodosLosLaboratorios);
+            IEnumerable<string> opciones = porGrupo
+                ? sesiones.Select(ClaseDe).Where(c => c.Length > 0).Distinct().OrderBy(c => c, StringComparer.CurrentCultureIgnoreCase)
+                : sesiones.Select(s => s.Laboratorio).Where(l => l.Length > 0).Distinct().OrderBy(l => l);
+            foreach (string opcion in opciones)
             {
-                cboLaboratorio.Items.Add(laboratorio);
+                cboLaboratorio.Items.Add(opcion);
             }
 
             int indice = anterior == null ? 0 : cboLaboratorio.Items.IndexOf(anterior);
             cboLaboratorio.SelectedIndex = indice < 0 ? 0 : indice;
+            int masLarga = 0;
+            foreach (object opcion in cboLaboratorio.Items)
+            {
+                masLarga = Math.Max(masLarga, TextRenderer.MeasureText(opcion.ToString(), cboLaboratorio.Font).Width);
+            }
+
+            if (porGrupo)
+            {
+                // La caja, de lo que mide el grupo con la materia mas larga (entre 220 y 380):
+                // "ISC-5001 · Programación Orientada a Objetos" entero. Lo de su derecha se recorre.
+                int anchoCaja = Math.Max(220, Math.Min(380, masLarga + 34));
+                if (cboLaboratorio.Width != anchoCaja)
+                {
+                    cboLaboratorio.Width = anchoCaja;
+                    chkSoloFallas.Left = cboLaboratorio.Right + 20;
+                    lnkQuitarFiltros.Left = cboLaboratorio.Right + 160;
+                }
+            }
+
+            // La lista que se abre, tan ancha como la opcion mas larga (sin pasar de 640).
+            cboLaboratorio.DropDownWidth = Math.Min(640, Math.Max(cboLaboratorio.Width, masLarga + SystemInformation.VerticalScrollBarWidth + 8));
             cargandoFiltros = false;
+        }
+
+        /// <summary>
+        /// En Mis bitacoras, la clase de una sesion como sale en el filtro: su grupo y su
+        /// materia ("ISC-7001 · Programación Web"), o lo que tenga de los dos. El uso
+        /// libre no tiene grupo ni docente: no sale.
+        /// </summary>
+        private static string ClaseDe(SesionInfo sesion)
+        {
+            if (sesion.UsoLibre)
+            {
+                return "";
+            }
+
+            string grupo = (sesion.Grupo ?? "").Trim();
+            string materia = (sesion.Materia ?? "").Trim();
+            return grupo.Length == 0 ? materia : materia.Length == 0 ? grupo : grupo + " · " + materia;
         }
 
         private bool EnPeriodo(SesionInfo sesion, string periodo, DateTime hoy)
@@ -602,8 +970,9 @@ namespace DigBit
             }
 
             string periodo = (string)cboPeriodo.SelectedItem;
-            string laboratorio = cboLaboratorio.SelectedItem as string;
-            bool todosLosLaboratorios = laboratorio == null || laboratorio == TodosLosLaboratorios;
+            // El laboratorio elegido o, en Mis bitacoras, el grupo con su materia (ClaseDe).
+            string elegido = cboLaboratorio.SelectedItem as string;
+            bool todos = elegido == null || cboLaboratorio.SelectedIndex <= 0;
             DateTime ahora = DateTime.Now + desfaseServidor;
             DateTime hoy = ahora.Date;
             foreach (SesionInfo sesion in sesiones)
@@ -613,8 +982,8 @@ namespace DigBit
 
             visibles = sesiones.Where(s =>
                     EnPeriodo(s, periodo, hoy)
-                    && (todosLosLaboratorios || s.Laboratorio == laboratorio)
-                    && (!chkSoloFallas.Checked || s.ConFallas > 0 || s.SinInternet.Count > 0)
+                    && (todos || (porGrupo ? ClaseDe(s) : s.Laboratorio) == elegido)
+                    && (!chkSoloFallas.Checked || s.Fallas > 0 || s.SinInternet.Count > 0)
                     && EstiloAdmin.Coincide(s.TextoBusqueda, txtBuscar.Text))
                 .ToList();
 
@@ -625,6 +994,9 @@ namespace DigBit
             // La leyenda del "*", solo si la lista ensena alguno.
             lblSinConexion.Visible = visibles.Any(s => s.SinConexion > 0);
 
+            // Mientras se vacia y se vuelve a llenar la lista, la vista previa no se
+            // entera: al final se queda con la sesion elegida (sin parpadear si es la misma).
+            llenandoLista = true;
             LlenarLista(visibles,
                 s => new object[]
                 {
@@ -634,9 +1006,10 @@ namespace DigBit
                     EstiloAdmin.Guion(s.Materia),
                     EstiloAdmin.Guion(s.Grupo),
                     EstiloAdmin.Guion(s.Profesor),
-                    s.Codigo,
+                    // En mayusculas, como se dicta (el nombre del PDF lo lleva como siempre).
+                    EstiloAdmin.Codigo(s.Codigo),
                     s.SinConexion > 0 ? s.Alumnos + "*" : s.Alumnos.ToString(),
-                    s.ConFallas.ToString(),
+                    s.Fallas.ToString(),
                     string.Join(", ", s.SinInternet.Select(e => e.Equipo))
                 },
                 s => false, s => s.Id.ToString(), seleccionarId);
@@ -667,6 +1040,12 @@ namespace DigBit
                 {
                     fila.Cells["sin_internet"].ToolTipText = Consultas.DescribirSinInternet(sesion.SinInternet, false) + ".";
                 }
+
+                if (sesion.ReportesDocente > 0)
+                {
+                    fila.Cells["fallas"].ToolTipText = (sesion.ConFallas == 0 ? "" : Plural(sesion.ConFallas, "estudiante", "estudiantes") + " con fallas y ")
+                        + Plural(sesion.ReportesDocente, "falla", "fallas") + (idProfesor == 0 ? " que reportó su docente." : " que reportaste.");
+                }
             }
 
             MostrarVacio();
@@ -678,6 +1057,8 @@ namespace DigBit
                 grid.CurrentCell = grid.Rows[0].Cells[0];
             }
 
+            llenandoLista = false;
+
             // La sesion que ya se ve abajo no se vuelve a leer, pero su linea dice lo
             // mismo que la lista: si acaba de empezar o de terminar, "En curso" cambia.
             SesionInfo mostrada = Seleccionado<SesionInfo>();
@@ -688,6 +1069,7 @@ namespace DigBit
 
             int bitacoras = visibles.Sum(s => s.Alumnos);
             int conFallas = visibles.Sum(s => s.ConFallas);
+            int delDocente = visibles.Sum(s => s.ReportesDocente);
             if (sesiones.Count == 0)
             {
                 lblResumen.Text = "Todavía no hay sesiones: aparecen cuando alguien usa el código de una clase.";
@@ -701,7 +1083,10 @@ namespace DigBit
                 lblResumen.Text = (visibles.Count == sesiones.Count ? "" : visibles.Count + " de ")
                     + Plural(sesiones.Count, "sesión", "sesiones") + ": "
                     + Plural(bitacoras, "bitácora", "bitácoras")
-                    + (conFallas > 0 ? ", " + conFallas + " con fallas" : ", ninguna con fallas") + ".";
+                    + (conFallas > 0 ? ", " + conFallas + " con fallas" : ", ninguna con fallas")
+                    + (delDocente == 0 ? ""
+                        : idProfesor == 0 ? "; " + Plural(delDocente, "falla reportada", "fallas reportadas") + " por docentes"
+                        : "; " + Plural(delDocente, "falla", "fallas") + " que reportaste") + ".";
             }
 
             ActualizarBotones();
@@ -716,26 +1101,13 @@ namespace DigBit
             }
         }
 
+        /// <summary>Con la lista vacia se dice por que, en medio de la lista (ListaDigBit.TextoVacio).</summary>
         private void MostrarVacio()
         {
             lnkQuitarFiltros.Visible = HayFiltros;
-            grid.Invalidate();
-        }
-
-        /// <summary>Con la lista vacia se dice por que, en medio de la lista.</summary>
-        private void PintarListaVacia(object sender, PaintEventArgs e)
-        {
-            if (visibles.Count > 0)
-            {
-                return;
-            }
-
-            string texto = sesiones.Count == 0
+            ListaDigBit.PonerTextoVacio(grid, sesiones.Count == 0
                 ? "Todavía no hay sesiones. Aparecen cuando alguien usa el código de una clase."
-                : "Ninguna sesión coincide con los filtros. «Quitar filtros», arriba, los deja como al abrir.";
-            System.Drawing.Rectangle area = new System.Drawing.Rectangle(0, grid.ColumnHeadersHeight, grid.ClientSize.Width, grid.ClientSize.Height - grid.ColumnHeadersHeight);
-            TextRenderer.DrawText(e.Graphics, texto, grid.Font, area, Color.Gray,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak);
+                : "Ninguna sesión coincide con los filtros. «Quitar filtros», arriba, los deja como al abrir.");
         }
 
         private void QuitarFiltros()
@@ -766,6 +1138,7 @@ namespace DigBit
             // Al moverse por la lista con las flechas no se consulta en cada fila.
             esperaDetalle.Stop();
             esperaDetalle.Start();
+            ProgramarVista();
         }
 
         /// <summary>Enter o doble clic en una sesion: a sus alumnos.</summary>
@@ -800,7 +1173,7 @@ namespace DigBit
                 return;
             }
 
-            if (columna == "fallas" && sesion.ConFallas > 0)
+            if (columna == "fallas" && sesion.Fallas > 0)
             {
                 // Elegida o no, la cuenta sigue en naranja; el resto de la fila marca la seleccion.
                 e.CellStyle.BackColor = ColorFallaCelda;
@@ -808,7 +1181,7 @@ namespace DigBit
                 e.CellStyle.SelectionForeColor = Color.Black;
                 e.CellStyle.Font = negrita;
             }
-            else if ((columna == "fallas" && sesion.ConFallas == 0) || (columna == "alumnos" && sesion.Alumnos == 0))
+            else if ((columna == "fallas" && sesion.Fallas == 0) || (columna == "alumnos" && sesion.Alumnos == 0))
             {
                 e.CellStyle.ForeColor = Color.Gray;
             }
@@ -839,11 +1212,13 @@ namespace DigBit
             }
 
             idSesionMostrada = id;
+            firmaMostrada = null;
             gridAlumnos.Rows.Clear();
             if (sesion == null)
             {
                 lblSesionTitulo.Text = visibles.Count == 0 ? "" : "Elige una sesión de la lista.";
                 lblSesionDetalle.Text = "";
+                PonerReportesDocente(new List<ReporteProfesor>());
                 btnCorregir.Enabled = false;
                 return;
             }
@@ -859,6 +1234,7 @@ namespace DigBit
             catch (Exception ex)
             {
                 lblSesionTitulo.Text += ": no se pudo leer quién registró";
+                PonerReportesDocente(new List<ReporteProfesor>());
                 AvisoDeFalloAdmin.Mostrar(this, "Leer los alumnos de la sesion " + id, ex, "No se pudo leer quién registró en esta sesión", Text);
                 return;
             }
@@ -874,19 +1250,47 @@ namespace DigBit
                 gridAlumnos.Rows[indice].Tag = fila;
             }
 
+            // Al final, una fila verde claro por cada asistencia que dio su docente (no son
+            // bitacoras: no se corrigen): la hora, el equipo y por que.
+            List<AsistenciaDada> lasDadas = LeerDadas(id);
+            HashSet<string> conBitacora = new HashSet<string>(tabla.Rows.Cast<DataRow>().Select(f => Texto(f, "fk_usuario")));
+            foreach (AsistenciaDada dada in lasDadas)
+            {
+                int indice = gridAlumnos.Rows.Add(
+                    string.IsNullOrWhiteSpace(dada.NombreLista) ? dada.Nombre : dada.NombreLista,
+                    dada.Matricula,
+                    dada.DadaEn.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture),
+                    EstiloAdmin.Guion(dada.Equipo),
+                    (idProfesor == 0 ? "Se la dio su docente: " : "Se la diste: ") + AsistenciasDadas.EnFrase(dada)
+                        + (conBitacora.Contains(dada.AlumnoId.ToString(System.Globalization.CultureInfo.InvariantCulture)) ? ". Después llegó su bitácora" : ""));
+                gridAlumnos.Rows[indice].Tag = dada;
+            }
+
+            List<ReporteProfesor> reportes = LeerReportesDocente(id);
+            PonerReportesDocente(reportes);
+            // Sin nadie, el porque en medio de la lista, como en las demas.
+            ListaDigBit.PonerTextoVacio(gridAlumnos, sesion.EnCurso
+                ? "Nadie ha registrado su bitácora todavía. F5 actualiza."
+                : "Nadie registró su bitácora en esta sesión.");
+
             int conFallas = tabla.Rows.Cast<DataRow>().Count(Consultas.ConFalla);
-            int dadas = ContarDadas(id);
+            int dadas = lasDadas.Count;
+            // Con esto se sabe si el PDF guardado de la vista previa sigue al dia (PrepararVista).
+            firmaMostrada = FirmaDeLaSesion(tabla, dadas, reportes);
             // En "Mis bitacoras" la sesion es del profesor que la ve: se le habla a el.
             lblSesionTitulo.Text += (tabla.Rows.Count == 0
                     ? ": nadie registró bitácora"
                     : ": " + Plural(tabla.Rows.Count, "estudiante", "estudiantes") + (conFallas > 0 ? ", " + conFallas + " con fallas" : ", sin fallas"))
+                + (reportes.Count == 0 ? ""
+                    : (idProfesor == 0 ? "; su docente reportó " : "; reportaste ") + Plural(reportes.Count, "falla", "fallas"))
                 + (dadas == 0 ? ""
                     : (idProfesor == 0 ? "; su docente dio " : "; diste ") + Plural(dadas, "asistencia", "asistencias") + " sin bitácora");
 
             gridAlumnos.ClearSelection();
             if (seleccionarAlumno != null)
             {
-                EstiloHorarios.SeleccionarFila(gridAlumnos, f => Texto((DataRow)f.Tag, "fk_usuario") == seleccionarAlumno);
+                // Solo las bitacoras (las asistencias dadas llevan otro Tag).
+                EstiloHorarios.SeleccionarFila(gridAlumnos, f => f.Tag is DataRow && Texto((DataRow)f.Tag, "fk_usuario") == seleccionarAlumno);
             }
 
             btnCorregir.Enabled = puedeCorregir && AlumnoSeleccionado() != null;
@@ -907,20 +1311,20 @@ namespace DigBit
                 texto += ", con " + sesion.Profesor + (sesion.NumeroEmpleado.Length > 0 ? " (" + sesion.NumeroEmpleado + ")" : "");
             }
 
-            return texto + (sesion.Codigo.Length > 0 ? ". Código " + sesion.Codigo : "")
+            return texto + (sesion.Codigo.Length > 0 ? ". Código " + EstiloAdmin.Codigo(sesion.Codigo) : "")
                 + (sesion.EnCurso ? ". En curso: pueden llegar más bitácoras (F5 actualiza)." : ".");
         }
 
         /// <summary>
-        /// Cuantas asistencias dio su docente sin bitacora en esa sesion (db/22; 0 sin
-        /// ella). Si no se pueden leer, 0 y una sola nota en el log: quien registro se
-        /// ve igual.
+        /// Las asistencias que dio su docente sin bitacora en esa sesion (db/22; ninguna
+        /// sin ella), con el nombre como la lista oficial (NombreLista). Si no se pueden
+        /// leer, ninguna y una sola nota en el log: quien registro se ve igual.
         /// </summary>
-        private int ContarDadas(int idSesion)
+        private List<AsistenciaDada> LeerDadas(int idSesion)
         {
             try
             {
-                return lectorDadas.Contar(idSesion);
+                return lectorDadas.DeLaSesion(idSesion);
             }
             catch (Exception ex)
             {
@@ -930,15 +1334,113 @@ namespace DigBit
                     Log.Aviso("Bitacoras: no se pudieron leer las asistencias dadas de la sesion " + idSesion + ": " + ex.Message);
                 }
 
-                return 0;
+                return new List<AsistenciaDada>();
             }
         }
 
-        /// <summary>"Apellidos, Nombre", como la lista de Alumnos y el orden de la consulta.</summary>
+        /// <summary>
+        /// Lo que reporto su docente en esa sesion (db/15; nada sin ella). Si no se
+        /// puede leer, nada y una sola nota en el log: quien registro se ve igual.
+        /// </summary>
+        private List<ReporteProfesor> LeerReportesDocente(int idSesion)
+        {
+            try
+            {
+                return reportesDocente.DeLaSesion(idSesion);
+            }
+            catch (Exception ex)
+            {
+                if (!avisoReportes)
+                {
+                    avisoReportes = true;
+                    Log.Aviso("Bitacoras: no se pudieron leer los reportes del docente de la sesion " + idSesion + ": " + ex.Message);
+                }
+
+                return new List<ReporteProfesor>();
+            }
+        }
+
+        /// <summary>La franja con lo que reporto el docente, un renglon por reporte; sin ninguno, oculta.</summary>
+        private void PonerReportesDocente(List<ReporteProfesor> reportes)
+        {
+            string renglones = string.Join(Environment.NewLine, reportes.Select(r => r.Renglon));
+            lblReportesDocente.Text = renglones;
+            pnlFranjaDocente.AccessibleName = renglones.Length == 0 ? null : lblReportesDocenteTitulo.Text + " " + renglones.Replace(Environment.NewLine, " ");
+            pnlRenglonesDocente.AutoScrollPosition = Point.Empty;
+            AcomodarReportesDocente();
+        }
+
+        /// <summary>
+        /// El alto de la franja: lo que miden sus renglones partidos al ancho que queda
+        /// a la derecha del titulo, hasta un tercio del panel de abajo; si no cabe, se
+        /// desplaza. Debajo, 8 px hasta la lista de quien registro.
+        /// </summary>
+        private void AcomodarReportesDocente()
+        {
+            bool conFranja = lblReportesDocente.Text.Length > 0;
+            if (pnlReportesDocente.Visible != conFranja)
+            {
+                pnlReportesDocente.Visible = conFranja;
+            }
+
+            int ancho = pnlReportesDocente.Width;
+            if (!conFranja || ancho < 100)
+            {
+                return;
+            }
+
+            int dentro = ancho - BarraFranja - 2;
+            int xRenglones = 10 + lblReportesDocenteTitulo.PreferredSize.Width + 8;
+            int anchoRenglones = Math.Max(80, dentro - xRenglones - 10);
+            Control abajo = pnlReportesDocente.Parent;
+            int maximo = Math.Max(48, (abajo == null ? 300 : abajo.Height) / 3);
+            int altoTitulo = lblReportesDocenteTitulo.PreferredSize.Height;
+            if (2 + 2 * RellenoFranja + Math.Max(altoTitulo, lblReportesDocente.GetPreferredSize(new Size(anchoRenglones, 0)).Height) > maximo)
+            {
+                // Con la barra de desplazamiento, los renglones tienen menos ancho.
+                anchoRenglones = Math.Max(80, anchoRenglones - SystemInformation.VerticalScrollBarWidth);
+            }
+
+            int altoRenglones = lblReportesDocente.GetPreferredSize(new Size(anchoRenglones, 0)).Height;
+            int altoFranja = Math.Min(2 + 2 * RellenoFranja + Math.Max(altoTitulo, altoRenglones), maximo);
+            Point desplazado = pnlRenglonesDocente.AutoScrollPosition;
+            // Los hijos de un panel desplazado se colocan respecto a lo que se ve: primero, arriba del todo.
+            pnlRenglonesDocente.AutoScrollPosition = Point.Empty;
+            pnlRenglonesDocente.SetBounds(BarraFranja + 1, 1, dentro, altoFranja - 2);
+            pnlRenglonesDocente.AutoScrollMargin = new Size(0, RellenoFranja);
+            lblReportesDocenteTitulo.Location = new Point(10, RellenoFranja);
+            lblReportesDocente.SetBounds(xRenglones, RellenoFranja, anchoRenglones, altoRenglones);
+            if (desplazado != Point.Empty)
+            {
+                pnlRenglonesDocente.AutoScrollPosition = new Point(-desplazado.X, -desplazado.Y);
+            }
+
+            int alto = altoFranja + pnlReportesDocente.Padding.Vertical;
+            if (pnlReportesDocente.Height != alto)
+            {
+                pnlReportesDocente.Height = alto;
+            }
+        }
+
+        /// <summary>El marco de la franja: la barra naranja de la izquierda y un borde de 1 px del mismo naranja.</summary>
+        private void PintarMarcoReportes(object sender, PaintEventArgs e)
+        {
+            Rectangle r = pnlFranjaDocente.ClientRectangle;
+            using (SolidBrush barra = new SolidBrush(ColorFallaCelda))
+            using (Pen borde = new Pen(ColorFallaCelda))
+            {
+                e.Graphics.FillRectangle(barra, 0, 0, BarraFranja + 1, r.Height);
+                e.Graphics.DrawRectangle(borde, 0, 0, r.Width - 1, r.Height - 1);
+            }
+        }
+
+        /// <summary>
+        /// "Arias Mora Gisela", como la lista oficial, Estudiantes y el orden de la
+        /// consulta (UsuarioInfo.ComoEnLaLista; el PDF sigue con "Nombre Apellidos").
+        /// </summary>
         private static string NombreAlumno(DataRow fila)
         {
-            string apellidos = (Texto(fila, "apellido_paterno") + " " + Texto(fila, "apellido_materno")).Trim();
-            string nombre = apellidos.Length > 0 ? apellidos + ", " + Texto(fila, "nombre") : Texto(fila, "nombre");
+            string nombre = UsuarioInfo.ComoEnLaLista(Texto(fila, "nombre"), Texto(fila, "apellido_paterno"), Texto(fila, "apellido_materno"));
             return Entero(fila, "sin_conexion") == 1 ? nombre + " (sin conexión)" : nombre;
         }
 
@@ -955,13 +1457,24 @@ namespace DigBit
                 return;
             }
 
-            DataRow fila = gridAlumnos.Rows[e.RowIndex].Tag as DataRow;
+            object etiqueta = gridAlumnos.Rows[e.RowIndex].Tag;
+            string columna = gridAlumnos.Columns[e.ColumnIndex].Name;
+            if (etiqueta is AsistenciaDada)
+            {
+                // Una asistencia que dio su docente (no es una bitacora): verde claro.
+                e.CellStyle.BackColor = ColorDada;
+                e.CellStyle.SelectionBackColor = ColorDadaElegida;
+                e.CellStyle.ForeColor = columna == "reporte" ? TextoDada : e.CellStyle.ForeColor;
+                e.CellStyle.SelectionForeColor = e.CellStyle.ForeColor;
+                return;
+            }
+
+            DataRow fila = etiqueta as DataRow;
             if (fila == null)
             {
                 return;
             }
 
-            string columna = gridAlumnos.Columns[e.ColumnIndex].Name;
             if (!Consultas.ConFalla(fila))
             {
                 // Si solo aviso de otros equipos sin internet, el reporte no va en
@@ -1069,7 +1582,11 @@ namespace DigBit
             }
         }
 
-        /// <summary>Un PDF por cada sesion de la lista (la que dejan los filtros), en una carpeta.</summary>
+        /// <summary>
+        /// Las sesiones de la lista (la que dejan los filtros): primero se ve como
+        /// saldran, todas en un PDF, una tras otra (VisorPdf); desde ahi se guarda
+        /// ese PDF o, con "Uno por sesion...", un PDF por sesion en una carpeta.
+        /// </summary>
         private void DescargarLote()
         {
             List<SesionInfo> lote = visibles.ToList();
@@ -1078,12 +1595,78 @@ namespace DigBit
                 return;
             }
 
+            byte[] pdf;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                pdf = PdfDeVariasSesiones(lote);
+            }
+            catch (Exception ex)
+            {
+                AvisoDeFalloAdmin.Mostrar(this, "Generar el PDF de " + lote.Count + " sesiones", ex, "No se pudo generar el PDF", Text);
+                return;
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+
+            string ruta;
+            try
+            {
+                ruta = VisorPdf.Mostrar(this, pdf, NombreDelLote(lote), "Uno por sesión...", dueno => GuardarUnoPorSesion(dueno, lote));
+            }
+            catch (Exception ex)
+            {
+                AvisoDeFalloAdmin.MostrarVistaPrevia(this, "Mostrar el PDF de " + lote.Count + " sesiones", ex, "No se pudo mostrar el PDF", Text);
+                return;
+            }
+
+            if (ruta != null)
+            {
+                Avisar("PDF guardado: " + ruta);
+            }
+        }
+
+        /// <summary>Todas en un PDF, cada sesion desde una hoja nueva (el mismo PDF de cada una).</summary>
+        private byte[] PdfDeVariasSesiones(List<SesionInfo> lote)
+        {
+            using (MemoryStream salida = new MemoryStream())
+            {
+                iTextSharp.text.Document documento = new iTextSharp.text.Document();
+                iTextSharp.text.pdf.PdfCopy copia = new iTextSharp.text.pdf.PdfSmartCopy(documento, salida) { CloseStream = false };
+                documento.Open();
+                foreach (SesionInfo sesion in lote)
+                {
+                    iTextSharp.text.pdf.PdfReader lector = new iTextSharp.text.pdf.PdfReader(PdfDeSesion(sesion));
+                    copia.AddDocument(lector);
+                    lector.Close();
+                }
+
+                documento.Close();
+                return salida.ToArray();
+            }
+        }
+
+        /// <summary>"Bitacoras_24 sesiones_2026-10-01_a_2026-10-24.pdf" (PdfBitacora.NombreArchivo quita lo que Windows no admite).</summary>
+        private static string NombreDelLote(List<SesionInfo> lote)
+        {
+            List<DateTime> fechas = lote.Where(s => s.Fecha.HasValue).Select(s => s.Fecha.Value.Date).ToList();
+            string periodo = fechas.Count == 0 ? ""
+                : fechas.Min().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+                  + (fechas.Max() == fechas.Min() ? "" : "_a_" + fechas.Max().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+            return PdfBitacora.NombreArchivo("Bitacoras", lote.Count + (lote.Count == 1 ? " sesion" : " sesiones"), periodo);
+        }
+
+        /// <summary>"Uno por sesion..." desde la vista previa: un PDF por cada sesion del lote, en una carpeta.</summary>
+        private void GuardarUnoPorSesion(IWin32Window dueno, List<SesionInfo> lote)
+        {
             if (Kiosco.Activo)
             {
                 // En un equipo del laboratorio (Mis bitacoras del profesor) no se abre
                 // el dialogo de carpetas de Windows ni el Explorador al terminar:
                 // dejarian recorrer el disco del equipo.
-                MessageBox.Show(this, "En los equipos del laboratorio DigBit no guarda archivos. Descarga los PDF desde tu computadora.",
+                MessageBox.Show(dueno, "En los equipos del laboratorio DigBit no guarda archivos. Descarga los PDF desde tu computadora.",
                     Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -1095,7 +1678,7 @@ namespace DigBit
                 SelectedPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
             })
             {
-                if (dialogo.ShowDialog(this) != DialogResult.OK)
+                if (dialogo.ShowDialog(dueno) != DialogResult.OK)
                 {
                     return;
                 }
@@ -1143,7 +1726,7 @@ namespace DigBit
 
             if (fallidos.Count > 0)
             {
-                MessageBox.Show(this, "No se pudieron guardar " + fallidos.Count + " de " + lote.Count + " PDF:\n\n"
+                MessageBox.Show(dueno, "No se pudieron guardar " + fallidos.Count + " de " + lote.Count + " PDF:\n\n"
                     + string.Join("\n", fallidos.Take(6)) + (fallidos.Count > 6 ? "\n..." : "")
                     + (string.IsNullOrEmpty(queHacer) ? "" : "\n\n" + queHacer),
                     Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1156,12 +1739,21 @@ namespace DigBit
             }
         }
 
-        /// <summary>El PDF de una sesion en memoria: el de la vista previa, o el que el lote escribe en la carpeta.</summary>
+        /// <summary>El PDF de una sesion en memoria: el de VisorPdf, o el que el lote escribe en la carpeta.</summary>
         private byte[] PdfDeSesion(SesionInfo sesion)
+        {
+            return PdfDeSesion(sesion.Id, consultas, lectorDadas);
+        }
+
+        /// <summary>
+        /// El mismo, con las consultas que se den: la vista previa de la derecha lo
+        /// genera en segundo plano con unas suyas (las de la ventana son de su hilo).
+        /// </summary>
+        private static byte[] PdfDeSesion(int idSesion, Consultas deLaBase, LectorDeDadas dadas)
         {
             using (MemoryStream memoria = new MemoryStream())
             {
-                GenerarPdfSesion(sesion, memoria);
+                GenerarPdfSesion(idSesion, deLaBase, dadas, memoria);
                 return memoria.ToArray();
             }
         }
@@ -1172,9 +1764,10 @@ namespace DigBit
         /// que dio su docente sin bitacora (PdfBitacora, el mismo de la bitacora de
         /// una clase).
         /// </summary>
-        private void GenerarPdfSesion(SesionInfo sesion, Stream destino)
+        /// <returns>La firma de lo que lleva (FirmaDeLaSesion), para la vista previa.</returns>
+        private static string GenerarPdfSesion(int idSesion, Consultas deLaBase, LectorDeDadas dadas, Stream destino)
         {
-            EncabezadoPdfSesion datos = consultas.ConsultarDatosPdfSesion(sesion.Id);
+            EncabezadoPdfSesion datos = deLaBase.ConsultarDatosPdfSesion(idSesion);
             if (datos == null)
             {
                 // Se le ensena tal cual a quien lo pidio (AvisoDeFalloAdmin).
@@ -1182,7 +1775,49 @@ namespace DigBit
             }
 
             // Si no se pueden leer, falla el PDF entero (no sale uno al que le faltan).
-            PdfBitacora.Escribir(datos, consultas.consultaRegistroSesion(sesion.Id), lectorDadas.DeLaSesion(sesion.Id), destino);
+            DataTable registros = deLaBase.consultaRegistroSesion(idSesion);
+            List<AsistenciaDada> dadasDeLaSesion = dadas.DeLaSesion(idSesion);
+            List<ReporteProfesor> reportes = new ReportesProfesorDatos().DeLaSesion(idSesion);
+            string firma = FirmaDeLaSesion(registros, dadasDeLaSesion.Count, reportes);
+            PdfBitacora.Escribir(datos, registros, dadasDeLaSesion, reportes, destino);
+            return firma;
+        }
+
+        /// <summary>El de la vista previa de la derecha, con sus propias consultas (corre en segundo plano).</summary>
+        private static PdfDeVista GenerarPdfDeVista(int idSesion)
+        {
+            using (MemoryStream memoria = new MemoryStream())
+            {
+                string firma = GenerarPdfSesion(idSesion, new Consultas(), new LectorDeDadas(), memoria);
+                return new PdfDeVista(memoria.ToArray(), firma);
+            }
+        }
+
+        /// <summary>
+        /// Lo que cambia el PDF de una sesion: cada bitacora, con todo lo que trae
+        /// consultaRegistroSesion, cuantas asistencias dio su docente sin bitacora y
+        /// que fallas reporto (no se corrigen: basta cuales son).
+        /// Si lo que se acaba de leer abajo no tiene la misma firma que un PDF guardado
+        /// de la vista previa, ese PDF ya es viejo: registro alguien mas (una clase en
+        /// curso, un envio que llego tarde), el docente dio una asistencia o reporto
+        /// una falla, o se corrigio algo desde otra ventana.
+        /// </summary>
+        private static string FirmaDeLaSesion(DataTable registros, int dadas, List<ReporteProfesor> reportes)
+        {
+            StringBuilder firma = new StringBuilder();
+            firma.Append(registros.Rows.Count.ToString(CultureInfo.InvariantCulture)).Append('|')
+                .Append(dadas.ToString(CultureInfo.InvariantCulture)).Append('|')
+                .Append(string.Join(",", reportes.Select(r => r.Id.ToString(CultureInfo.InvariantCulture))));
+            foreach (DataRow fila in registros.Rows)
+            {
+                firma.Append('\n');
+                foreach (object valor in fila.ItemArray)
+                {
+                    firma.Append(Convert.ToString(valor, CultureInfo.InvariantCulture)).Append('\t');
+                }
+            }
+
+            return firma.ToString();
         }
 
         /// <summary>
@@ -1216,6 +1851,624 @@ namespace DigBit
         }
 
         // =====================================================================
+        // A la derecha: la vista previa del PDF de la sesion elegida
+        // =====================================================================
+
+        // La pestana de la derecha, con la vista previa escondida.
+        private const string AyudaTiraVista = "Mostrar la vista previa del PDF de la sesión elegida";
+        private const string AyudaTiraVistaAngosta = AyudaTiraVista
+            + ". En esta pantalla empieza escondida para que se vean todas las columnas de la lista.";
+
+        /// <summary>
+        /// El ancho del panel: el que dejo la persona al arrastrar la division
+        /// (mientras DigBit siga abierto) o, si no, lo que no necesitan las columnas
+        /// de la lista de sesiones: hasta TopeVista con todo entero (a 1920 la hoja
+        /// sale a dos tercios de su tamano), PisoVista si para eso basta con angostar
+        /// al docente, y entre MinimoVista y PisoVista si solo asi caben las columnas
+        /// (la hoja, a algo menos de la mitad). Si ni asi caben (a 1366, y a 1600 en
+        /// la de la administracion), 0: escondida, y la lista con todas sus columnas.
+        /// Si la persona la abrio (la pestana), PisoVista: la lista, con su barra de abajo.
+        /// </summary>
+        private int AnchoVistaInicial()
+        {
+            if (anchoVistaRecordado > 0)
+            {
+                return anchoVistaRecordado;
+            }
+
+            if (!sesionesLeidas)
+            {
+                return Math.Max(PisoVista, Math.Min(TopeVista, divisionVista.Width / 3));
+            }
+
+            int libre = divisionVista.Width - divisionVista.SplitterWidth;
+            int sobra = libre - AnchoQuePideLaLista(false);
+            if (sobra >= PisoVista)
+            {
+                return Math.Min(TopeVista, sobra);
+            }
+
+            int sobraAngosta = libre - AnchoQuePideLaLista(true);
+            if (sobraAngosta >= PisoVista)
+            {
+                return PisoVista;
+            }
+
+            if (sobraAngosta >= MinimoVista)
+            {
+                return sobraAngosta;
+            }
+
+            return vistaElegida == true ? PisoVista : 0;
+        }
+
+        /// <summary>
+        /// Al leer las sesiones por primera vez: el panel a lo que deja la lista o, si
+        /// a su lado no caben sus columnas y la persona no lo eligio, escondido (la
+        /// pestana de la derecha lo abre). Lo que eligio la persona, como lo dejo.
+        /// </summary>
+        private void AcomodarVistaAlAbrir()
+        {
+            if (divisionVista.Panel2Collapsed)
+            {
+                return;
+            }
+
+            int ancho = AnchoVistaInicial();
+            if (ancho <= 0)
+            {
+                PonerVistaVisible(false, false);
+                ayuda.SetToolTip(tiraVista, AyudaTiraVistaAngosta);
+                return;
+            }
+
+            PonerAnchoVista(ancho);
+        }
+
+        /// <summary>
+        /// Lo que mide la lista de sesiones con cada columna entera: las de
+        /// TextoEntero ya con su ancho; las que llenan (el docente; en Mis bitacoras
+        /// las cortas), lo que pide su texto mas largo de las primeras filas. Con
+        /// docenteAngosto, el docente a su minimo (con "..." y entero al pasar el raton).
+        /// </summary>
+        private int AnchoQuePideLaLista(bool docenteAngosto)
+        {
+            int total = SystemInformation.VerticalScrollBarWidth + 4;
+            DrawingFont fuenteEncabezado = grid.ColumnHeadersDefaultCellStyle.Font ?? grid.Font;
+            foreach (DataGridViewColumn columna in grid.Columns)
+            {
+                if (!columna.Visible)
+                {
+                    continue;
+                }
+
+                if (columna.AutoSizeMode == DataGridViewAutoSizeColumnMode.None)
+                {
+                    total += columna.Width;
+                    continue;
+                }
+
+                if (docenteAngosto && columna.Name == "profesor")
+                {
+                    total += columna.MinimumWidth;
+                    continue;
+                }
+
+                DrawingFont fuente = columna.InheritedStyle.Font ?? grid.Font;
+                int margen = 8 + columna.InheritedStyle.Padding.Horizontal;
+                int pide = Math.Max(columna.MinimumWidth,
+                    TextRenderer.MeasureText(columna.HeaderText, fuenteEncabezado).Width + grid.ColumnHeadersDefaultCellStyle.Padding.Horizontal + 8);
+                HashSet<string> medidos = new HashSet<string>(StringComparer.Ordinal);
+                for (int i = 0; i < grid.Rows.Count && i < 300; i++)
+                {
+                    string texto = Convert.ToString(grid.Rows[i].Cells[columna.Index].Value);
+                    if (!string.IsNullOrEmpty(texto) && medidos.Add(texto))
+                    {
+                        pide = Math.Max(pide, TextRenderer.MeasureText(texto, fuente).Width + margen);
+                    }
+                }
+
+                total += pide;
+            }
+
+            return total;
+        }
+
+        /// <summary>
+        /// El titulo y la linea de la sesion elegida, enteros: si no caben en un
+        /// renglon (con la vista previa al lado, a 1366), pasan a dos y el
+        /// encabezado crece. En un renglon, como siempre (60 px).
+        /// </summary>
+        private void AjustarEncabezadoSesion()
+        {
+            if (encabezadoSesion == null || lblSesionDetalle == null)
+            {
+                return;
+            }
+
+            int ancho = Math.Max(100, encabezadoSesion.ClientSize.Width);
+            int altoTitulo = AltoEnRenglones(lblSesionTitulo, ancho, 24);
+            int altoDetalle = AltoEnRenglones(lblSesionDetalle, ancho, 22);
+            lblSesionTitulo.Bounds = new Rectangle(0, 6, ancho, altoTitulo);
+            lblSesionDetalle.Bounds = new Rectangle(0, 6 + altoTitulo + 2, ancho, altoDetalle);
+            int alto = lblSesionDetalle.Bottom + 6;
+            if (encabezadoSesion.Height != alto)
+            {
+                encabezadoSesion.Height = alto;
+            }
+        }
+
+        /// <summary>El alto de un renglon o, si el texto no cabe a ese ancho, de dos (con "..." si ni asi).</summary>
+        private static int AltoEnRenglones(Label etiqueta, int ancho, int unRenglon)
+        {
+            if (string.IsNullOrEmpty(etiqueta.Text))
+            {
+                return unRenglon;
+            }
+
+            int renglon = TextRenderer.MeasureText("Ág", etiqueta.Font).Height;
+            Size medida = TextRenderer.MeasureText(etiqueta.Text, etiqueta.Font, new Size(ancho - 6, int.MaxValue),
+                TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+            return medida.Height > renglon + 2 ? Math.Max(unRenglon, 2 * renglon + 4) : unRenglon;
+        }
+
+        /// <summary>Lo que mide ahora el panel de la vista previa (el de la derecha).</summary>
+        private int AnchoVistaActual
+        {
+            get { return divisionVista.Width - divisionVista.SplitterWidth - divisionVista.SplitterDistance; }
+        }
+
+        /// <summary>
+        /// El panel de la derecha a ese ancho, dentro de lo que dejan los dos minimos
+        /// (la division se mide desde la izquierda: lo que queda para las listas).
+        /// </summary>
+        private void PonerAnchoVista(int ancho)
+        {
+            int libre = divisionVista.Width - divisionVista.SplitterWidth;
+            int valor = Math.Min(libre - divisionVista.Panel1MinSize, Math.Max(divisionVista.Panel2MinSize, ancho));
+            int distancia = libre - valor;
+            if (valor < divisionVista.Panel2MinSize || distancia < divisionVista.Panel1MinSize || distancia == divisionVista.SplitterDistance)
+            {
+                return;
+            }
+
+            moviendoVista = true;
+            try
+            {
+                divisionVista.SplitterDistance = distancia;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException || ex is ArgumentException)
+            {
+                // Con la ventana a medio acomodar: se queda como estaba.
+            }
+            finally
+            {
+                moviendoVista = false;
+            }
+        }
+
+        /// <summary>
+        /// "Ocultar" y la pestana de la derecha: el panel fuera (las listas se
+        /// ensanchan) o de vuelta, con su ancho y la sesion elegida. Lo que elige la
+        /// persona (porLaPersona) se recuerda mientras DigBit siga abierto; lo que
+        /// decide AcomodarVistaAlAbrir en una pantalla angosta, no.
+        /// </summary>
+        private void PonerVistaVisible(bool visible, bool porLaPersona)
+        {
+            if (porLaPersona)
+            {
+                vistaElegida = visible;
+                ayuda.SetToolTip(tiraVista, AyudaTiraVista);
+            }
+
+            bool conFoco = divisionVista.Panel2.ContainsFocus || tiraVista.ContainsFocus;
+            divisionVista.Panel2Collapsed = !visible;
+            tiraVista.Visible = !visible;
+            if (visible)
+            {
+                PonerAnchoVista(AnchoVistaInicial());
+                ProgramarVista();
+            }
+            else
+            {
+                // Escondida no se genera nada ni se guarda el PDF que se veia.
+                esperaVista.Stop();
+                pedidoVista++;
+                idSesionEnVista = -1;
+                vista.MostrarTexto("");
+            }
+
+            if (conFoco && grid.CanFocus)
+            {
+                grid.Focus();
+            }
+        }
+
+        private void ColocarCabeceraVista()
+        {
+            if (btnVistaAjustar == null)
+            {
+                return;
+            }
+
+            int derecha = cabeceraVista.ClientSize.Width;
+            lnkOcultarVista.Location = new Point(derecha - lnkOcultarVista.Width, 9);
+            int y = 34;
+            btnVistaAjustar.Location = new Point(derecha - btnVistaAjustar.Width, y);
+            btnVistaAcercar.Location = new Point(btnVistaAjustar.Left - 6 - btnVistaAcercar.Width, y);
+            lblVistaZoom.Location = new Point(btnVistaAcercar.Left - lblVistaZoom.Width, y + (btnVistaAcercar.Height - lblVistaZoom.Height) / 2);
+            btnVistaAlejar.Location = new Point(lblVistaZoom.Left - btnVistaAlejar.Width, y);
+
+            // "Página 12 de 30" a la izquierda de "−" si cabe con dos cifras; en un
+            // panel angosto (a menos de unos 390 px), en su propio renglon debajo:
+            // ahi se cortaba en "Págin...".
+            int libre = btnVistaAlejar.Left - 10;
+            int pide = TextRenderer.MeasureText("Página 88 de 88", lblVistaPagina.Font).Width + 6;
+            int alto;
+            if (libre >= pide)
+            {
+                lblVistaPagina.Bounds = new Rectangle(0, y + (btnVistaAlejar.Height - 24) / 2, libre, 24);
+                alto = 70;
+            }
+            else
+            {
+                lblVistaPagina.Bounds = new Rectangle(0, btnVistaAlejar.Bottom + 2, Math.Max(40, derecha), 24);
+                alto = lblVistaPagina.Bottom + 6;
+            }
+
+            if (cabeceraVista.Height != alto)
+            {
+                cabeceraVista.Height = alto;
+            }
+        }
+
+        /// <summary>
+        /// Tras −, + o "Ajustar al ancho" con el raton, el foco vuelve a donde estaba
+        /// (casi siempre la lista de sesiones: las flechas siguen cambiando de sesion;
+        /// si era la hoja, a la hoja, con su marco verde). Con el teclado se queda en
+        /// el boton, para volver a pulsarlo.
+        /// </summary>
+        private void DevolverFocoTrasZoom()
+        {
+            if (!zoomConRaton)
+            {
+                return;
+            }
+
+            zoomConRaton = false;
+            Control destino = focoAntesDelZoom ?? grid;
+            if (destino == vista)
+            {
+                vista.EnfocarHojas();
+            }
+            else if (destino.CanFocus)
+            {
+                destino.Focus();
+            }
+        }
+
+        /// <summary>
+        /// La pagina y el zoom de la hoja que se ve; sin hojas, los botones del zoom
+        /// apagados. Con un texto gris en vez de PDF (sin sesion, sin WinRT, un
+        /// fallo) ni se ven: BotonCabecera apagado se pinta igual que encendido.
+        /// Mientras se prepara se quedan, para que no parpadeen al bajar por la lista.
+        /// </summary>
+        private void ActualizarCabeceraVista()
+        {
+            lblVistaPagina.Text = vista.TextoPagina;
+            lblVistaZoom.Text = vista.TextoZoom;
+            bool hayHojas = vista.HayHojas;
+            bool conZoom = hayHojas || vista.Mensaje == null;
+            foreach (BotonCabecera boton in new[] { btnVistaAlejar, btnVistaAcercar, btnVistaAjustar })
+            {
+                boton.Enabled = hayHojas;
+                boton.Visible = conZoom;
+            }
+        }
+
+        /// <summary>
+        /// La sesion elegida cambio (o la lista se volvio a llenar): la vista dice
+        /// enseguida que se prepara y el PDF se genera cuando la lista se queda
+        /// quieta (EsperaVista), para no generar uno por cada fila al moverse con
+        /// las flechas. Sin sesion elegida, un texto gris.
+        /// </summary>
+        private void ProgramarVista()
+        {
+            if (vista == null || llenandoLista || !sesionesLeidas || divisionVista.Panel2Collapsed)
+            {
+                return;
+            }
+
+            SesionInfo sesion = Seleccionado<SesionInfo>();
+            int id = sesion == null ? 0 : sesion.Id;
+            if (id == idSesionEnVista)
+            {
+                // Ya se ve, o ya se prepara, esa.
+                return;
+            }
+
+            idSesionEnVista = id;
+            pedidoVista++;
+            esperaVista.Stop();
+            if (sesion == null)
+            {
+                vista.MostrarTexto(TextoSinSesion());
+                return;
+            }
+
+            // Si este Windows no puede dibujar PDF, ni se generan: se dice por que.
+            string sinWinRT = VistaPreviaPdf.MotivoSinWinRT();
+            if (sinWinRT != null)
+            {
+                vista.MostrarSinWinRT(sinWinRT);
+                return;
+            }
+
+            vista.MostrarPreparando();
+            esperaVista.Interval = PdfReciente(id, false) != null ? EsperaVistaReciente : EsperaVista;
+            esperaVista.Start();
+        }
+
+        private string TextoSinSesion()
+        {
+            return sesiones.Count == 0 ? "Todavía no hay sesiones, así que no hay ningún PDF que mostrar."
+                : visibles.Count == 0 ? "Ninguna sesión coincide con los filtros: no hay ningún PDF que mostrar."
+                : "Elige una sesión de la lista para ver aquí cómo sale su PDF.";
+        }
+
+        /// <summary>
+        /// La lista se quedo quieta: el PDF de la sesion elegida, de los recientes o
+        /// generado en segundo plano (con sus propias consultas). Uno de los recientes
+        /// solo si lleva lo mismo que acaba de leerse abajo (FirmaDeLaSesion): si no,
+        /// se vuelve a generar. Lo que llegue cuando ya se eligio otra se guarda
+        /// entre los recientes, pero no se pinta.
+        /// </summary>
+        private void PrepararVista()
+        {
+            esperaVista.Stop();
+            SesionInfo sesion = Seleccionado<SesionInfo>();
+            if (sesion == null || sesion.Id != idSesionEnVista || divisionVista.Panel2Collapsed)
+            {
+                return;
+            }
+
+            // Lo de abajo primero, si su espera aun no llego: con lo que se lea se
+            // sabe si el PDF guardado sigue al dia (lo iba a leer de todos modos).
+            if (idSesionMostrada != sesion.Id)
+            {
+                esperaDetalle.Stop();
+                CargarDetalle(false, null);
+                // Un aviso de fallo (modal) pudo cambiar algo mientras tanto.
+                if (Seleccionado<SesionInfo>() != sesion || sesion.Id != idSesionEnVista || divisionVista.Panel2Collapsed)
+                {
+                    return;
+                }
+            }
+
+            PdfDeVista reciente = PdfReciente(sesion.Id, true);
+            if (reciente != null && idSesionMostrada == sesion.Id && firmaMostrada != null && reciente.Firma == firmaMostrada)
+            {
+                vista.Mostrar(reciente.Pdf);
+                return;
+            }
+
+            if (reciente != null)
+            {
+                // Viejo: abajo ya hay otra cosa (o no se pudo leer). Se genera otra vez.
+                pdfRecientes.RemoveAll(p => p.Key == sesion.Id);
+            }
+
+            int numero = pedidoVista;
+            int tanda = tandaRecientes;
+            int id = sesion.Id;
+            Task.Run(() => GenerarPdfDeVista(id))
+                .ContinueWith(tarea => EnLaVentana(() => AlGenerarVista(numero, id, tarea, tanda)), TaskScheduler.Default);
+        }
+
+        /// <param name="tanda">La de los recientes cuando se pidio: si despues se volvio a leer (F5), el PDF ya es viejo y no se guarda.</param>
+        private void AlGenerarVista(int numero, int id, Task<PdfDeVista> tarea, int tanda)
+        {
+            if (IsDisposed)
+            {
+                return;
+            }
+
+            if (tarea.IsFaulted || tarea.IsCanceled)
+            {
+                // De una sesion que ya no se ve no se dice nada; la de ahora, en gris en medio.
+                if (numero != pedidoVista)
+                {
+                    return;
+                }
+
+                Exception ex = tarea.Exception == null ? new TaskCanceledException() : tarea.Exception.GetBaseException();
+                Log.Error("Vista previa del PDF de la sesion " + id, ex);
+                vista.MostrarTexto(AvisoDeFalloAdmin.Texto("No se pudo preparar la vista previa", ex));
+                return;
+            }
+
+            if (tanda == tandaRecientes)
+            {
+                GuardarReciente(id, tarea.Result);
+            }
+
+            if (numero != pedidoVista || divisionVista.Panel2Collapsed)
+            {
+                return;
+            }
+
+            vista.Mostrar(tarea.Result.Pdf);
+
+            // Si entre leer lo de abajo y generar el PDF registro alguien mas (una clase
+            // en curso), lo de abajo se vuelve a leer: los dos dicen lo mismo.
+            if (id == idSesionMostrada && firmaMostrada != null && tarea.Result.Firma != firmaMostrada)
+            {
+                DataRow alumno = AlumnoSeleccionado();
+                esperaDetalle.Stop();
+                CargarDetalle(true, alumno == null ? null : Texto(alumno, "fk_usuario"));
+            }
+        }
+
+        /// <summary>Al hilo de la ventana; si ya se cerro, se pierde.</summary>
+        private void EnLaVentana(Action accion)
+        {
+            if (IsDisposed || !IsHandleCreated)
+            {
+                return;
+            }
+
+            try
+            {
+                BeginInvoke(accion);
+            }
+            catch (InvalidOperationException)
+            {
+                // Se cerro mientras tanto.
+            }
+        }
+
+        /// <summary>El PDF reciente de esa sesion (null si no esta); usar: pasa a ser el mas nuevo.</summary>
+        private PdfDeVista PdfReciente(int id, bool usar)
+        {
+            int indice = pdfRecientes.FindIndex(p => p.Key == id);
+            if (indice < 0)
+            {
+                return null;
+            }
+
+            KeyValuePair<int, PdfDeVista> par = pdfRecientes[indice];
+            if (usar)
+            {
+                pdfRecientes.RemoveAt(indice);
+                pdfRecientes.Add(par);
+            }
+
+            return par.Value;
+        }
+
+        private void GuardarReciente(int id, PdfDeVista pdf)
+        {
+            pdfRecientes.RemoveAll(p => p.Key == id);
+            pdfRecientes.Add(new KeyValuePair<int, PdfDeVista>(id, pdf));
+            while (pdfRecientes.Count > PdfRecientes)
+            {
+                pdfRecientes.RemoveAt(0);
+            }
+        }
+
+        /// <summary>Se volvio a leer (F5, una correccion): los PDF guardados pueden haber cambiado.</summary>
+        private void OlvidarVista()
+        {
+            pdfRecientes.Clear();
+            tandaRecientes++;
+            pedidoVista++;
+            idSesionEnVista = -1;
+            esperaVista.Stop();
+        }
+
+        /// <summary>
+        /// Con la vista previa escondida, la pestana angosta a la derecha de las
+        /// listas que la vuelve a abrir: "Vista previa del PDF" de arriba abajo.
+        /// </summary>
+        private sealed class TiraVistaPrevia : Control
+        {
+            private const int AnchoPestana = 26;
+            private static readonly Color Borde = Color.FromArgb(205, 222, 210);
+            private readonly DrawingFont fuente = new DrawingFont("Century Gothic", 9.75F, FontStyle.Bold);
+            private bool encima;
+
+            public TiraVistaPrevia()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint
+                    | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+                BackColor = Color.White;
+                Cursor = Cursors.Hand;
+                TabStop = true;
+                Text = "Vista previa del PDF";
+                AccessibleRole = AccessibleRole.PushButton;
+                AccessibleName = "Mostrar la vista previa del PDF";
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                Graphics g = e.Graphics;
+                g.Clear(BackColor);
+                int largo = TextRenderer.MeasureText(Text, fuente).Width;
+                Rectangle pestana = new Rectangle(Width - AnchoPestana, 0, AnchoPestana, Math.Max(40, Math.Min(Height - 1, largo + 46)));
+                using (SolidBrush fondo = new SolidBrush(encima ? EstiloHorarios.VerdePulsado : EstiloHorarios.VerdeSobre))
+                using (Pen borde = new Pen(Borde))
+                {
+                    g.FillRectangle(fondo, pestana);
+                    g.DrawRectangle(borde, pestana.X, pestana.Y, pestana.Width - 1, pestana.Height - 1);
+                }
+
+                TextRenderer.DrawText(g, "«", fuente, new Rectangle(pestana.X, 6, AnchoPestana, 20), Color.DarkGreen,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+                using (StringFormat formato = new StringFormat(StringFormatFlags.DirectionVertical | StringFormatFlags.NoWrap))
+                using (SolidBrush tinta = new SolidBrush(Color.DarkGreen))
+                {
+                    formato.Alignment = StringAlignment.Near;
+                    formato.LineAlignment = StringAlignment.Center;
+                    g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+                    g.DrawString(Text, fuente, tinta, new RectangleF(pestana.X, 30, AnchoPestana, pestana.Height - 34), formato);
+                }
+
+                if (Focused && ShowFocusCues)
+                {
+                    ControlPaint.DrawFocusRectangle(g, Rectangle.Inflate(pestana, -3, -3));
+                }
+            }
+
+            protected override void OnMouseEnter(EventArgs e)
+            {
+                encima = true;
+                Invalidate();
+                base.OnMouseEnter(e);
+            }
+
+            protected override void OnMouseLeave(EventArgs e)
+            {
+                encima = false;
+                Invalidate();
+                base.OnMouseLeave(e);
+            }
+
+            protected override void OnGotFocus(EventArgs e)
+            {
+                Invalidate();
+                base.OnGotFocus(e);
+            }
+
+            protected override void OnLostFocus(EventArgs e)
+            {
+                Invalidate();
+                base.OnLostFocus(e);
+            }
+
+            protected override void OnKeyDown(KeyEventArgs e)
+            {
+                if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Space)
+                {
+                    e.Handled = true;
+                    OnClick(EventArgs.Empty);
+                    return;
+                }
+
+                base.OnKeyDown(e);
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                {
+                    fuente.Dispose();
+                }
+
+                base.Dispose(disposing);
+            }
+        }
+
+        // =====================================================================
         // Utilidades
         // =====================================================================
 
@@ -1243,10 +2496,32 @@ namespace DigBit
             if (disposing)
             {
                 esperaDetalle.Dispose();
+                esperaVista.Dispose();
                 negrita.Dispose();
+                fuenteSignoVista.Dispose();
+                pdfRecientes.Clear();
             }
 
             base.Dispose(disposing);
+        }
+
+        /// <summary>
+        /// Un encabezado de varias palabras ("Sin internet") se parte en renglones y
+        /// basta con que quepa la mas larga, con el margen del encabezado: la lista la
+        /// pinta entera desde su ancho mas 6 px. El minimo de EncabezadoEntero se
+        /// quedaba 3 px corto y, con la vista previa al lado, las columnas a su minimo
+        /// (Mis bitacoras de 1536 a 1760 de ancho) decian "interne".
+        /// </summary>
+        private static void PalabraEnteraEnEncabezado(DataGridViewColumn columna)
+        {
+            string texto = columna.HeaderText ?? "";
+            DrawingFont fuente = columna.HeaderCell.InheritedStyle.Font ?? columna.DataGridView.Font;
+            int palabra = texto.Split(' ').Max(p => TextRenderer.MeasureText(p, fuente).Width);
+            int ancho = palabra + columna.HeaderCell.InheritedStyle.Padding.Horizontal;
+            if (ancho > columna.MinimumWidth)
+            {
+                columna.MinimumWidth = ancho;
+            }
         }
 
         private static string HoraCorta(TimeSpan? hora)

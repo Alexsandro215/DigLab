@@ -231,6 +231,32 @@ namespace DigBit.conexion
             return cuenta;
         }
 
+        /// <summary>
+        /// Cuantas fallas reporto el profesor en cada sesion que tenga alguna (para la
+        /// columna Fallas de Bitacoras). Son pocas: se cuentan todas de una vez. Vacio si
+        /// la base no tiene db/15.
+        /// </summary>
+        internal static Dictionary<int, int> ContarTodas(MySqlConnection conexion)
+        {
+            Dictionary<int, int> cuenta = new Dictionary<int, int>();
+            if (!Esquema.ReportesDeProfesor(conexion))
+            {
+                return cuenta;
+            }
+
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT fk_codigo_accesos, COUNT(*) FROM reportes_profesor GROUP BY fk_codigo_accesos", conexion))
+            using (MySqlDataReader reader = comando.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    cuenta[reader.GetInt32(0)] = Convert.ToInt32(reader[1]);
+                }
+            }
+
+            return cuenta;
+        }
+
         /// <summary>Las que cumplen la condicion (sobre rp, reportes_profesor), con el nombre del profesor.</summary>
         internal static List<ReporteProfesor> Leer(MySqlConnection conexion, string condicion, Action<MySqlCommand> parametros)
         {

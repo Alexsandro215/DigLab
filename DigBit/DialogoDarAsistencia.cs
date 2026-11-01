@@ -25,6 +25,13 @@ namespace DigBit
     /// dialogo abierto (hora estimada del servidor), "Darle la asistencia" se
     /// apaga y lo dice: el servidor ya no la aceptaria. En kiosco va encima de
     /// todo y no abre dialogos de archivos ni usa el portapapeles.
+    ///
+    /// Ningun motivo viene marcado: lo que queda como constancia lo elige el
+    /// docente (con "matricula, Enter, Enter" quedaba "sin internet" sin
+    /// elegirlo). "Darle la asistencia" se enciende con el estudiante y el
+    /// motivo, y mientras este apagado la linea del error dice en gris que
+    /// falta. Nunca se le da el foco a un motivo: un RadioButton se marca solo
+    /// al recibirlo.
     /// </summary>
     internal class DialogoDarAsistencia : Form
     {
@@ -32,8 +39,8 @@ namespace DigBit
         private const int LargoMatricula = 45;
         private static readonly Color TextoSubtitulo = Color.FromArgb(70, 70, 70);
         private static readonly Color TextoGris = Color.FromArgb(100, 100, 100);
-        // Apagado, el boton principal se ve gris: verde oscuro con letra gris parecia pulsable (como en Alumno_Principal).
-        private static readonly Color BotonApagado = Color.FromArgb(205, 210, 205);
+        // Lo que falta para darla (sin error a la vista), en la linea del error.
+        private static readonly Color TextoFalta = Color.FromArgb(105, 105, 105);
 
         private readonly Func<string, EstudianteBuscado> buscar;
         private readonly Func<int, AlumnoDeAsistencia> deLaLista;
@@ -43,7 +50,10 @@ namespace DigBit
         private readonly DateTime fin;
         private readonly bool porMatricula;
         private readonly bool conClasesAntes;
+        // Los estudiantes entran con el SIIA (Ajustes): su cuenta se crea sola la primera vez y no hay "Crear cuenta".
+        private readonly bool estudiantesConSiia;
         private readonly string textoTerminada;
+        private readonly Color colorError;
         private readonly ToolTip ayuda = new ToolTip { AutoPopDelay = 20000 };
         // Mira cada segundo si la clase ya termino (ver RevisarFin).
         private readonly Timer reloj = new Timer { Interval = 1000 };
@@ -76,12 +86,13 @@ namespace DigBit
         /// <param name="hoy">El dia de hoy (del servidor): para saber si se le quito la asistencia hoy.</param>
         /// <param name="alumno">El de la casilla; null para buscarlo por su matricula.</param>
         /// <param name="conClasesAntes">La lista ya tiene clases antes de hoy: quien entra hoy, entra con falta en ellas.</param>
+        /// <param name="estudiantesConSiia">Los estudiantes entran con el SIIA (InicioConSiia): sin cuenta, que inicie sesion una vez y se crea sola.</param>
         /// <param name="ahoraServidor">La hora del servidor, estimada (la de Mis grupos): para apagar el boton al terminar la clase.</param>
         /// <param name="buscar">matricula -> la cuenta, o null si no hay ninguna (AsistenciaDatos.BuscarEstudiante).</param>
         /// <param name="deLaLista">id -> ese alumno en la lista que se ve, o null si aun no esta.</param>
         /// <param name="dar">(alumno, motivo, equipo o null, detalle) -> null si quedo, o por que no (AsistenciaDatos.DarAsistencia).</param>
         public DialogoDarAsistencia(string materia, string grupo, PreparacionDar preparacion, DateTime hoy, AlumnoDeAsistencia alumno,
-            bool conClasesAntes, Func<DateTime> ahoraServidor,
+            bool conClasesAntes, bool estudiantesConSiia, Func<DateTime> ahoraServidor,
             Func<string, EstudianteBuscado> buscar, Func<int, AlumnoDeAsistencia> deLaLista, Func<int, string, string, string, string> dar)
         {
             this.buscar = buscar;
@@ -89,6 +100,7 @@ namespace DigBit
             this.dar = dar;
             this.ahoraServidor = ahoraServidor;
             this.conClasesAntes = conClasesAntes;
+            this.estudiantesConSiia = estudiantesConSiia;
             this.hoy = hoy.Date;
             fin = this.hoy + preparacion.Fin;
             porMatricula = alumno == null;
@@ -153,8 +165,8 @@ namespace DigBit
                     ForeColor = Color.FromArgb(30, 30, 30),
                     Location = new Point(i % 2 == 0 ? 24 : 24 + 272, y + 24 + (i / 2) * 26),
                     Tag = clave,
-                    Text = AsistenciasDadas.NombreDeMotivo(clave),
-                    Checked = clave == AsistenciasDadas.SinInternet
+                    // Ninguno marcado: el motivo es constancia oficial y lo elige el docente.
+                    Text = AsistenciasDadas.NombreDeMotivo(clave)
                 };
                 opcion.CheckedChanged += (s, e) =>
                 {
@@ -227,10 +239,14 @@ namespace DigBit
             });
             y += altoNota + 8;
 
-            // Tres renglones: un fallo dice por que y que hacer (MensajeDeFallo).
-            lblError = EstiloAdmin.LineaError(new Point(24, y), Ancho - 48, 56);
+            // Tres renglones (cuatro con el SIIA: sin cuenta, como entrar la primera vez):
+            // un fallo dice por que y que hacer (MensajeDeFallo).
+            int altoError = estudiantesConSiia && porMatricula ? 74 : 56;
+            lblError = EstiloAdmin.LineaError(new Point(24, y), Ancho - 48, altoError);
+            lblError.UseMnemonic = false;
+            colorError = lblError.ForeColor;
             controles.Add(lblError);
-            y += 56 + 4;
+            y += altoError + 4;
 
             EstiloHorarios.PrepararDialogo(this, "Dar asistencia", new Size(Ancho, y + 40 + 16));
             TopMost = Kiosco.Activo;
@@ -246,19 +262,13 @@ namespace DigBit
                 UseMnemonic = false
             });
             Controls.AddRange(controles.ToArray());
+            // Apagado se ve gris (BotonesApagados, como todos los botones).
             btnDar = EstiloAdmin.BotonesDialogo(this, "Darle la asistencia", Dar);
-            btnDar.EnabledChanged += (s, e) =>
-            {
-                Color fondo = btnDar.Enabled ? Color.DarkGreen : BotonApagado;
-                btnDar.BackColor = fondo;
-                btnDar.FlatAppearance.BorderColor = fondo;
-            };
             reloj.Tick += (s, e) => RevisarFin();
 
             if (porMatricula)
             {
                 // Hasta encontrarlo no se puede dar: el nombre es la comprobacion.
-                btnDar.Enabled = false;
                 ActiveControl = txtMatricula;
             }
             else
@@ -267,7 +277,8 @@ namespace DigBit
                 nombre = string.IsNullOrWhiteSpace(alumno.Nombre) ? alumno.Matricula : alumno.Nombre;
                 lblNombre.Text = nombre;
                 lblMatricula.Text = "Matrícula " + alumno.Matricula;
-                ActiveControl = motivos[0];
+                // No un motivo: al recibir el foco se marcaria solo (y con Enter quedaria dado).
+                ActiveControl = txtDetalle;
             }
 
             CambiarMotivo();
@@ -332,20 +343,64 @@ namespace DigBit
             terminada = true;
             HayQueReleer = true;
             reloj.Stop();
-            btnDar.Enabled = false;
+            ActualizarDar();
             if (btnBuscar != null)
             {
+                SacarFocoDeBuscar();
                 btnBuscar.Enabled = false;
             }
 
-            lblError.Text = textoTerminada;
+            MostrarError(textoTerminada);
             Log.Info("Dar asistencia: la clase termino con el dialogo abierto (" + HorariosDatos.Hora(fin.TimeOfDay) + ").");
         }
 
-        /// <summary>Borra el error; si la clase ya termino, se queda diciendolo.</summary>
+        /// <summary>
+        /// Antes de apagar "Buscar": si tiene el foco, a la caja de la matricula. Un
+        /// control que se apaga con el foco lo pasa al siguiente (SelectNextControl),
+        /// y el siguiente con parada es el primer motivo: un RadioButton que recibe el
+        /// foco sin el raton ni Tab se marca solo.
+        /// </summary>
+        private void SacarFocoDeBuscar()
+        {
+            if (btnBuscar != null && btnBuscar.Focused && txtMatricula != null && txtMatricula.CanFocus)
+            {
+                txtMatricula.Focus();
+            }
+        }
+
+        /// <summary>Un error (en rojo): por que no se pudo y que hacer.</summary>
+        private void MostrarError(string texto)
+        {
+            lblError.ForeColor = colorError;
+            lblError.Text = texto ?? "";
+        }
+
+        /// <summary>
+        /// Borra el error; si la clase ya termino, se queda diciendolo. Si no, con
+        /// "Darle la asistencia" apagado, dice en gris que falta (buscar al
+        /// estudiante o elegir el motivo).
+        /// </summary>
         private void LimpiarError()
         {
-            lblError.Text = terminada ? textoTerminada : "";
+            if (terminada)
+            {
+                MostrarError(textoTerminada);
+                return;
+            }
+
+            lblError.ForeColor = TextoFalta;
+            lblError.Text = idAlumno <= 0 ? (porMatricula ? "Falta: buscar al estudiante por su matrícula." : "")
+                : MotivoElegido == null ? "Falta: elegir por qué no pudo registrar su bitácora." : "";
+        }
+
+        /// <summary>"Darle la asistencia" se enciende con el estudiante y el motivo elegidos, mientras dura la clase.</summary>
+        private void ActualizarDar()
+        {
+            bool listo = !terminada && idAlumno > 0 && MotivoElegido != null;
+            if (btnDar.Enabled != listo)
+            {
+                btnDar.Enabled = listo;
+            }
         }
 
         /// <summary>Enter en la caja de la matricula busca (no da la asistencia).</summary>
@@ -378,9 +433,11 @@ namespace DigBit
         private void CambiarMotivo()
         {
             string motivo = MotivoElegido;
+            // Sin motivo, el equipo aun no aplica (solo con "no tenia internet" o "no funcionaba").
             cmbEquipo.Enabled = AsistenciasDadas.ConEquipo(motivo);
             etiquetaDetalle.Text = motivo == AsistenciasDadas.Otro ? "Detalle (escribe el motivo)" : "Detalle (opcional)";
             LimpiarError();
+            ActualizarDar();
         }
 
         /// <summary>Cambio la matricula: lo encontrado ya no vale y no se puede dar hasta buscar otra vez.</summary>
@@ -391,7 +448,7 @@ namespace DigBit
             lblNombre.Text = "";
             lblMatricula.Text = "";
             LimpiarError();
-            btnDar.Enabled = false;
+            ActualizarDar();
         }
 
         /// <summary>
@@ -411,13 +468,16 @@ namespace DigBit
 
             if (matricula.Length == 0)
             {
-                lblError.Text = "Escribe su matrícula.";
+                MostrarError("Escribe su matrícula.");
                 txtMatricula.Focus();
                 return;
             }
 
             EstudianteBuscado cuenta;
             Cursor = Cursors.WaitCursor;
+            // Al apagarse con el foco (pulsado con el raton), WinForms se lo pasaria al
+            // siguiente control: el primer motivo, que se marcaria solo. Va a la matricula.
+            SacarFocoDeBuscar();
             btnBuscar.Enabled = false;
             try
             {
@@ -427,7 +487,7 @@ namespace DigBit
             {
                 // La causa y que hacer; el detalle tecnico, al registro.
                 Log.Error("Dar asistencia: buscar una matricula", ex);
-                lblError.Text = MensajeDeFallo.Explicar("No se pudo buscar la matrícula", ex, AvisoDeFalloDocente.SiSigue);
+                MostrarError(MensajeDeFallo.Explicar("No se pudo buscar la matrícula", ex, AvisoDeFalloDocente.SiSigue));
                 return;
             }
             finally
@@ -439,7 +499,7 @@ namespace DigBit
             string problema = PorQueNo(cuenta, matricula);
             if (problema != null)
             {
-                lblError.Text = problema;
+                MostrarError(problema);
                 txtMatricula.Focus();
                 txtMatricula.SelectAll();
                 return;
@@ -452,10 +512,10 @@ namespace DigBit
             // Si aun no esta: con falta en las clases que ya cuentan; si es la primera, desde hoy.
             lblMatricula.Text = "Matrícula " + cuenta.Matricula + (enLista != null ? ""
                 : conClasesAntes ? ". Entrará a la lista con falta en las clases anteriores." : ". Entrará a la lista desde hoy.");
-            btnDar.Enabled = !terminada;
-            // El siguiente paso es elegir por que: Enter desde ahi la da.
-            RadioButton elegido = motivos.FirstOrDefault(m => m.Checked) ?? motivos[0];
-            elegido.Focus();
+            // El foco se queda donde esta (no en un motivo, que se marcaria solo): el
+            // siguiente paso es elegir por que, y la linea del error lo dice.
+            LimpiarError();
+            ActualizarDar();
         }
 
         /// <summary>Por que a esa cuenta no se le puede dar la asistencia de hoy, o null si si.</summary>
@@ -463,9 +523,13 @@ namespace DigBit
         {
             if (cuenta == null)
             {
-                const string Resto = ": revisa que esté bien escrita. Si aún no tiene cuenta, que la cree con «Crear cuenta» al iniciar sesión "
-                    + "en un equipo con internet; después podrás darle la asistencia si la clase sigue.";
-                return QueQuepa("No hay ninguna cuenta con la matrícula " + matricula + Resto, "No hay ninguna cuenta con esa matrícula" + Resto);
+                // Con el SIIA no hay "Crear cuenta" (Login): la cuenta se crea sola al entrar la primera vez.
+                string resto = estudiantesConSiia
+                    ? ": revisa que esté bien escrita. Si es su primera vez en DigBit, que inicie sesión una vez en un equipo con internet "
+                        + "con su matrícula, su contraseña y su NIP del SIIA (su cuenta se crea sola); después podrás darle la asistencia si la clase sigue."
+                    : ": revisa que esté bien escrita. Si aún no tiene cuenta, que la cree con «Crear cuenta» al iniciar sesión "
+                        + "en un equipo con internet; después podrás darle la asistencia si la clase sigue.";
+                return QueQuepa("No hay ninguna cuenta con la matrícula " + matricula + resto, "No hay ninguna cuenta con esa matrícula" + resto);
             }
 
             if (!cuenta.EsEstudiante)
@@ -524,7 +588,7 @@ namespace DigBit
 
             if (idAlumno <= 0)
             {
-                lblError.Text = porMatricula ? "Escribe su matrícula y pulsa «Buscar»." : "No se sabe a quién darle la asistencia: cierra y vuelve a pulsar su casilla.";
+                MostrarError(porMatricula ? "Escribe su matrícula y pulsa «Buscar»." : "No se sabe a quién darle la asistencia: cierra y vuelve a pulsar su casilla.");
                 if (porMatricula)
                 {
                     txtMatricula.Focus();
@@ -536,15 +600,15 @@ namespace DigBit
             string motivo = MotivoElegido;
             if (motivo == null)
             {
-                lblError.Text = "Elige por qué no pudo registrar su bitácora.";
-                motivos[0].Focus();
+                // Sin dar el foco a un motivo: lo marcaria (es lo que se elige, no lo que se adivina).
+                MostrarError("Elige por qué no pudo registrar su bitácora.");
                 return;
             }
 
             string detalle = (txtDetalle.Text ?? "").Trim();
             if (motivo == AsistenciasDadas.Otro && detalle.Length == 0)
             {
-                lblError.Text = "Escribe el motivo en el detalle.";
+                MostrarError("Escribe el motivo en el detalle.");
                 txtDetalle.Focus();
                 return;
             }
@@ -571,7 +635,8 @@ namespace DigBit
             finally
             {
                 Cursor = Cursors.Default;
-                btnDar.Enabled = !terminada;
+                // Otra vez lo de siempre: con el estudiante, el motivo y la clase en curso.
+                ActualizarDar();
             }
 
             if (problema == null)
@@ -582,7 +647,7 @@ namespace DigBit
 
             // La lista de debajo puede no ser la de ahora (ya registro, ya se la dio, la clase termino...).
             HayQueReleer = true;
-            lblError.Text = problema;
+            MostrarError(problema);
         }
     }
 }

@@ -631,7 +631,7 @@ namespace DigBit.conexion
     /// que teclea el alumno (docs/fase6-horarios.md). Todo con el reloj del
     /// servidor MySQL.
     /// </summary>
-    internal class HorariosDatos
+    internal partial class HorariosDatos
     {
         public const int MargenAntesDelInicioMinutos = 15;
         // Solo para mostrar (cabeceras, avisos, menus): nada lo compara ni lo guarda.
@@ -1470,9 +1470,14 @@ namespace DigBit.conexion
             }
         }
 
+        /// <param name="excluirTambien">Otras franjas que no cuentan (las que un reemplazo va a recortar, db/25); null: ninguna.</param>
         private static string ValidarFranjaEn(MySqlConnection conexion, MySqlTransaction transaccion, int? excluirFranjaId, int idClase,
-            int idLaboratorio, int diaSemana, TimeSpan inicio, TimeSpan fin, DateTime? propiaDesde, DateTime? propiaHasta)
+            int idLaboratorio, int diaSemana, TimeSpan inicio, TimeSpan fin, DateTime? propiaDesde, DateTime? propiaHasta,
+            IEnumerable<int> excluirTambien = null)
         {
+            // Solo numeros: van en el texto de la consulta.
+            string fueraTambien = excluirTambien == null || !excluirTambien.Any() ? ""
+                : " AND h.idhorarios NOT IN (" + string.Join(",", excluirTambien.Select(i => i.ToString(CultureInfo.InvariantCulture))) + ")";
             if (diaSemana < 1 || diaSemana > 7)
             {
                 return "El día de la semana no es válido: elige uno de lunes a domingo.";
@@ -1538,7 +1543,7 @@ namespace DigBit.conexion
                 INNER JOIN materias m     ON m.id_materia = c.materias_id_materia
                 INNER JOIN laboratorios l ON l.idlaboratorios = h.laboratorios_idlaboratorios
                 WHERE h.dia_semana = @Dia
-                  AND h.idhorarios <> @Excluir
+                  AND h.idhorarios <> @Excluir" + fueraTambien + @"
                   AND c.activa = 1
                   AND h.hora_inicio < @Fin AND h.hora_fin > @Inicio
                   AND " + cruce + @"
@@ -2008,9 +2013,24 @@ namespace DigBit.conexion
         public int CambiarFranjaDesde(int idFranja, int idClase, int idLaboratorio, int diaSemana, TimeSpan inicio, TimeSpan fin, DateTime desde)
         {
             Permisos.Exigir("Editar una franja del horario");
-            DateTime dia = desde.Date;
             using (MySqlConnection conexion = mconexion.GetConexion())
             using (MySqlTransaction transaccion = conexion.BeginTransaction())
+            {
+                int id = CambiarFranjaDesdeEn(conexion, transaccion, idFranja, idClase, idLaboratorio, diaSemana, inicio, fin, desde, null);
+                transaccion.Commit();
+                return id;
+            }
+        }
+
+        /// <summary>
+        /// CambiarFranjaDesde en una transaccion que ya se tiene (sin Commit): asi
+        /// la usa tambien el reemplazo de una clase por otra (db/25), todo junto.
+        /// porque, si no es null, va al final del renglon del historial.
+        /// </summary>
+        private static int CambiarFranjaDesdeEn(MySqlConnection conexion, MySqlTransaction transaccion, int idFranja, int idClase, int idLaboratorio,
+            int diaSemana, TimeSpan inicio, TimeSpan fin, DateTime desde, string porque)
+        {
+            DateTime dia = desde.Date;
             {
                 FranjaGuardada vieja = LeerFranjaGuardada(conexion, transaccion, idFranja);
                 if (vieja == null)
@@ -2032,8 +2052,7 @@ namespace DigBit.conexion
 
                     FotoFranja enSuSitio = conHistorial ? FotoDeFranja(conexion, transaccion, idFranja) : null;
                     ActualizarFranjaEn(conexion, transaccion, idFranja, idClase, idLaboratorio, diaSemana, inicio, fin);
-                    AnotarFranjaCambiada(conexion, transaccion, idFranja, enSuSitio, historia.TieneHistoria);
-                    transaccion.Commit();
+                    AnotarFranjaCambiada(conexion, transaccion, idFranja, enSuSitio, historia.TieneHistoria, porque);
                     return idFranja;
                 }
 
@@ -2150,10 +2169,9 @@ namespace DigBit.conexion
                             : "Desde el " + HistorialCambios.Fecha(dia) + ", de " + antes.Clase + ", " + antes.Donde + ", a " + despues.Clase + ", " + despues.Donde)
                           + (canceladas.Count == 1 ? "; su cancelación de esa fecha en adelante pasa a la nueva"
                              : canceladas.Count > 1 ? "; sus " + canceladas.Count + " cancelaciones de esa fecha en adelante pasan a la nueva" : "")
-                          + ".");
+                          + "." + (porque == null ? "" : " " + porque));
                 }
 
-                transaccion.Commit();
                 Log.Info("Franja " + idFranja + " cambiada desde el " + dia.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ": termina el dia antes y sigue como la franja "
                     + nueva + (canceladas.Count > 0 ? " (con " + canceladas.Count + " cancelaciones)" : "") + ".");
                 return nueva;
@@ -2175,9 +2193,22 @@ namespace DigBit.conexion
         public void QuitarFranjaDesde(int idFranja, DateTime desde)
         {
             Permisos.Exigir("Borrar una franja del horario");
-            DateTime dia = desde.Date;
             using (MySqlConnection conexion = mconexion.GetConexion())
             using (MySqlTransaction transaccion = conexion.BeginTransaction())
+            {
+                QuitarFranjaDesdeEn(conexion, transaccion, idFranja, desde, null);
+                transaccion.Commit();
+            }
+        }
+
+        /// <summary>
+        /// QuitarFranjaDesde en una transaccion que ya se tiene (sin Commit), para
+        /// el reemplazo y "Quitar horas" con lo que queda por asignar (db/25).
+        /// porque, si no es null, va al final del renglon del historial.
+        /// </summary>
+        private static void QuitarFranjaDesdeEn(MySqlConnection conexion, MySqlTransaction transaccion, int idFranja, DateTime desde, string porque)
+        {
+            DateTime dia = desde.Date;
             {
                 FranjaGuardada franja = LeerFranjaGuardada(conexion, transaccion, idFranja);
                 if (franja == null)
@@ -2190,8 +2221,7 @@ namespace DigBit.conexion
                 bool conHistorial = HistorialCambios.Activo(conexion, transaccion);
                 if (EnSuSitio(historia, franja, hoy, dia))
                 {
-                    BorrarFranjaConHistorial(conexion, transaccion, idFranja, historia.TieneHistoria);
-                    transaccion.Commit();
+                    BorrarFranjaConHistorial(conexion, transaccion, idFranja, historia.TieneHistoria, porque);
                     return;
                 }
 
@@ -2249,10 +2279,9 @@ namespace DigBit.conexion
                         antes.Clase + ": " + antes.Donde + ". Ya no se da desde el " + HistorialCambios.Fecha(dia)
                         + (canceladas.Count == 1 ? "; se quita su cancelación de esa fecha en adelante"
                            : canceladas.Count > 1 ? "; se quitan sus " + canceladas.Count + " cancelaciones de esa fecha en adelante" : "")
-                        + ".");
+                        + "." + (porque == null ? "" : " " + porque));
                 }
 
-                transaccion.Commit();
                 Log.Info("Franja " + idFranja + " quitada desde el " + dia.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
                     + (canceladas.Count > 0 ? " (con " + canceladas.Count + " cancelaciones" + (restosBorrados > 0 ? " y " + restosBorrados + " restos de recortes" : "") + ")" : "") + ".");
             }
@@ -2355,7 +2384,7 @@ namespace DigBit.conexion
         /// BorrarFranjaEn y su renglon en el historial (db/21), con lo que se lleva
         /// la base en cascada: sus cancelaciones de cualquier fecha.
         /// </summary>
-        private static void BorrarFranjaConHistorial(MySqlConnection conexion, MySqlTransaction transaccion, int idFranja, bool conHistoria)
+        private static void BorrarFranjaConHistorial(MySqlConnection conexion, MySqlTransaction transaccion, int idFranja, bool conHistoria, string porque = null)
         {
             FotoFranja antes = HistorialCambios.Activo(conexion, transaccion) ? FotoDeFranja(conexion, transaccion, idFranja) : null;
             int canceladas = 0;
@@ -2374,7 +2403,8 @@ namespace DigBit.conexion
             {
                 AnotarFranja(conexion, transaccion, AccionDeCambio.Quitar, idFranja, antes, null, null,
                     antes.Clase + ": " + antes.Donde + ". Se borra del horario" + (conHistoria ? ", también de las semanas que ya pasaron" : "")
-                    + (canceladas == 1 ? ", con su cancelación" : canceladas > 1 ? ", con sus " + canceladas + " cancelaciones" : "") + ".");
+                    + (canceladas == 1 ? ", con su cancelación" : canceladas > 1 ? ", con sus " + canceladas + " cancelaciones" : "") + "."
+                    + (porque == null ? "" : " " + porque));
             }
         }
 
@@ -3830,7 +3860,8 @@ namespace DigBit.conexion
         /// de como era a como quedo, y si alcanzo a sus semanas pasadas. Nada si
         /// no cambio nada (o sin historial: antes = null).
         /// </summary>
-        private static void AnotarFranjaCambiada(MySqlConnection conexion, MySqlTransaction transaccion, int idFranja, FotoFranja antes, bool conHistoria)
+        private static void AnotarFranjaCambiada(MySqlConnection conexion, MySqlTransaction transaccion, int idFranja, FotoFranja antes, bool conHistoria,
+            string porque = null)
         {
             if (antes == null)
             {
@@ -3846,7 +3877,7 @@ namespace DigBit.conexion
             AnotarFranja(conexion, transaccion, AccionDeCambio.Cambio, idFranja, antes, despues, null,
                 (antes.ClaseId == despues.ClaseId ? despues.Clase + ": de " + antes.Donde + " a " + despues.Donde
                     : "De " + antes.Clase + ", " + antes.Donde + ", a " + despues.Clase + ", " + despues.Donde)
-                + (conHistoria ? " (también en las semanas que ya pasaron)" : "") + ".");
+                + (conHistoria ? " (también en las semanas que ya pasaron)" : "") + "." + (porque == null ? "" : " " + porque));
         }
 
         /// <summary>Una cancelacion o una sesion extra como se describe en el historial.</summary>
@@ -5424,7 +5455,7 @@ namespace DigBit.conexion
                 // Puede ser el codigo de una sesion de hoy: el nuevo de una clase que
                 // se abrio antes de que el laboratorio volviera al codigo fijo.
                 return ResolverCodigoDeSesion(codigo, idLaboratorio, idAlumno, matricula, false)
-                    ?? Rechazo(MotivoCodigo.NoExiste, "Código no válido. Revisa que esté bien escrito.");
+                    ?? Rechazo(MotivoCodigo.NoExiste, ReglasCodigo.NoExisteElCodigo(codigo));
             }
 
             List<ClaseDelCodigo> activas = clases.Where(c => c.Activa).ToList();

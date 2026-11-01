@@ -182,11 +182,29 @@ SET @sql := IF(@hay > 0, CONCAT('GRANT SELECT, INSERT, UPDATE, DELETE ON teschi_
                          'SELECT ''personalizacion_clases aun no existe: el permiso lo da db/19 al aplicarla'' AS resultado');
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 
--- El historial de cambios (db/21, historial_cambios): NADA, a proposito. Lo
--- escribe solo el panel del administrador (digbit_admin, abajo, ya puede) y lo
--- lee el encargado de laboratorio (digbit_consulta, db/18). Ningun equipo de
--- laboratorio ni de profesor hace los cambios que se anotan ahi, y con permiso
--- aqui quien lea connections.config podria inventar renglones.
+-- Quien entro con su contrasena del SIIA y espera que lo enlacen (db/24): leer,
+-- anadir su solicitud y actualizar SOLO lo que dio el SIIA, los intentos y que
+-- vuelva a estar pendiente. Nunca usuarios.siia_enlazado_en (no esta en las
+-- listas de arriba): desde un equipo no se enlaza a nadie, eso lo hace la
+-- administracion. Solo si la tabla ya esta; si no, el permiso lo da la 24.
+SET @hay := (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'teschi_otru' AND TABLE_NAME = 'siia_solicitudes');
+SET @sql := IF(@hay > 0, CONCAT('GRANT SELECT, INSERT ON teschi_otru.siia_solicitudes TO ''digbit_equipo''@''', @desde, ''''),
+                         'SELECT ''siia_solicitudes aun no existe: el permiso lo da db/24 al aplicarla'' AS resultado');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+SET @sql := IF(@hay > 0, CONCAT('GRANT UPDATE (nombre, apellido_paterno, apellido_materno, nombre_completo, correo, tipo_siia, ultimo_intento, intentos, estado) ON teschi_otru.siia_solicitudes TO ''digbit_equipo''@''', @desde, ''''),
+                         'SELECT 1 FROM DUAL WHERE 1 = 0');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+
+-- El historial de cambios (db/21, historial_cambios): solo INSERT. Lo escribe
+-- el panel del administrador (digbit_admin, abajo, ya puede) y lo lee el
+-- encargado de laboratorio (digbit_consulta, db/18). Desde un equipo solo se
+-- anota el alta de un estudiante con el SIIA (db/24). Nunca leerlo, cambiarlo
+-- ni borrarlo; quien lea connections.config si podria inventar renglones (como
+-- las bitacoras). Solo si la tabla ya esta; si no, el permiso lo da la 24.
+SET @hay := (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'teschi_otru' AND TABLE_NAME = 'historial_cambios');
+SET @sql := IF(@hay > 0, CONCAT('GRANT INSERT ON teschi_otru.historial_cambios TO ''digbit_equipo''@''', @desde, ''''),
+                         'SELECT ''historial_cambios aun no existe: el permiso lo da db/24 al aplicarla'' AS resultado');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 
 -- -----------------------------------------------------------------------------
 -- 2) digbit_admin : solo la maquina del administrador
@@ -306,6 +324,11 @@ SELECT 'Maquina del administrador (DigBit\\connections.config)',
 -- se acepta arriba (puede cambiar la contrasena de un profesor). Cada guardado
 -- desde DigBit queda en el log con el numero de empleado, y el profesor lo
 -- deshace con Restablecer.
+--
+-- Y puede anadir solicitudes de enlace con el SIIA falsas (db/24): salen en
+-- "Docentes por enlazar", pero no enlazan nada; eso lo decide la
+-- administracion, con digbit_admin. Tambien puede guardar la huella de la
+-- contrasena de un docente (es UPDATE de password, como arriba).
 --
 -- Y puede dar y anular asistencias (db/22) en cualquier sesion y a nombre de
 -- cualquier profesor: la base no comprueba la hora ni quien es (eso lo hace

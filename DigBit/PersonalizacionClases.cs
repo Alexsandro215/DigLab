@@ -75,7 +75,8 @@ namespace DigBit
     /// Colores automaticos, por materia y sin escribir nada: sus materias en
     /// orden (primero las de este ciclo, por id; luego las demas) se reparten la
     /// paleta de DigBit con ColoresProfesor.Calcular, el mismo reparto que entre
-    /// profesores; los colores de las filas de materia son los "elegidos" (un
+    /// profesores pero sin el salmon, el rosa y el fucsia (parecen el rojo de "Sin
+    /// bitacoras" o "Cancelada"); los colores de las filas de materia son los "elegidos" (un
     /// intercambio: si eligen el de otra materia, esa toma el que quedo libre).
     /// Los de las filas de grupo son excepciones y no entran en el reparto.
     /// </summary>
@@ -325,7 +326,7 @@ namespace DigBit
             }
 
             List<KeyValuePair<int, Color>> cambian = new List<KeyValuePair<int, Color>>();
-            foreach (KeyValuePair<int, Color> despues in ColoresProfesor.Calcular(mapa.Orden, elegidos))
+            foreach (KeyValuePair<int, Color> despues in ColoresProfesor.Calcular(mapa.Orden, elegidos, true))
             {
                 Color antes;
                 if (despues.Key != idMateria && mapa.Colores.TryGetValue(despues.Key, out antes) && antes.ToArgb() != despues.Value.ToArgb())
@@ -427,15 +428,17 @@ namespace DigBit
                 }
             }
 
-            // 3) El reparto, y lo que le tocaria a cada materia sin elegir.
-            mapa.Colores = ColoresProfesor.Calcular(mapa.Orden, mapa.Elegidos);
+            // 3) El reparto, y lo que le tocaria a cada materia sin elegir. Sin los
+            // colores que parecen un aviso (salmon, rosa y fucsia): junto al rojo de
+            // "Sin bitacoras" y "Cancelada", una clase salmon parecia cancelada.
+            mapa.Colores = ColoresProfesor.Calcular(mapa.Orden, mapa.Elegidos, true);
             Dictionary<int, Color> automaticos = new Dictionary<int, Color>();
             foreach (int materia in mapa.Orden)
             {
                 if (mapa.Elegidos.ContainsKey(materia))
                 {
                     Dictionary<int, string> sinElla = mapa.Elegidos.Where(kv => kv.Key != materia).ToDictionary(kv => kv.Key, kv => kv.Value);
-                    automaticos[materia] = ColoresProfesor.Calcular(mapa.Orden, sinElla)[materia];
+                    automaticos[materia] = ColoresProfesor.Calcular(mapa.Orden, sinElla, true)[materia];
                 }
                 else
                 {

@@ -21,7 +21,16 @@ namespace DigBit.conexion
         {
             mconexion = new Conexion();
         }
-        public bool RealizarInicioSesion(string numeroIdentificador, string contraseña)
+        /// <summary>
+        /// Comprueba la cuenta y abre su ventana; true si la abrio (los avisos de
+        /// por que no, los ensena aqui). Los docentes y los estudiantes, con el
+        /// SIIA encendido para ellos en Ajustes, se comprueban con el SIIA
+        /// (Consultas.Siia.cs): es lo unico que espera con await, en segundo plano,
+        /// sin congelar la ventana; todo lo demas va como siempre. pedirNip ensena
+        /// el paso del NIP del SIIA en la ventana del inicio de sesion y devuelve el
+        /// NIP (null si la persona vuelve atras); sin el, quien necesita NIP no entra.
+        /// </summary>
+        public async Task<bool> RealizarInicioSesionAsync(string numeroIdentificador, string contraseña, Func<string, Task<string>> pedirNip = null)
         {
             mconexion = new Conexion();
             try
@@ -29,7 +38,15 @@ namespace DigBit.conexion
                 string almacenada = null;
                 int tipoUsuarioId = 0;
                 bool activo = true;
+                bool existe = false;
+                // Con db/24: si la administracion ya enlazo esta cuenta de docente con el SIIA.
+                bool enlazado = false;
                 string cadenaDeConsulta = null;
+                // Solo para una cuenta de docente o de estudiante, o un numero que
+                // DigBit no tiene, y segun Ajustes: la administracion y la persona
+                // responsable del laboratorio entran siempre con su contrasena de DigBit.
+                ConfiguracionSiia siia = ConfiguracionSiia.Apagada;
+                bool conSiia = false;
 
                 using (MySqlConnection conexion = mconexion.GetConexion())
                 {
@@ -41,8 +58,10 @@ namespace DigBit.conexion
                     }
 
                     string columnaActivo = Esquema.TieneBajas(conexion) ? "activo" : "1 AS activo";
+                    string columnaEnlace = Esquema.EnlacesSiia(conexion) ? "(siia_enlazado_en IS NOT NULL)" : "0";
                     using (MySqlCommand consulta = new MySqlCommand(
-                        "SELECT fk_tipo_usuario, password, " + columnaActivo + " FROM usuarios WHERE numero_identificador = @NumeroIdentificador", conexion))
+                        "SELECT fk_tipo_usuario, password, " + columnaActivo + ", " + columnaEnlace + " AS enlazado FROM usuarios WHERE numero_identificador = @NumeroIdentificador",
+                        conexion))
                     {
                         consulta.Parameters.AddWithValue("@NumeroIdentificador", numeroIdentificador);
 
@@ -53,54 +72,87 @@ namespace DigBit.conexion
                         {
                             if (lector.Read())
                             {
+                                existe = true;
                                 tipoUsuarioId = (int)Convert.ToInt64(lector["fk_tipo_usuario"]);
                                 almacenada = lector[1] == DBNull.Value ? null : lector[1].ToString();
                                 activo = Convert.ToInt32(lector["activo"]) == 1;
+                                enlazado = Convert.ToInt32(lector["enlazado"]) == 1;
                             }
                         }
                     }
 
-                    bool necesitaRehash;
-                    if (almacenada == null || !Contrasenas.Verificar(contraseña, almacenada, out necesitaRehash))
+                    if (!existe || tipoUsuarioId == TiposUsuario.Profesor || tipoUsuarioId == TiposUsuario.Alumno)
                     {
-                        // El mismo mensaje exista o no el usuario: decir "ese numero no
-                        // existe" le regala a quien lo intente la lista de matriculas
-                        // validas.
-                        MessageBox.Show("Tu usuario o tu contraseña no son correctos." + Environment.NewLine + Environment.NewLine
-                            + "Revisa que estén bien escritos: la contraseña distingue mayúsculas y minúsculas. "
-                            + "Si no la recuerdas, usa «¿Olvidaste tu contraseña?».",
-                            "Iniciar sesión", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        return false;
+                        siia = LeerSiiaParaEntrar(conexion);
+                        conSiia = siia.ParaElTipo(existe ? tipoUsuarioId : 0);
                     }
 
-                    // Solo despues de comprobar la contrasena: quien la sabe ya sabe
-                    // que su cuenta existe, y asi no se delata ninguna matricula.
-                    if (!activo)
+                    if (!conSiia)
                     {
-                        Log.Info("Inicio de sesion rechazado: '" + numeroIdentificador + "' esta dado de baja.");
-                        MessageBox.Show("Tu cuenta está dada de baja. Si crees que es un error, acude a la administración de DigBit.", "Cuenta dada de baja", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                        return false;
-                    }
-
-                    if (necesitaRehash)
-                    {
-                        MigrarContrasena(conexion, numeroIdentificador, contraseña, Contrasenas.EsFormatoAntiguo(almacenada));
-                    }
-
-                    // El encargado de laboratorio trabaja, en cualquier equipo, con la
-                    // cuenta de solo lectura de la base (db/18). Sin ella no entra:
-                    // nunca con la del equipo, que puede escribir.
-                    if (tipoUsuarioId == TiposUsuario.Encargado)
-                    {
-                        string problema = CuentaDeConsulta.Preparar(conexion, out cadenaDeConsulta);
-                        if (problema != null)
+                        bool necesitaRehash;
+                        if (almacenada == null || !Contrasenas.Verificar(contraseña, almacenada, out necesitaRehash))
                         {
-                            Log.Aviso("Inicio de sesion del encargado '" + numeroIdentificador + "' rechazado: " + problema);
-                            MessageBox.Show(problema, "Sin cuenta de solo consulta", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            // El mismo mensaje exista o no el usuario: decir "ese numero no
+                            // existe" le regala a quien lo intente la lista de matriculas
+                            // validas.
+                            MessageBox.Show("Tu usuario o tu contraseña no son correctos." + Environment.NewLine + Environment.NewLine
+                                + "Revisa que estén bien escritos: la contraseña distingue mayúsculas y minúsculas. "
+                                + "Si no la recuerdas, usa «¿Olvidaste tu contraseña?».",
+                                "Iniciar sesión", MessageBoxButtons.OK, MessageBoxIcon.Error);
                             return false;
+                        }
+
+                        // Solo despues de comprobar la contrasena: quien la sabe ya sabe
+                        // que su cuenta existe, y asi no se delata ninguna matricula.
+                        if (!activo)
+                        {
+                            Log.Info("Inicio de sesion rechazado: '" + numeroIdentificador + "' esta dado de baja.");
+                            MessageBox.Show("Tu cuenta está dada de baja. Si crees que es un error, acude a la administración de DigBit.", "Cuenta dada de baja", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            return false;
+                        }
+
+                        if (necesitaRehash)
+                        {
+                            MigrarContrasena(conexion, numeroIdentificador, contraseña, Contrasenas.EsFormatoAntiguo(almacenada));
+                        }
+
+                        // El encargado de laboratorio trabaja, en cualquier equipo, con la
+                        // cuenta de solo lectura de la base (db/18). Sin ella no entra:
+                        // nunca con la del equipo, que puede escribir.
+                        if (tipoUsuarioId == TiposUsuario.Encargado)
+                        {
+                            string problema = CuentaDeConsulta.Preparar(conexion, out cadenaDeConsulta);
+                            if (problema != null)
+                            {
+                                Log.Aviso("Inicio de sesion del encargado '" + numeroIdentificador + "' rechazado: " + problema);
+                                MessageBox.Show(problema, "Sin cuenta de solo consulta", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                                return false;
+                            }
                         }
                     }
                 }
+
+                if (conSiia)
+                {
+                    // Sin la conexion abierta mientras se espera al SIIA (hasta unos
+                    // segundos sin internet). Decide y, si entra, deja la cuenta al dia.
+                    CuentaParaEntrar cuenta = new CuentaParaEntrar
+                    {
+                        Existe = existe,
+                        Tipo = existe ? tipoUsuarioId : 0,
+                        Almacenada = almacenada,
+                        Activo = activo,
+                        Enlazado = enlazado
+                    };
+                    tipoUsuarioId = await EntrarConSiiaAsync(numeroIdentificador, contraseña, siia, cuenta, pedirNip);
+                    if (tipoUsuarioId == 0)
+                    {
+                        return false;
+                    }
+                }
+
+                // Su contrasena es la del SIIA: Mi perfil no ofrece cambiarla.
+                Datos_User.ContrasenaDelSiia = conSiia;
 
                 // Null para todos menos el encargado: la cuenta del equipo. Si el
                 // panel no llega a abrirse, la sesion se limpia y vuelve la del equipo.

@@ -17,16 +17,21 @@ namespace DigBit.conexion
         public const string Bitacora = "bitacora";
         public const string Laboratorio = "laboratorio";
         public const string FormaDeEntrar = "forma_de_entrar";
-        /// <summary>Una cuenta de estudiante o docente (por ahora, solo anonimizarla: derechos ARCO).</summary>
+        /// <summary>Una cuenta de estudiante o docente: anonimizarla (derechos ARCO) o enlazarla con el SIIA (o deshacerlo).</summary>
         public const string Cuenta = "cuenta";
         /// <summary>
         /// Un horario entero que se aplico (o cuya aplicacion se deshizo) desde
         /// Horarios > Aplicacion: un solo renglon para todas sus clases, no uno por clase.
         /// </summary>
         public const string Horario = "horario";
+        /// <summary>
+        /// Horas que le faltan a una clase en el horario en uso (db/25): las que se
+        /// crean al reemplazarla o al quitarlas, y como se resuelven.
+        /// </summary>
+        public const string PorAsignar = "por_asignar";
 
         /// <summary>Todos, en el orden del filtro Tipo del historial.</summary>
-        public static readonly string[] Todos = { Franja, Clase, Cancelacion, Extra, Horario, Bitacora, Laboratorio, FormaDeEntrar, Cuenta };
+        public static readonly string[] Todos = { Franja, Clase, Cancelacion, Extra, Horario, PorAsignar, Bitacora, Laboratorio, FormaDeEntrar, Cuenta };
 
         /// <summary>Los que avisan como alerta "Cambio de horario": el horario de las clases (tambien uno entero que se aplico).</summary>
         public static bool EsDeHorario(string tipo)
@@ -49,6 +54,8 @@ namespace DigBit.conexion
                     return "Sesiones extra";
                 case Horario:
                     return "Horarios aplicados";
+                case PorAsignar:
+                    return "Horas por asignar";
                 case Bitacora:
                     return "Bitácoras corregidas";
                 case Laboratorio:
@@ -56,7 +63,7 @@ namespace DigBit.conexion
                 case FormaDeEntrar:
                     return "Formas de entrar";
                 case Cuenta:
-                    return "Cuentas anonimizadas";
+                    return "Cuentas (anonimizadas y del SIIA)";
                 default:
                     return tipo ?? "";
             }
@@ -88,6 +95,19 @@ namespace DigBit.conexion
         public const string NoContar = "no_contar";
         /// <summary>"Volver a contar": se quitan las cancelaciones de un "No tomar en cuenta".</summary>
         public const string VolverAContar = "volver_a_contar";
+        /// <summary>
+        /// La administracion enlaza la cuenta de un docente con el numero de
+        /// empleado con que entro al SIIA: su numero pasa a ser ese (TipoDeCambio.Cuenta).
+        /// </summary>
+        public const string Enlazar = "enlazar";
+        /// <summary>Se deshace un enlace con el SIIA hecho por error: vuelve su numero de antes.</summary>
+        public const string Desenlazar = "desenlazar";
+        /// <summary>Una solicitud de enlace con el SIIA que no corresponde a nadie se descarta.</summary>
+        public const string Descartar = "descartar";
+        /// <summary>Horas por asignar (TipoDeCambio.PorAsignar) que bajan o se resuelven al ponerle horas a su clase.</summary>
+        public const string Asignar = "asignar";
+        /// <summary>Horas por asignar que ya no hacen falta ("Ya no hace falta").</summary>
+        public const string NoHaceFalta = "no_hace_falta";
     }
 
     /// <summary>Un cambio por anotar (HistorialCambios.Anotar), en la misma transaccion que el cambio.</summary>
@@ -177,17 +197,18 @@ namespace DigBit.conexion
 
         /// <summary>
         /// Anota un cambio con la hora del servidor y quien tiene la sesion
-        /// abierta (Datos_User). Va en la transaccion del cambio: si falla, falla
-        /// el cambio. Sin db/21, nada.
+        /// abierta (Datos_User), o quien, si se dice (el estudiante cuya cuenta se
+        /// crea con el SIIA, antes de tener sesion). Va en la transaccion del
+        /// cambio: si falla, falla el cambio. Sin db/21, nada.
         /// </summary>
-        public static void Anotar(MySqlConnection conexion, MySqlTransaction transaccion, CambioPorAnotar cambio)
+        public static void Anotar(MySqlConnection conexion, MySqlTransaction transaccion, CambioPorAnotar cambio, string quien = null)
         {
             if (cambio == null || !Activo(conexion, transaccion))
             {
                 return;
             }
 
-            string usuario = Limpiar(Datos_User.getUser(), LargoUsuario);
+            string usuario = Limpiar(quien ?? Datos_User.getUser(), LargoUsuario);
             object idUsuario = DBNull.Value;
             if (usuario != null)
             {
@@ -388,6 +409,9 @@ namespace DigBit.conexion
                     return accion == AccionDeCambio.Quitar ? "Sesión extra quitada" : accion == AccionDeCambio.Cambio ? "Sesión extra recortada" : "Sesión extra nueva";
                 case TipoDeCambio.Horario:
                     return accion == AccionDeCambio.Deshacer ? "Aplicación deshecha" : "Horario aplicado";
+                case TipoDeCambio.PorAsignar:
+                    return accion == AccionDeCambio.Asignar ? "Horas asignadas"
+                        : accion == AccionDeCambio.NoHaceFalta ? "Horas que ya no hace falta asignar" : "Horas por asignar";
                 case TipoDeCambio.Bitacora:
                     return "Bitácora corregida";
                 case TipoDeCambio.Laboratorio:
@@ -408,7 +432,10 @@ namespace DigBit.conexion
                 case TipoDeCambio.FormaDeEntrar:
                     return "Forma de entrar cambiada";
                 case TipoDeCambio.Cuenta:
-                    return "Cuenta anonimizada";
+                    return accion == AccionDeCambio.Enlazar ? "Docente enlazado con el SIIA"
+                        : accion == AccionDeCambio.Desenlazar ? "Docente desenlazado del SIIA"
+                        : accion == AccionDeCambio.Descartar ? "Solicitud del SIIA descartada"
+                        : accion == AccionDeCambio.Alta ? "Cuenta creada con el SIIA" : "Cuenta anonimizada";
                 default:
                     return ((tipo ?? "") + " " + (accion ?? "")).Trim();
             }

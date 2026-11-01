@@ -44,6 +44,8 @@ namespace DigBit
         private readonly ToolTip ayuda = new ToolTip { AutoPopDelay = 20000 };
 
         private readonly ComboBox cboLaboratorio;
+        // Las flechas del laboratorio (Deslizamiento).
+        private readonly FlechasDeLista flechasLaboratorio;
         private readonly CheckBox chkContarTodos;
         private readonly Button btnActualizar;
         private readonly Label lblPasos;
@@ -97,7 +99,10 @@ namespace DigBit
             Controls.Add(EstiloHorarios.CrearEtiqueta("Laboratorio", new Point(12, 15)));
             cboLaboratorio = EstiloHorarios.CrearCombo(new Point(112, 11), 300);
             cboLaboratorio.MaxDropDownItems = 16;
-            cboLaboratorio.SelectedIndexChanged += (s, e) => AlCambiarLaboratorio();
+            // Con las flechas (o la lista), el mes y la semana se deslizan hacia ese lado.
+            cboLaboratorio.SelectedIndexChanged += (s, e) =>
+                Deslizamiento.Cambiar(flechasLaboratorio == null ? 0 : flechasLaboratorio.Direccion, AlCambiarLaboratorio, mes, cuadricula);
+            flechasLaboratorio = new FlechasDeLista(cboLaboratorio, "Laboratorio");
 
             // Un laboratorio que todavia registra en el sistema anterior no tiene
             // bitacoras aqui: sin esto sale en gris ("no cuenta"); con esto, en rojo.
@@ -140,6 +145,8 @@ namespace DigBit
             mes = new MesDeBitacoras { Location = new Point(12, 84), Size = new Size(AnchoIzquierda, 320) };
             mes.SemanaElegida += lunes => MostrarSemana();
             mes.MesCambiado += primero => MesCambiado();
+            // Ctrl+flechas del teclado: el mes (las flechas solas, el laboratorio).
+            TeclasDeFlechas.Registrar(mes, true, mes.MoverMes);
 
             leyendaMes = new LeyendaDelMes { Location = new Point(12, 410), Size = new Size(AnchoIzquierda, 42) };
 
@@ -204,7 +211,9 @@ namespace DigBit
                 ForeColor = Color.Gray,
                 Location = new Point(AnchoIzquierda + 28, 456),
                 Size = new Size(420, 18),
-                Text = "Rojo: ya pasó y nadie registró bitácora. Gris: por venir o no cuenta. Rayado: cancelada. Marco: sesión extra."
+                // Solo lo que no dice la leyenda de la izquierda (LeyendaDelMes, con sus muestras).
+                // En Faltas el marco de la extra va del tono de su clase (no naranja): "Marco y EXTRA".
+                Text = "Rayado: cancelada. Marco y «EXTRA»: sesión extra."
             };
             // En solo consulta (Permisos) una clase no se puede marcar como no dada.
             // Con db/22 la ayuda dice tambien el ambar (AyudaDeLaLeyenda, al leer).
@@ -322,11 +331,11 @@ namespace DigBit
             // de la administracion, tambien para ellos.
             int anchoIzquierda = Math.Max(AnchoIzquierda, Math.Min(440, ancho * 23 / 100));
             int abajoDelMes = 96 + (conBotones ? btnNoTomar.Height + 6 : 0);
-            int altoPorAlto = (alto - mes.Top - 6 - leyendaMes.Height - 6 - abajoDelMes - 12 - 52) / 6;
+            int altoPorAlto = (alto - mes.Top - 6 - leyendaMes.AltoNecesario - 6 - abajoDelMes - 12 - 52) / 6;
             int altoDia = Math.Max(30, Math.Min(56, Math.Min(anchoIzquierda / 7 - 4, altoPorAlto)));
             lblPasos.Width = anchoIzquierda;
             mes.SetBounds(12, mes.Top, anchoIzquierda, 52 + 6 * altoDia);
-            leyendaMes.SetBounds(12, mes.Bottom + 6, anchoIzquierda, leyendaMes.Height);
+            leyendaMes.SetBounds(12, mes.Bottom + 6, anchoIzquierda, leyendaMes.AltoNecesario);
             anchoIzquierdaActual = anchoIzquierda;
             AcomodarResumenDelMes();
             int izquierda = 12 + anchoIzquierda + 16;
@@ -655,6 +664,12 @@ namespace DigBit
 
             ayuda.SetToolTip(lblLeyenda, AyudaDeLaLeyenda(calendario != null && calendario.ConDadas));
             leyendaMes.ConDadas = calendario != null && calendario.ConDadas;
+            // Con el ambar la leyenda pide un renglon mas: lo de abajo se recoloca.
+            if (leyendaMes.Height != leyendaMes.AltoNecesario && ClientSize.Width >= 600 && ClientSize.Height >= 300)
+            {
+                Acomodar();
+            }
+
             MostrarSemana();
         }
 
@@ -759,13 +774,38 @@ namespace DigBit
             cuadricula.Excepciones = excepciones;
 
             lblTitulo.Text = NombreLaboratorio(laboratorio) + " — " + SelectorSemana.Describir(lunes);
-            lblResumen.Text = clasesVistas.Count == 0 ? "No hay clases de este laboratorio esa semana." : ResumenDeLaSemana(clasesVistas);
+            lblResumen.Text = clasesVistas.Count == 0 ? "No hay clases de este laboratorio esa semana."
+                : ResumenDeLaSemana(clasesVistas, PorQueNoCuentan(laboratorio, clasesVistas));
 
             int otras = calendario.Otras.Count(o => o.LaboratorioId == laboratorio && o.Fecha >= lunes && o.Fecha <= domingo);
             lnkOtras.Text = otras == 0 ? "" : otras == 1 ? "1 sesión fuera del horario" : otras + " sesiones fuera del horario";
         }
 
-        private static string ResumenDeLaSemana(List<ClaseDelCalendario> clases)
+        /// <summary>
+        /// Por que no cuentan las clases en gris de la semana, si es por el
+        /// laboratorio (sin la casilla de arriba): aun no usa DigBit, o son de antes
+        /// de que lo usara. Null si no es por eso (un docente de baja, una extra
+        /// puesta tarde) o si no hay ninguna.
+        /// </summary>
+        private string PorQueNoCuentan(int laboratorio, List<ClaseDelCalendario> clases)
+        {
+            List<ClaseDelCalendario> noCuentan = clases.Where(c => c.Estado == EstadoEnCalendario.NoContaba).ToList();
+            if (noCuentan.Count == 0 || calendario == null || calendario.ContarTodos)
+            {
+                return null;
+            }
+
+            DateTime empezo;
+            if (!calendario.EmpezoEl.TryGetValue(laboratorio, out empezo))
+            {
+                return "el laboratorio aún no usa DigBit";
+            }
+
+            return noCuentan.All(c => c.Fecha < empezo.Date) ? "son de antes de que el laboratorio usara DigBit" : null;
+        }
+
+        /// <summary>"De 12 clases que ya pasaron: ...", lo demas y por que no cuentan las grises (porQueNoCuentan, o null).</summary>
+        private static string ResumenDeLaSemana(List<ClaseDelCalendario> clases, string porQueNoCuentan)
         {
             int con = clases.Count(c => c.Estado == EstadoEnCalendario.ConBitacoras);
             int faltan = clases.Count(c => c.Falta);
@@ -802,14 +842,16 @@ namespace DigBit
                 otras.Add(porVenir + " por venir");
             }
 
-            if (noCuentan > 0)
-            {
-                otras.Add(noCuentan + " que no cuentan");
-            }
-
             if (otras.Count > 0)
             {
                 partes.Add(char.ToUpper(otras[0][0]) + string.Join(", ", otras).Substring(1) + ".");
+            }
+
+            // Las grises, con su motivo si es el laboratorio ("24 que no cuentan" no decia por que).
+            if (noCuentan > 0)
+            {
+                partes.Add(noCuentan + (noCuentan == 1 ? " clase no cuenta" : " clases no cuentan")
+                    + (string.IsNullOrEmpty(porQueNoCuentan) ? "." : ": " + porQueNoCuentan + "."));
             }
 
             return string.Join(" ", partes);
@@ -1010,7 +1052,7 @@ namespace DigBit
         /// alumnos quedaron en otra (BitacorasEnOtra), esa. Null si no hay ninguna
         /// que BitacoraSesion sepa abrir (por franja y fecha, o por extra).
         /// </summary>
-        private static ClaseDelCalendario SesionQueAbrir(ClaseDelCalendario clase)
+        internal static ClaseDelCalendario SesionQueAbrir(ClaseDelCalendario clase)
         {
             if (clase.SesionId.HasValue && !clase.SesionSinEnlace && (clase.Bitacoras > 0 || clase.OtraClase == null))
             {
@@ -1221,31 +1263,6 @@ namespace DigBit
                   + "Vuelve a intentarlo; si sigue fallando, " + SiSigueFallando() + ".";
         }
 
-        /// <summary>El boton principal apagado se ve apagado (gris verdoso), no verde con la letra gris.</summary>
-        private static void AtenuarAlApagar(Button boton)
-        {
-            EventHandler pintar = (s, e) => boton.BackColor = boton.Enabled ? Color.DarkGreen : Color.FromArgb(200, 212, 200);
-            boton.EnabledChanged += pintar;
-            pintar(boton, EventArgs.Empty);
-        }
-
-        /// <summary>Un texto gris o rojo encima de una lista vacia: no hay nada, o no se pudo leer.</summary>
-        private static Label TextoSobreLista(DataGridView lista)
-        {
-            return new Label
-            {
-                AutoSize = false,
-                BackColor = Color.White,
-                Font = new DrawingFont("Century Gothic", 10F),
-                ForeColor = Color.FromArgb(110, 110, 110),
-                Location = new Point(lista.Left + 2, lista.Top + 34),
-                Size = new Size(lista.Width - 4, lista.Height - 36),
-                TextAlign = ContentAlignment.MiddleCenter,
-                Padding = new Padding(24, 0, 24, 0),
-                Visible = false
-            };
-        }
-
         /// <summary>
         /// "No tomar en cuenta": el laboratorio (o todos los de Faltas), las fechas
         /// (hasta hoy) y el motivo, con la vista previa de las clases en rojo que
@@ -1268,7 +1285,6 @@ namespace DigBit
             private readonly Label lblVista;
             private readonly LinkLabel lnkLeer;
             private readonly DataGridView dgvClases;
-            private readonly Label lblVacia;
             private readonly Label lblNota;
             private readonly Label lblError;
             private readonly Button btnAceptar;
@@ -1368,7 +1384,6 @@ namespace DigBit
                 dgvClases.Columns.Add("Clase", "Clase");
                 dgvClases.Columns.Add("Docente", "Docente");
                 EstiloHorarios.Pesos(dgvClases, 16, 16, 26, 54, 28);
-                lblVacia = TextoSobreLista(dgvClases);
 
                 y = dgvClases.Bottom + 6;
                 lblNota = new Label
@@ -1389,8 +1404,8 @@ namespace DigBit
                 btnCerrar.DialogResult = DialogResult.Cancel;
                 int anchoAceptar = TextRenderer.MeasureText(Titulo, btnCerrar.Font).Width + 34;
                 btnAceptar = EstiloAdmin.BotonPrincipal(Titulo, new Point(btnCerrar.Left - 10 - anchoAceptar, btnCerrar.Top), new Size(anchoAceptar, 40));
+                // Apagado se ve gris (BotonesApagados, como todos los botones).
                 btnAceptar.Enabled = false;
-                AtenuarAlApagar(btnAceptar);
                 btnAceptar.Click += (s, e) => Aceptar();
                 // Sin AcceptButton: un Enter en el motivo no cancela de golpe todas esas clases.
                 CancelButton = btnCerrar;
@@ -1405,13 +1420,11 @@ namespace DigBit
                 Controls.Add(txtMotivo);
                 Controls.Add(lblVista);
                 Controls.Add(lnkLeer);
-                Controls.Add(lblVacia);
                 Controls.Add(dgvClases);
                 Controls.Add(lblNota);
                 Controls.Add(lblError);
                 Controls.Add(btnAceptar);
                 Controls.Add(btnCerrar);
-                lblVacia.BringToFront();
                 ActiveControl = cboLab;
 
                 // Cada cambio vuelve a leer la vista previa, un momento despues (al
@@ -1526,9 +1539,9 @@ namespace DigBit
                     : clases.Count == 0 ? "Ninguna clase dejará de contar."
                     : clases.Count == 1 ? "1 clase sin bitácoras dejará de contar como falta:"
                     : clases.Count + " clases sin bitácoras dejarán de contar como faltas:";
-                lblVacia.ForeColor = problema != null ? Color.FromArgb(190, 30, 30) : Color.FromArgb(110, 110, 110);
-                lblVacia.Text = problema ?? (clases.Count == 0 ? "En esas fechas no hay clases sin bitácoras en " + leidoDonde + ": no hay nada que deje de contar." : "");
-                lblVacia.Visible = problema != null || clases.Count == 0;
+                // Con problema la lista queda vacia: en medio, en rojo, por que.
+                ListaDigBit.PonerTextoVacio(dgvClases,
+                    problema ?? "En esas fechas no hay clases sin bitácoras en " + leidoDonde + ": no hay nada que deje de contar.", problema != null);
 
                 List<string> notas = new List<string>();
                 if (extras > 0)
@@ -1616,7 +1629,6 @@ namespace DigBit
             private const string TituloVentana = "Volver a contar";
             private readonly HorariosDatos datos;
             private readonly DataGridView dgvLotes;
-            private readonly Label lblVacia;
             private readonly Label lblEstado;
             private readonly Button btnVolver;
 
@@ -1651,7 +1663,6 @@ namespace DigBit
                 dgvLotes.Columns.Add("Quien", "Quién");
                 EstiloHorarios.Pesos(dgvLotes, 20, 30, 9, 30, 28, 28);
                 dgvLotes.Columns["Clases"].MinimumWidth = 72;
-                lblVacia = TextoSobreLista(dgvLotes);
 
                 y = dgvLotes.Bottom + 8;
                 lblEstado = new Label
@@ -1668,19 +1679,17 @@ namespace DigBit
                 btnCerrar.DialogResult = DialogResult.Cancel;
                 int anchoVolver = TextRenderer.MeasureText(Titulo, btnCerrar.Font).Width + 34;
                 btnVolver = EstiloAdmin.BotonPrincipal(Titulo, new Point(btnCerrar.Left - 10 - anchoVolver, btnCerrar.Top), new Size(anchoVolver, 40));
+                // Apagado se ve gris (BotonesApagados, como todos los botones).
                 btnVolver.Enabled = false;
-                AtenuarAlApagar(btnVolver);
                 btnVolver.Click += (s, e) => Volver();
                 CancelButton = btnCerrar;
 
                 Controls.Add(EstiloAdmin.TituloDialogo(Titulo, Ancho - 48));
                 Controls.Add(lblDescripcion);
-                Controls.Add(lblVacia);
                 Controls.Add(dgvLotes);
                 Controls.Add(lblEstado);
                 Controls.Add(btnVolver);
                 Controls.Add(btnCerrar);
-                lblVacia.BringToFront();
 
                 dgvLotes.SelectionChanged += (s, e) => btnVolver.Enabled = Elegido() != null;
                 Shown += (s, e) => Leer();
@@ -1724,9 +1733,8 @@ namespace DigBit
                     dgvLotes.Rows[fila].Tag = lote;
                 }
 
-                lblVacia.ForeColor = problema != null ? Color.FromArgb(190, 30, 30) : Color.FromArgb(110, 110, 110);
-                lblVacia.Text = problema ?? "Todavía no se ha usado «No tomar en cuenta», o ya se volvió a contar todo: no hay nada que volver a contar.";
-                lblVacia.Visible = problema != null || lotes.Count == 0;
+                // Vacia, en medio de la lista: no hay nada que volver a contar, o (en rojo) por que no se pudo leer.
+                ListaDigBit.PonerTextoVacio(dgvLotes, problema ?? "No hay ningún «No tomar en cuenta» puesto: no hay nada que volver a contar.", problema != null);
                 btnVolver.Enabled = Elegido() != null;
             }
 
@@ -1887,6 +1895,12 @@ namespace DigBit
 
         /// <summary>El usuario eligio una semana (su lunes).</summary>
         public event Action<DateTime> SemanaElegida;
+
+        /// <summary>Lo que dice la ayuda de un dia sin clases (la ficha del docente: "sin clases suyas.").</summary>
+        internal string TextoSinClases = "sin clases en este laboratorio.";
+
+        /// <summary>Lo que hace pulsar un dia, en su ayuda (la ficha del docente deja la tabla en esa semana).</summary>
+        internal string TextoAlPulsar = "Pulsa para ver el horario de su semana.";
         /// <summary>El usuario cambio de mes (su dia 1): hay que leer las semanas nuevas.</summary>
         public event Action<DateTime> MesCambiado;
 
@@ -2033,14 +2047,24 @@ namespace DigBit
 
         // --- Interaccion ------------------------------------------------------
 
+        /// <summary>Un mes despues (1) o antes (-1): Ctrl+flechas del teclado en Faltas.</summary>
+        public void MoverMes(int meses)
+        {
+            CambiarMes(meses);
+        }
+
         private void CambiarMes(int meses)
         {
-            mes = mes.AddMonths(meses);
-            Invalidate();
-            if (MesCambiado != null)
+            // El mes se desliza hacia ese lado (Deslizamiento).
+            Deslizamiento.Cambiar(Math.Sign(meses), () =>
             {
-                MesCambiado(mes);
-            }
+                mes = mes.AddMonths(meses);
+                Invalidate();
+                if (MesCambiado != null)
+                {
+                    MesCambiado(mes);
+                }
+            }, this);
         }
 
         private void ElegirSemana(DateTime fecha)
@@ -2124,8 +2148,8 @@ namespace DigBit
         {
             ResumenDia dia;
             string cual = HorariosDatos.NombresDia[((int)fecha.DayOfWeek + 6) % 7 + 1] + " " + fecha.ToString("dd/MM/yyyy") + ": ";
-            return (dias.TryGetValue(fecha, out dia) ? cual + dia.Describir() : cual + "sin clases en este laboratorio.")
-                + Environment.NewLine + "Pulsa para ver el horario de su semana.";
+            return (dias.TryGetValue(fecha, out dia) ? cual + dia.Describir() : cual + TextoSinClases)
+                + Environment.NewLine + TextoAlPulsar;
         }
 
         protected override bool IsInputKey(Keys keyData)
@@ -2165,12 +2189,16 @@ namespace DigBit
 
         private void CambiarMesA(DateTime fecha)
         {
-            mes = new DateTime(fecha.Year, fecha.Month, 1);
-            Invalidate();
-            if (MesCambiado != null)
+            DateTime nuevo = new DateTime(fecha.Year, fecha.Month, 1);
+            Deslizamiento.Cambiar(nuevo.CompareTo(mes), () =>
             {
-                MesCambiado(mes);
-            }
+                mes = nuevo;
+                Invalidate();
+                if (MesCambiado != null)
+                {
+                    MesCambiado(mes);
+                }
+            }, this);
         }
 
         protected override void OnGotFocus(EventArgs e)
@@ -2293,13 +2321,27 @@ namespace DigBit
         }
     }
 
-    /// <summary>Que quiere decir cada color del calendario del mes.</summary>
+    /// <summary>
+    /// Que quiere decir cada color del calendario del mes y de las clases de la
+    /// semana: la unica leyenda completa de Faltas (2026-10-31; antes los colores
+    /// se explicaban en tres sitios y el ambar nunca salia junto a su muestra).
+    /// Con db/22 (ConDadas) lleva tambien el ambar, en un renglon mas (AltoNecesario).
+    /// </summary>
     internal class LeyendaDelMes : Control
     {
         private readonly DrawingFont fuente = new DrawingFont("Century Gothic", 8.5F);
         private bool conDadas;
 
-        /// <summary>La base tiene las asistencias que da el profesor (db/22): el verde dice "Todas se dieron".</summary>
+        /// <summary>El alto que pide: tres renglones con el ambar (ConDadas), dos sin el.</summary>
+        public int AltoNecesario
+        {
+            get { return conDadas ? 62 : 42; }
+        }
+
+        /// <summary>
+        /// La base tiene las asistencias que da el profesor (db/22): el verde dice
+        /// "Todas se dieron" y sale el ambar. Quien la coloca usa AltoNecesario.
+        /// </summary>
         public bool ConDadas
         {
             get { return conDadas; }
@@ -2342,8 +2384,18 @@ namespace DigBit
             // Con db/22 el verde tambien es un dia de clases sin bitacoras pero con
             // asistencias que dio su docente (en ambar en la semana): se dieron.
             Muestra(g, new Point(segunda, 2), ClientSize.Width - segunda, PestanaCalendario.VerdeBien, null, ConDadas ? "Todas se dieron" : "Todas registraron");
-            Muestra(g, new Point(0, 22), segunda, PestanaCalendario.GrisNoCuenta, null, "No contaban o por venir");
-            Muestra(g, new Point(segunda, 22), ClientSize.Width - segunda, Color.White, Color.FromArgb(255, 140, 0), "Hoy");
+            int y = 22;
+            if (ConDadas)
+            {
+                // El ambar de una clase de la semana (o de un dia de la lista) sin
+                // bitacoras pero con la asistencia que dio su docente: se dio. A
+                // todo lo ancho: en media columna se cortaba.
+                Muestra(g, new Point(0, y), ClientSize.Width, PestanaCalendario.AmbarDadas, null, "Se dio con asistencia del docente");
+                y += 20;
+            }
+
+            Muestra(g, new Point(0, y), segunda, PestanaCalendario.GrisNoCuenta, null, "No contaban o por venir");
+            Muestra(g, new Point(segunda, y), ClientSize.Width - segunda, Color.White, Color.FromArgb(255, 140, 0), "Hoy");
         }
 
         private void Muestra(Graphics g, Point donde, int ancho, Color relleno, Color? borde, string texto)

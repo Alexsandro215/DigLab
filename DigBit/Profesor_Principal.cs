@@ -19,7 +19,8 @@ namespace DigBit
     /// derecha sus clases en tres columnas (el ultimo dia con clases antes de hoy,
     /// hoy y el siguiente: ayer y manana si los tiene), de colores segun
     /// hubo o no bitacoras y con cuantas (TarjetaTresDias); abajo Mi horario, Mis
-    /// bitacoras y Mi perfil. Sustituye al menu de cuatro botones (Mis clases, Ver
+    /// grupos, Mis bitacoras y, sin el SIIA, Mi perfil (con el SIIA sus datos y su
+    /// contrasena son los del SIIA). Sustituye al menu de cuatro botones (Mis clases, Ver
     /// mis codigos, Bitacora de mis clases y Editar perfil). Con db/19 cada clase
     /// lleva su circulo y su color (PersonalizacionClases): pulsar el circulo abre
     /// "Personalizar tu clase".
@@ -32,8 +33,8 @@ namespace DigBit
     public class Profesor_Principal : Form
     {
         private const int SegundosEntreActualizaciones = 30;
-        // Lo que dura en la linea de estado un aviso como "Tu reporte quedo guardado".
-        private const int SegundosDelAviso = 10;
+        // La franja de "Sin conexion..." (arriba de las tarjetas), cuando se ve.
+        private const int AltoFranja = 40;
         // Kiosco: sin teclado ni raton tanto tiempo (fuera de sus clases), "Sigues ahi?".
         private static readonly TimeSpan EsperaSinUso = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan CuentaAtras = TimeSpan.FromSeconds(30);
@@ -41,23 +42,17 @@ namespace DigBit
         private static readonly Color TextoSecundario = Color.FromArgb(90, 90, 90);
         private static readonly Color GrisEstado = Color.FromArgb(110, 110, 110);
         private static readonly Color NaranjaEstado = Color.FromArgb(190, 85, 0);
-        private static readonly Color VerdeEstado = Color.FromArgb(46, 125, 50);
 
         private readonly Container componentes = new Container();
         private readonly Dictionary<string, Form> ventanas = new Dictionary<string, Form>();
         private readonly string numeroEmpleado;
         private ToolTip ayuda;
         private IDisposable vigilancia;
-        // Un aviso en la linea de estado (verde, unos segundos): mientras dura, la
-        // recarga de los datos no lo pisa; al terminar vuelve lo de siempre.
-        private Timer avisoTimer;
-        private bool conAviso;
-        // El aviso va en negritas (la linea de estado es pequena): se ve aunque se mire a la tarjeta.
-        private DrawingFont letraEstado;
-        private DrawingFont letraAviso;
-        private string estadoNormal = "Cargando...";
-        private Color colorNormal = GrisEstado;
-        private string ayudaNormal;
+        // Arriba de las tarjetas, en naranja, mientras no se pueden leer los datos
+        // (sinConexionDesde): lo que se ve puede ser viejo y hay que verlo donde se
+        // mira, no en la linea de 9 pt de abajo (que se queda con "Actualizado a las...").
+        private TableLayoutPanel raiz;
+        private FranjaAviso franjaSinConexion;
         // La lista de cada clase de hoy ("16 de 24 alumnos"); si una lectura falla, se queda la de antes.
         private Dictionary<int, ListaDeClase> listasDeHoy;
         private static bool listasAvisadas;
@@ -129,25 +124,35 @@ namespace DigBit
             Icon = (Icon)recursos.GetObject("$this.Icon");
             Text = "DigBit - Docente";
 
-            TableLayoutPanel raiz = new TableLayoutPanel
+            raiz = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 4,
+                RowCount = 5,
                 Padding = new Padding(20, 8, 20, 16),
                 BackColor = Color.White
             };
             // Arriba la cabecera y las secciones (como en el panel del
-            // administrador); debajo, el codigo y sus clases; al pie, de cuando son.
+            // administrador); sin conexion, la franja que lo dice; debajo, el codigo
+            // y sus clases; al pie, de cuando son.
             raiz.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             raiz.RowStyles.Add(new RowStyle(SizeType.Absolute, 84F));
             raiz.RowStyles.Add(new RowStyle(SizeType.Absolute, 108F));
+            raiz.RowStyles.Add(new RowStyle(SizeType.Absolute, 0F));
             raiz.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             raiz.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));
 
             raiz.Controls.Add(CrearCabecera(recursos), 0, 0);
             raiz.Controls.Add(CrearSecciones(), 0, 1);
-            raiz.Controls.Add(CrearTarjetas(), 0, 2);
+            // A los lados, el margen del halo de las tarjetas: alineada con ellas.
+            franjaSinConexion = new FranjaAviso
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(Resplandor.Margen, 10, Resplandor.Margen, 0),
+                Visible = false
+            };
+            raiz.Controls.Add(franjaSinConexion, 0, 2);
+            raiz.Controls.Add(CrearTarjetas(), 0, 3);
 
             lblEstado = new Label
             {
@@ -157,13 +162,10 @@ namespace DigBit
                 TextAlign = ContentAlignment.MiddleRight,
                 Text = "Cargando..."
             };
-            raiz.Controls.Add(lblEstado, 0, 3);
-            letraEstado = lblEstado.Font;
-            letraAviso = new DrawingFont(letraEstado, FontStyle.Bold);
+            raiz.Controls.Add(lblEstado, 0, 4);
             // Lo tecnico de la linea de estado (la hora del servidor, cada cuanto se renueva) va en su ayuda.
             ayuda = new ToolTip(componentes) { InitialDelay = 300, AutoPopDelay = 15000 };
-            avisoTimer = new Timer(componentes) { Interval = SegundosDelAviso * 1000 };
-            avisoTimer.Tick += (s, e) => QuitarAviso();
+            ayuda.SetToolTip(franjaSinConexion, "Se vuelve a intentar solo cada " + SegundosEntreActualizaciones + " s.");
             // La cabecera ("Cerrar sesion") la ultima en el orden de Tab: siendo la
             // primera, tenia el foco al abrir y un Enter o Espacio de mas cerraba la
             // sesion. Ahora se abre en "Mi horario".
@@ -308,11 +310,16 @@ namespace DigBit
 
         private Control CrearSecciones()
         {
+            // Con el SIIA (2026-10-31, el usuario: "usa datos del SIIA y eso no se puede
+            // modificar") no hay Mi perfil: su nombre, su contrasena y su NIP son los del
+            // SIIA y se cambian alli; el correo de DigBit solo servia para recuperar una
+            // contrasena de DigBit, que no tiene.
+            bool conPerfil = !Datos_User.ContrasenaDelSiia;
             // A los lados, lo que dejan las tarjetas de abajo para su halo: asi quedan alineadas.
             TableLayoutPanel fila = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 4,
+                ColumnCount = conPerfil ? 4 : 3,
                 RowCount = 1,
                 Margin = new Padding(Resplandor.Margen, 12, Resplandor.Margen, 0)
             };
@@ -327,7 +334,11 @@ namespace DigBit
             AgregarSeccion(fila, 0, "Mi horario", "Tu semana con cancelaciones y sesiones extra. Pulsa una clase para ver su bitácora.", AbrirHorario);
             AgregarSeccion(fila, 1, "Mis grupos", "Tus grupos y la lista de asistencia de cada uno, como en Excel.", () => AbrirGrupos(null));
             AgregarSeccion(fila, 2, "Mis bitácoras", "Todas tus sesiones: quién registró, qué reportó y su PDF.", AbrirBitacoras);
-            AgregarSeccion(fila, 3, "Mi perfil", "Tu nombre, tu correo y tu contraseña.", AbrirPerfil);
+            if (conPerfil)
+            {
+                AgregarSeccion(fila, 3, "Mi perfil", "Tu nombre, tu correo y tu contraseña.", AbrirPerfil);
+            }
+
             return fila;
         }
 
@@ -491,8 +502,10 @@ namespace DigBit
         /// Lo guarda ReportesProfesorDatos con el reloj del servidor (si la clase
         /// ya termino, no se guarda y el dialogo lo dice; si falla, tambien lo dice
         /// alli). Lo ve el administrador en sus alertas y en Bitacoras; aqui suma
-        /// en "fallas reportadas". Guardado, lo dice la linea de estado en verde
-        /// unos segundos, sin un mensaje que haya que cerrar en plena clase.
+        /// en "fallas reportadas". Guardado, la tarjeta dice en verde, debajo del
+        /// boton y mientras dura esa clase, "Reporte enviado a las 08:20"
+        /// (TarjetaCodigo.UltimoReporte), sin un mensaje que haya que cerrar en
+        /// plena clase.
         /// </summary>
         private void ReportarFalla(SesionAgenda clase)
         {
@@ -527,52 +540,39 @@ namespace DigBit
                 }
             }
 
-            MostrarAviso("Tu reporte quedó guardado: la administración de DigBit lo verá en sus alertas y en la bitácora de esta clase.");
+            tarjetaCodigo.UltimoReporte = new ReporteEnviado(clase, Ahora());
             ActualizarDatos();
         }
 
         // =====================================================================
-        // Linea de estado
+        // Linea de estado y franja sin conexion
         // =====================================================================
 
-        /// <summary>
-        /// Lo que dice la linea de estado (la de siempre: cuando se actualizo, o
-        /// que no hay conexion) y su ayuda con lo tecnico. Si hay un aviso a la
-        /// vista, se guarda para cuando se quite.
-        /// </summary>
+        /// <summary>La linea de estado de abajo ("Actualizado a las 08:20") y su ayuda con lo tecnico.</summary>
         private void PonerEstado(string texto, Color color, string ayudaEstado)
         {
-            estadoNormal = texto;
-            colorNormal = color;
-            ayudaNormal = ayudaEstado;
-            if (conAviso)
-            {
-                return;
-            }
-
             lblEstado.ForeColor = color;
             lblEstado.Text = texto;
             ayuda.SetToolTip(lblEstado, ayudaEstado);
         }
 
-        /// <summary>Un aviso en verde y en negritas en la linea de estado durante unos segundos (SegundosDelAviso).</summary>
-        private void MostrarAviso(string texto)
+        /// <summary>
+        /// La franja naranja de arriba de las tarjetas: con texto, se ve (y su fila
+        /// mide AltoFranja); con null, se oculta y su fila no ocupa nada.
+        /// </summary>
+        private void PonerFranja(string texto)
         {
-            conAviso = true;
-            lblEstado.Font = letraAviso;
-            lblEstado.ForeColor = VerdeEstado;
-            lblEstado.Text = texto;
-            ayuda.SetToolTip(lblEstado, null);
-            avisoTimer.Stop();
-            avisoTimer.Start();
-        }
+            bool ver = !string.IsNullOrEmpty(texto);
+            franjaSinConexion.Text = ver ? texto : "";
+            if (franjaSinConexion.Visible == ver)
+            {
+                return;
+            }
 
-        private void QuitarAviso()
-        {
-            avisoTimer.Stop();
-            conAviso = false;
-            lblEstado.Font = letraEstado;
-            PonerEstado(estadoNormal, colorNormal, ayudaNormal);
+            raiz.SuspendLayout();
+            raiz.RowStyles[2].Height = ver ? AltoFranja + franjaSinConexion.Margin.Vertical : 0F;
+            franjaSinConexion.Visible = ver;
+            raiz.ResumeLayout(true);
         }
 
         /// <summary>
@@ -769,12 +769,18 @@ namespace DigBit
 
                 // La causa y que hacer, sin el texto del driver (al registro, arriba):
                 // un aviso de DigBit tal cual; la red, desde cuando; otro fallo, por que.
-                PonerEstado(AvisoDeFalloDocente.EsAvisoPropio(error)
+                // En la franja de arriba de las tarjetas; abajo se queda cuando se
+                // actualizo por ultima vez (sin datos aun, nada: "Cargando..." no seria cierto).
+                PonerFranja(AvisoDeFalloDocente.EsAvisoPropio(error)
                         ? error.Message + " " + AvisoDeFalloDocente.Frase(MensajeDeFallo.AvisaALaAdministracion)
                         : MensajeDeFallo.EsDeRed(error)
                         ? "Sin conexión con el servidor desde las " + sinConexionDesde.Value.ToString("HH:mm") + ". Lo que ves puede no estar al día."
-                        : MensajeDeFallo.Explicar("No se pudieron leer tus clases", error, AvisoDeFalloDocente.SiSigue),
-                    NaranjaEstado, "Se vuelve a intentar solo cada " + SegundosEntreActualizaciones + " s.");
+                        : MensajeDeFallo.Explicar("No se pudieron leer tus clases", error, AvisoDeFalloDocente.SiSigue));
+                if (panorama == null)
+                {
+                    PonerEstado("", GrisEstado, null);
+                }
+
                 return;
             }
 
@@ -783,6 +789,8 @@ namespace DigBit
                 Log.Info("Panel del profesor: conexion recuperada.");
                 sinConexionDesde = null;
             }
+
+            PonerFranja(null);
 
             panorama = tarea.Result.Panorama;
             if (tarea.Result.Listas != null)
@@ -822,7 +830,6 @@ namespace DigBit
         {
             relojTimer.Stop();
             datosTimer.Stop();
-            avisoTimer.Stop();
             if (vigilancia != null)
             {
                 vigilancia.Dispose();
@@ -840,14 +847,71 @@ namespace DigBit
             if (disposing)
             {
                 componentes.Dispose();
-                // La etiqueta no libera su letra (Control.Dispose no lo hace).
-                if (letraAviso != null)
-                {
-                    letraAviso.Dispose();
-                }
             }
 
             base.Dispose(disposing);
+        }
+
+        /// <summary>
+        /// Un aviso a lo ancho, en naranja: fondo claro con borde, una barra a la
+        /// izquierda y el texto en negritas, en una linea (con "..." si no cabe; el
+        /// texto completo en su ayuda de accesibilidad). Lo usa "Sin conexion...".
+        /// </summary>
+        private sealed class FranjaAviso : Control
+        {
+            private static readonly Color Fondo = Color.FromArgb(255, 243, 224);
+            private static readonly Color Borde = Color.FromArgb(240, 180, 110);
+            private static readonly Color Barra = Color.FromArgb(205, 105, 0);
+            private static readonly Color Letra = Color.FromArgb(150, 70, 0);
+            private readonly DrawingFont fuente = new DrawingFont("Century Gothic", 10.5F, FontStyle.Bold);
+
+            public FranjaAviso()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                    | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
+                BackColor = Color.White;
+                AccessibleRole = AccessibleRole.StatusBar;
+            }
+
+            protected override void OnTextChanged(EventArgs e)
+            {
+                base.OnTextChanged(e);
+                AccessibleName = Text;
+                Invalidate();
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                Graphics g = e.Graphics;
+                g.Clear(BackColor);
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                Rectangle caja = new Rectangle(0, 0, Width - 1, Height - 1);
+                using (System.Drawing.Drawing2D.GraphicsPath forma = PanelLaboratoriosAhora.Redondeado(caja, 8))
+                using (SolidBrush relleno = new SolidBrush(Fondo))
+                using (Pen borde = new Pen(Borde))
+                {
+                    g.FillPath(relleno, forma);
+                    g.DrawPath(borde, forma);
+                }
+
+                using (SolidBrush barra = new SolidBrush(Barra))
+                {
+                    g.FillRectangle(barra, new Rectangle(1, 4, 5, Height - 8));
+                }
+
+                TextRenderer.DrawText(g, Text, fuente, new Rectangle(18, 0, Math.Max(10, Width - 30), Height), Letra,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                {
+                    fuente.Dispose();
+                }
+
+                base.Dispose(disposing);
+            }
         }
     }
 

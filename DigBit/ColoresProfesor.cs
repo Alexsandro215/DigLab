@@ -329,6 +329,20 @@ namespace DigBit
         /// </summary>
         internal static Dictionary<int, Color> Calcular(List<int> orden, Dictionary<int, string> elegidos)
         {
+            return Calcular(orden, elegidos, false);
+        }
+
+        /// <summary>
+        /// Lo mismo; con sinTonosDeAlerta, los colores automaticos saltan los que
+        /// parecen un aviso (el salmon, el rosa y el fucsia: junto al rojo de "Sin
+        /// bitacoras" y de "Cancelada", una clase de ese color parecia cancelada).
+        /// Lo usan las clases de cada docente (PersonalizacionClases); los colores
+        /// ya elegidos no cambian, y los de los profesores en Horarios tampoco.
+        /// </summary>
+        internal static Dictionary<int, Color> Calcular(List<int> orden, Dictionary<int, string> elegidos, bool sinTonosDeAlerta)
+        {
+            // El color de cada turno: el de siempre o, para las clases de un docente, sin los de alerta.
+            Func<int, Color> tonoDe = sinTonosDeAlerta ? (Func<int, Color>)TonoSinAlerta : Tono;
             Dictionary<int, int> turnos = new Dictionary<int, int>();
             for (int i = 0; i < orden.Count; i++)
             {
@@ -367,7 +381,7 @@ namespace DigBit
                     continue;
                 }
 
-                Color suyo = Tono(turno);
+                Color suyo = tonoDe(turno);
                 if (quienEligio.ContainsKey(suyo.ToArgb()))
                 {
                     desplazados.Add(id);
@@ -381,7 +395,7 @@ namespace DigBit
             foreach (int id in desplazados)
             {
                 Color? destino = null;
-                Color actualEnCadena = Tono(turnos[id]);
+                Color actualEnCadena = tonoDe(turnos[id]);
                 HashSet<int> vistos = new HashSet<int>();
                 while (true)
                 {
@@ -392,7 +406,7 @@ namespace DigBit
                         break;
                     }
 
-                    Color libre = Tono(turnoDeQuien);
+                    Color libre = tonoDe(turnoDeQuien);
                     if (!quienEligio.ContainsKey(libre.ToArgb()))
                     {
                         if (!usados.Contains(libre.ToArgb()))
@@ -415,7 +429,7 @@ namespace DigBit
                     Color propio;
                     do
                     {
-                        propio = Tono(turnoPropio);
+                        propio = tonoDe(turnoPropio);
                         turnoPropio += 37;
                     }
                     while (usados.Contains(propio.ToArgb()) || quienEligio.ContainsKey(propio.ToArgb()));
@@ -428,6 +442,38 @@ namespace DigBit
             }
 
             return colores;
+        }
+
+        // Los de la paleta que parecen un aviso: salmon, rosa y fucsia (TonoSinAlerta).
+        private static readonly int[] DeAlerta = { 0, 6, 10 };
+
+        /// <summary>
+        /// Como Tono, sin los colores que parecen un aviso: la paleta sin el salmon,
+        /// el rosa y el fucsia y, despues, el angulo aureo sin los tonos rojizos o
+        /// rosados (menos de 30 o desde 300 grados).
+        /// </summary>
+        private static Color TonoSinAlerta(int turno)
+        {
+            int enPaleta = Paleta.Length - DeAlerta.Length;
+            if (turno < enPaleta)
+            {
+                return Paleta.Where((c, i) => !DeAlerta.Contains(i)).ElementAt(turno);
+            }
+
+            int faltan = turno - enPaleta;
+            for (int k = Paleta.Length; ; k++)
+            {
+                double tono = (k * 137.508) % 360.0;
+                if (tono < 30.0 || tono >= 300.0)
+                {
+                    continue;
+                }
+
+                if (faltan-- == 0)
+                {
+                    return Tono(k);
+                }
+            }
         }
 
         /// <summary>

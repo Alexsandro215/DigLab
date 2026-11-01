@@ -28,8 +28,14 @@ namespace DigBit
     /// ni el refresco de cada 10 s ni F5 la cambian, ni el orden, ni lo que se ve.
     ///
     /// Las asistencias que dio el profesor a quien no pudo registrar (db/22) no
-    /// son bitacoras: no van en la tabla; la linea de abajo las cuenta, su ayuda
-    /// dice a quien y el PDF las lleva en su propia tabla.
+    /// son bitacoras: van al final de la tabla, en verde claro, una fila por
+    /// asistencia ("Se la diste: su equipo no tenía internet"); la linea de abajo
+    /// las cuenta y el PDF las lleva en su propia tabla.
+    ///
+    /// Desde 2026-10-31, con el estilo de las demas listas (EstiloHorarios.CrearGrid):
+    /// el nombre como la lista oficial ("Arias Mora Gisela"; el PDF no cambia) y lo
+    /// reportado en una sola columna, "Reporte" (Consultas.DescribirFallas), como en
+    /// Mis bitacoras.
     /// </summary>
     public class BitacoraSesion : Form
     {
@@ -37,6 +43,10 @@ namespace DigBit
         // intenso para la celda con la falla.
         private static readonly Color ColorConFalla = Color.FromArgb(255, 240, 214);
         private static readonly Color ColorFallaCelda = Color.FromArgb(255, 176, 79);
+        // La fila de una asistencia que dio su docente (no es una bitacora): verde claro.
+        private static readonly Color ColorDada = Color.FromArgb(232, 245, 233);
+        private static readonly Color ColorDadaElegida = Color.FromArgb(205, 232, 210);
+        private static readonly Color TextoDada = Color.FromArgb(0, 96, 55);
         // La fila elegida: el verde claro de las listas (EstiloHorarios.FilaElegida) con
         // letra negra, no el azul de Windows. La de una falla sigue naranja, mas
         // intensa: en verde no se veria la falla.
@@ -49,6 +59,13 @@ namespace DigBit
         private static readonly Color TituloReportes = Color.FromArgb(160, 75, 0);
         private static readonly Color TextoReportes = Color.FromArgb(50, 50, 50);
         private const int SegundosEntreRefrescos = 10;
+
+        /// <summary>La ve el docente de la clase: los textos le hablan de tu ("Se la diste", "Lo que reportaste").</summary>
+        private static bool EsSuDocente
+        {
+            get { return Datos_User.TipoUsuario == TiposUsuario.Profesor; }
+        }
+
         // Donde empieza la tabla sin franja, la franja y lo que queda debajo de la tabla.
         private const int ArribaDeLaTabla = 102;
         private const int ArribaDeLaFranja = 100;
@@ -106,11 +123,21 @@ namespace DigBit
         private string ayudaCantidadPuesta;
         private readonly ToolTip ayudaBotones = new ToolTip();
         // La celda de la falla, en negrita con la letra de la tabla (no con la del formulario).
-        private readonly DrawingFont fuenteFalla = new DrawingFont("Century Gothic", 9F, FontStyle.Bold);
+        private readonly DrawingFont fuenteFalla = new DrawingFont("Century Gothic", 10F, FontStyle.Bold);
         private DataGridView dgvAlumnos;
         private Label lblCantidad;
         private Panel pnlLeyenda;
         private Label lblLeyenda;
+        // La muestra verde de la leyenda: solo con asistencias dadas en la tabla (un
+        // campo y no Visible, que antes de ensenarse la ventana dice false).
+        private Panel pnlLeyendaDada;
+        private Label lblLeyendaDada;
+        private bool conLeyendaDada;
+        // La leyenda no pasa de aqui: 12 px antes de "Actualizar" (AcomodarLeyenda).
+        private const int ActualizarDesdeLaDerecha = 384;
+        private const string NaranjaLarga = "Naranja: la falla que se reportó en la bitácora";
+        private const string NaranjaCorta = "Naranja: falla reportada";
+        private const string VerdeCorta = "Verde: asistencia sin bitácora";
         private Button btnActualizar;
         private Button btnDescargar;
         private Button btnCerrar;
@@ -205,7 +232,7 @@ namespace DigBit
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 9.75F, FontStyle.Bold),
                 ForeColor = TituloReportes,
-                Text = "Reportado por su docente:",
+                Text = EsSuDocente ? "Lo que reportaste:" : "Reportado por su docente:",
                 UseMnemonic = false
             };
             // Su tamano lo pone AcomodarReportes: el ancho que queda y el alto de sus renglones partidos.
@@ -220,29 +247,10 @@ namespace DigBit
             pnlRenglones.Controls.Add(lblReportes);
             pnlReportes.Controls.Add(pnlRenglones);
 
-            dgvAlumnos = new DataGridView
-            {
-                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
-                Location = new Point(24, ArribaDeLaTabla),
-                Size = new Size(ancho - 48, alto - ArribaDeLaTabla - DebajoDeLaTabla),
-                AllowUserToAddRows = false,
-                AllowUserToDeleteRows = false,
-                AllowUserToResizeRows = false,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-                BackgroundColor = Color.White,
-                BorderStyle = BorderStyle.FixedSingle,
-                MultiSelect = false,
-                ReadOnly = true,
-                RowHeadersVisible = false,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                EnableHeadersVisualStyles = false
-            };
-            dgvAlumnos.ColumnHeadersDefaultCellStyle.Font = new DrawingFont("Century Gothic", 9F, FontStyle.Bold);
-            dgvAlumnos.ColumnHeadersDefaultCellStyle.ForeColor = Color.DarkGreen;
-            dgvAlumnos.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(240, 248, 240);
-            dgvAlumnos.DefaultCellStyle.Font = new DrawingFont("Century Gothic", 9F);
-            dgvAlumnos.DefaultCellStyle.SelectionBackColor = EstiloHorarios.FilaElegida;
-            dgvAlumnos.DefaultCellStyle.SelectionForeColor = Color.Black;
+            // Como las demas listas: renglones de 34, lineas suaves y sin marco; los
+            // titulos enteros y, sin nadie, el porque en medio (ListaDigBit).
+            dgvAlumnos = EstiloHorarios.CrearGrid(new Point(24, ArribaDeLaTabla), new Size(ancho - 48, alto - ArribaDeLaTabla - DebajoDeLaTabla));
+            dgvAlumnos.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             dgvAlumnos.CellFormatting += dgvAlumnos_CellFormatting;
 
             // Hasta 10 px antes de Actualizar: si no cabe (ventana chica), "..." y el texto entero al pasar el raton.
@@ -254,7 +262,7 @@ namespace DigBit
                 Font = new DrawingFont("Century Gothic", 9.75F, FontStyle.Bold),
                 ForeColor = Color.DarkGreen,
                 Location = new Point(26, alto - 52),
-                Size = new Size(ancho - 344 - 10 - 26, 20),
+                Size = new Size(ancho - ActualizarDesdeLaDerecha - 10 - 26, 20),
                 Text = "",
                 UseMnemonic = false
             };
@@ -275,17 +283,41 @@ namespace DigBit
                 Font = new DrawingFont("Century Gothic", 8.25F),
                 ForeColor = Color.FromArgb(50, 50, 50),
                 Location = new Point(45, alto - 29),
-                Text = "Naranja: la falla que se reportó en la bitácora"
+                Text = NaranjaLarga
             };
 
-            btnActualizar = CrearBoton("Actualizar", new Point(ancho - 344, alto - 44), new Size(100, 34));
+            // Verde: una asistencia que dio su docente (al final de la tabla). Solo si hay alguna.
+            pnlLeyendaDada = new Panel
+            {
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
+                BackColor = ColorDada,
+                BorderStyle = BorderStyle.FixedSingle,
+                Location = new Point(lblLeyenda.Left + lblLeyenda.PreferredWidth + 18, alto - 28),
+                Size = new Size(14, 14),
+                Visible = false
+            };
+            lblLeyendaDada = new Label
+            {
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
+                AutoSize = true,
+                Font = lblLeyenda.Font,
+                ForeColor = lblLeyenda.ForeColor,
+                Location = new Point(pnlLeyendaDada.Right + 5, alto - 29),
+                Text = VerdeLarga,
+                Visible = false
+            };
+
+            // Los botones de siempre (EstiloHorarios.CrearBoton): borde fino y, apagados, grises.
+            btnActualizar = EstiloHorarios.CrearBoton("Actualizar", new Point(ancho - ActualizarDesdeLaDerecha, alto - 44), new Size(110, 34));
             btnActualizar.Click += (s, e) => Refrescar();
             ayudaBotones.SetToolTip(btnActualizar, "Vuelve a leer quién registró (F5).");
 
-            btnDescargar = CrearBoton("Descargar PDF", new Point(ancho - 234, alto - 44), new Size(130, 34));
+            // Como en Mis bitacoras: primero la vista previa, y desde ahi se guarda.
+            btnDescargar = EstiloHorarios.CrearBoton("PDF de esta sesión", new Point(ancho - 264, alto - 44), new Size(160, 34));
             btnDescargar.Click += (s, e) => DescargarPdf();
+            ayudaBotones.SetToolTip(btnDescargar, "Abre la vista previa del PDF de esta sesión; desde ahí se guarda o se imprime.");
 
-            btnCerrar = CrearBoton("Cerrar", new Point(ancho - 94, alto - 44), new Size(70, 34));
+            btnCerrar = EstiloHorarios.CrearBoton("Cerrar", new Point(ancho - 94, alto - 44), new Size(70, 34));
             btnCerrar.Click += (s, e) => Close();
 
             foreach (Button boton in new[] { btnActualizar, btnDescargar, btnCerrar })
@@ -301,9 +333,12 @@ namespace DigBit
             Controls.Add(lblCantidad);
             Controls.Add(pnlLeyenda);
             Controls.Add(lblLeyenda);
+            Controls.Add(pnlLeyendaDada);
+            Controls.Add(lblLeyendaDada);
             Controls.Add(btnActualizar);
             Controls.Add(btnDescargar);
             Controls.Add(btnCerrar);
+            AcomodarLeyenda();
 
             CancelButton = btnCerrar;
             // F5 actualiza desde cualquier sitio de la ventana (OnKeyDown), como en Mis grupos y Bitacoras.
@@ -312,24 +347,6 @@ namespace DigBit
             temporizador = new Timer { Interval = 1000 };
             temporizador.Tick += Temporizador_Tick;
             temporizador.Start();
-        }
-
-        private Button CrearBoton(string texto, Point posicion, Size tamaño)
-        {
-            Button boton = new Button
-            {
-                BackColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Font = new DrawingFont("Century Gothic", 10F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
-                Location = posicion,
-                Size = tamaño,
-                Text = texto,
-                UseVisualStyleBackColor = false
-            };
-            boton.FlatAppearance.BorderColor = Color.DarkGreen;
-            boton.FlatAppearance.BorderSize = 2;
-            return boton;
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)
@@ -374,6 +391,62 @@ namespace DigBit
             base.OnClientSizeChanged(e);
             // Al cambiar el ancho, los renglones se parten en otro sitio: la franja y la tabla se recolocan.
             AcomodarReportes(true);
+            AcomodarLeyenda();
+        }
+
+        /// <summary>"Verde: ...", al docente de tu (como en sus filas: "Se la diste").</summary>
+        private static string VerdeLarga
+        {
+            get { return EsSuDocente ? "Verde: asistencia que diste sin bitácora" : "Verde: asistencia que dio su docente sin bitácora"; }
+        }
+
+        /// <summary>
+        /// La leyenda de abajo a la izquierda, sin meterse bajo "Actualizar": con la
+        /// muestra verde y la ventana angosta (en su minimo, o a 1024 con el texto de la
+        /// administracion) se pintaba encima del boton. Con sitio, los textos largos; si
+        /// no, primero el naranja corto y despues tambien el verde, enteros al pasar el
+        /// raton; si ni asi cabe (una pantalla muy angosta), el verde se corta con "...".
+        /// </summary>
+        private void AcomodarLeyenda()
+        {
+            if (lblLeyendaDada == null || pnlLeyendaDada == null)
+            {
+                return;
+            }
+
+            int limite = ClientSize.Width - ActualizarDesdeLaDerecha - 12;
+            string verdeLarga = VerdeLarga;
+            PonerLeyenda(NaranjaLarga, verdeLarga);
+            if (conLeyendaDada && lblLeyendaDada.Right > limite)
+            {
+                PonerLeyenda(NaranjaCorta, verdeLarga);
+            }
+
+            if (conLeyendaDada && lblLeyendaDada.Right > limite)
+            {
+                PonerLeyenda(NaranjaCorta, VerdeCorta);
+            }
+
+            if (conLeyendaDada && lblLeyendaDada.Right > limite)
+            {
+                int alto = lblLeyendaDada.Height;
+                lblLeyendaDada.AutoSize = false;
+                lblLeyendaDada.AutoEllipsis = true;
+                lblLeyendaDada.Size = new Size(Math.Max(20, limite - lblLeyendaDada.Left), alto);
+            }
+
+            ayudaBotones.SetToolTip(lblLeyenda, lblLeyenda.Text == NaranjaLarga ? null : NaranjaLarga);
+            ayudaBotones.SetToolTip(lblLeyendaDada, lblLeyendaDada.Text == verdeLarga ? null : verdeLarga);
+        }
+
+        /// <summary>Esos textos en la leyenda, cada uno de su ancho y la muestra verde detras del naranja.</summary>
+        private void PonerLeyenda(string naranja, string verde)
+        {
+            lblLeyenda.Text = naranja;
+            pnlLeyendaDada.Left = lblLeyenda.Left + lblLeyenda.PreferredWidth + 18;
+            lblLeyendaDada.AutoSize = true;
+            lblLeyendaDada.Text = verde;
+            lblLeyendaDada.Left = pnlLeyendaDada.Right + 5;
         }
 
         // =====================================================================
@@ -450,6 +523,7 @@ namespace DigBit
             if (idSesion == 0)
             {
                 dgvAlumnos.DataSource = null;
+                ListaDigBit.PonerTextoVacio(dgvAlumnos, "Todavía nadie ha registrado su bitácora en esta clase.");
                 PonerReportes(new List<ReporteProfesor>());
                 lblRestante.Text = "Todavía nadie ha registrado su bitácora en esta clase.";
                 lblCantidad.Text = "";
@@ -458,10 +532,35 @@ namespace DigBit
             }
 
             DataTable alumnos = consultas.consultaRegistroSesion(idSesion);
+
+            // Las asistencias que dio su docente a quien no pudo registrar (db/22), al final
+            // de la tabla. Si no se pueden leer, quien registro se ve igual y se quedan las de antes.
+            try
+            {
+                dadasPuestas = lectorDadas.DeLaSesion(idSesion);
+            }
+            catch (Exception ex)
+            {
+                if (!avisoDadas)
+                {
+                    avisoDadas = true;
+                    Log.Aviso("BitacoraSesion: no se pudieron leer las asistencias dadas de la sesion " + idSesion + ": " + ex.Message);
+                }
+            }
+
             VistaDeLaTabla vista = VistaDeLaTabla.Tomar(dgvAlumnos);
-            dgvAlumnos.DataSource = alumnos;
+            dgvAlumnos.DataSource = TablaParaVer(alumnos, dadasPuestas);
+            ListaDigBit.PonerTextoVacio(dgvAlumnos, "Todavía nadie ha registrado su bitácora en esta clase.");
             ConfigurarColumnas();
             vista.Devolver(dgvAlumnos);
+            bool conDadas = dadasPuestas.Count > 0;
+            pnlLeyendaDada.Visible = conDadas;
+            lblLeyendaDada.Visible = conDadas;
+            if (conDadas != conLeyendaDada)
+            {
+                conLeyendaDada = conDadas;
+                AcomodarLeyenda();
+            }
 
             // Las fallas que reporto el profesor en esta clase (db/15). Si no se
             // pueden leer, quien registro se ve igual y la franja se queda como estaba.
@@ -478,21 +577,6 @@ namespace DigBit
                 }
             }
 
-            // Las asistencias que dio su docente a quien no pudo registrar (db/22). Si no se
-            // pueden leer, quien registro se ve igual y la linea cuenta las de antes.
-            try
-            {
-                dadasPuestas = lectorDadas.DeLaSesion(idSesion);
-            }
-            catch (Exception ex)
-            {
-                if (!avisoDadas)
-                {
-                    avisoDadas = true;
-                    Log.Aviso("BitacoraSesion: no se pudieron leer las asistencias dadas de la sesion " + idSesion + ": " + ex.Message);
-                }
-            }
-
             int conFalla = alumnos.Rows.Cast<DataRow>().Count(Consultas.ConFalla);
             string sinInternet = Consultas.DescribirSinInternet(Consultas.ContarSinInternet(
                 alumnos.Rows.Cast<DataRow>().Select(f => f["avisa_sin_internet"].ToString())), true);
@@ -503,23 +587,27 @@ namespace DigBit
             // se contradiria. Sin registros (la sesion la abrio un reporte del profesor o una
             // asistencia que dio), nada de los alumnos. Lo del profesor en una sola frase: a
             // 1366 la linea mide unos 680 px y "la asistencia a N estudiantes" ya no cabria.
+            // Al docente se le habla de tu ("Diste 1 asistencia"), como en sus filas ("Se la diste").
+            bool esSuDocente = EsSuDocente;
             List<string> delDocente = new List<string>();
             if (delProfesor > 0)
             {
-                delDocente.Add("reportó " + (delProfesor == 1 ? "1 falla" : delProfesor + " fallas"));
+                delDocente.Add((esSuDocente ? "reportaste " : "reportó ") + (delProfesor == 1 ? "1 falla" : delProfesor + " fallas"));
             }
 
             if (dadas > 0)
             {
-                delDocente.Add("dio " + (dadas == 1 ? "1 asistencia" : dadas + " asistencias") + " sin bitácora");
+                delDocente.Add((esSuDocente ? "diste " : "dio ") + (dadas == 1 ? "1 asistencia" : dadas + " asistencias") + " sin bitácora");
             }
 
+            string loDelDocente = string.Join(" y ", delDocente);
             lblCantidad.Text = "Registros: " + alumnos.Rows.Count
                 + (alumnos.Rows.Count == 0 ? ""
                     : conFalla == 0 ? ". Nadie reportó fallas en su bitácora"
                     : conFalla == 1 ? ". 1 estudiante reportó fallas" : ". " + conFalla + " estudiantes reportaron fallas")
                 + (sinInternet.Length > 0 ? ". " + sinInternet : "")
-                + (delDocente.Count > 0 ? ". Su docente " + string.Join(" y ", delDocente) : "")
+                + (delDocente.Count == 0 ? ""
+                    : esSuDocente ? ". " + char.ToUpper(loDelDocente[0]) + loDelDocente.Substring(1) : ". Su docente " + loDelDocente)
                 + ".";
             PonerAyudaDeLaCantidad(alumnos);
             btnDescargar.Enabled = true;
@@ -566,11 +654,13 @@ namespace DigBit
                 HashSet<string> conBitacora = new HashSet<string>(alumnos.Rows.Cast<DataRow>().Select(f => f["fk_usuario"].ToString()));
                 const int Maximo = 15;
                 ayuda += Environment.NewLine + Environment.NewLine
-                    + "Asistencias que dio su docente sin bitácora (cuentan en la lista, pero no son bitácoras):";
+                    + (EsSuDocente ? "Asistencias que diste sin bitácora" : "Asistencias que dio su docente sin bitácora")
+                    + " (cuentan en la lista, pero no son bitácoras):";
                 foreach (AsistenciaDada dada in dadasPuestas.Take(Maximo))
                 {
                     string detalle = dada.Motivo == AsistenciasDadas.Otro ? "" : (dada.Comentario ?? "").Trim();
-                    ayuda += Environment.NewLine + dada.DadaEn.ToString("HH:mm", CultureInfo.InvariantCulture) + "  " + dada.Nombre + ": "
+                    ayuda += Environment.NewLine + dada.DadaEn.ToString("HH:mm", CultureInfo.InvariantCulture) + "  "
+                        + (string.IsNullOrWhiteSpace(dada.NombreLista) ? dada.Nombre : dada.NombreLista) + ": "
                         + AsistenciasDadas.EnFrase(dada)
                         + (string.IsNullOrWhiteSpace(dada.Equipo) ? "" : " (" + dada.Equipo + ")")
                         + (detalle.Length > 0 ? ". " + detalle : "")
@@ -728,6 +818,68 @@ namespace DigBit
             }
         }
 
+        // Las columnas que TablaParaVer anade a lo que lee la base.
+        private const string ColEstudiante = "estudiante";
+        private const string ColReporte = "reporte";
+        private const string ColDada = "es_dada";
+
+        /// <summary>
+        /// Lo que ensena la tabla: cada bitacora, con el nombre como la lista oficial
+        /// ("Arias Mora Gisela") y lo que reporto en una sola columna (DescribirFallas,
+        /// como Mis bitacoras), y al final una fila por cada asistencia que dio su
+        /// docente: la hora, el equipo y "Se la diste: ...". Es una copia: alumnos se
+        /// queda como la lee la base, para las cuentas de abajo (y el PDF lee la suya).
+        /// </summary>
+        private static DataTable TablaParaVer(DataTable alumnos, List<AsistenciaDada> dadas)
+        {
+            DataTable tabla = alumnos.Copy();
+            tabla.Columns.Add(ColEstudiante, typeof(string));
+            tabla.Columns.Add(ColReporte, typeof(string));
+            tabla.Columns.Add(ColDada, typeof(bool));
+            foreach (DataRow fila in tabla.Rows)
+            {
+                string nombre = UsuarioInfo.ComoEnLaLista(Convert.ToString(fila["nombre"], CultureInfo.InvariantCulture),
+                    Convert.ToString(fila["apellido_paterno"], CultureInfo.InvariantCulture), Convert.ToString(fila["apellido_materno"], CultureInfo.InvariantCulture));
+                fila[ColEstudiante] = Convert.ToInt32(fila["sin_conexion"], CultureInfo.InvariantCulture) == 1 ? nombre + " (sin conexión)" : nombre;
+                fila[ColReporte] = Consultas.DescribirFallas(fila);
+                fila[ColDada] = false;
+            }
+
+            // A quien le habla: el docente de la clase la dio; la administracion y la
+            // persona responsable leen lo que hizo su docente.
+            string quien = EsSuDocente ? "Se la diste: " : "Se la dio su docente: ";
+            HashSet<string> conBitacora = new HashSet<string>(alumnos.Rows.Cast<DataRow>().Select(f => Convert.ToString(f["fk_usuario"], CultureInfo.InvariantCulture)));
+            foreach (AsistenciaDada dada in dadas)
+            {
+                DataRow fila = tabla.NewRow();
+                foreach (DataColumn columna in tabla.Columns)
+                {
+                    if (columna.DataType == typeof(string))
+                    {
+                        fila[columna] = "";
+                    }
+                }
+
+                fila["con_falla"] = 0;
+                fila["sin_conexion"] = 0;
+                fila["numero_identificador"] = dada.Matricula ?? "";
+                fila["hora_registro"] = dada.DadaEn.ToString("HH:mm", CultureInfo.InvariantCulture);
+                fila["numero_computadora"] = string.IsNullOrWhiteSpace(dada.Equipo) ? "—" : dada.Equipo.Trim();
+                fila[ColEstudiante] = string.IsNullOrWhiteSpace(dada.NombreLista) ? dada.Nombre : dada.NombreLista;
+                fila[ColReporte] = quien + AsistenciasDadas.EnFrase(dada)
+                    + (conBitacora.Contains(dada.AlumnoId.ToString(CultureInfo.InvariantCulture)) ? ". Después llegó su bitácora" : "");
+                fila[ColDada] = true;
+                tabla.Rows.Add(fila);
+            }
+
+            return tabla;
+        }
+
+        private static bool EsDada(DataRow fila)
+        {
+            return fila.Table.Columns.Contains(ColDada) && fila[ColDada] is bool && (bool)fila[ColDada];
+        }
+
         private void ConfigurarColumnas()
         {
             if (dgvAlumnos.Columns.Count == 0)
@@ -735,57 +887,47 @@ namespace DigBit
                 return;
             }
 
-            // Una columna por area en vez de dos (falla y comentario): la celda
-            // muestra lo que el alumno escribio, o el tipo de falla si no dejo
-            // comentario, y queda vacia si no reporto nada.
-            foreach (string oculta in new[] { "fk_codigo_accesos", "fk_usuario", "nombre", "apellido_paterno", "apellido_materno", "con_falla", "sin_conexion" })
+            // Se ve: Estudiante, Matricula, Hora, Equipo y Reporte. Lo reportado va en
+            // una sola columna (antes, una por area, casi siempre vacias, y "Sin internet").
+            foreach (DataGridViewColumn columna in dgvAlumnos.Columns)
             {
-                if (dgvAlumnos.Columns.Contains(oculta))
-                {
-                    dgvAlumnos.Columns[oculta].Visible = false;
-                }
+                columna.Visible = columna.Name == ColEstudiante || columna.Name == "numero_identificador" || columna.Name == "hora_registro"
+                    || columna.Name == "numero_computadora" || columna.Name == ColReporte;
             }
 
-            foreach (string area in Consultas.AreasDeFalla)
-            {
-                dgvAlumnos.Columns["falla_" + area].Visible = false;
-            }
-
-            dgvAlumnos.Columns["nombre_completo"].HeaderText = "Estudiante";
+            dgvAlumnos.Columns[ColEstudiante].HeaderText = "Estudiante";
             dgvAlumnos.Columns["numero_identificador"].HeaderText = "Matrícula";
-            dgvAlumnos.Columns["numero_computadora"].HeaderText = "Equipo";
-            dgvAlumnos.Columns["comentarios_red"].HeaderText = "Red";
-            dgvAlumnos.Columns["comentarios_hardware"].HeaderText = "Hardware";
-            dgvAlumnos.Columns["comentarios_software"].HeaderText = "Software";
-
             // La hora de su primer registro: con clases seguidas, dice cuando llego.
             dgvAlumnos.Columns["hora_registro"].HeaderText = "Hora";
+            dgvAlumnos.Columns["numero_computadora"].HeaderText = "Equipo";
+            DataGridViewColumn reporte = dgvAlumnos.Columns[ColReporte];
+            reporte.HeaderText = "Reporte";
+            reporte.ToolTipText = "Lo que reportó en su bitácora (red, hardware, software) y los equipos que avisó sin internet.";
 
-            // Otros equipos que vio sin internet (db/10): solo si alguien aviso.
-            DataGridViewColumn avisos = dgvAlumnos.Columns["avisa_sin_internet"];
-            avisos.HeaderText = "Sin internet";
-            avisos.ToolTipText = "Otros equipos que avisó sin internet al registrar su bitácora.";
-            avisos.FillWeight = 13;
-            avisos.DefaultCellStyle.ForeColor = TextoSinInternet;
-            avisos.DefaultCellStyle.SelectionForeColor = TextoSinInternet;
-            avisos.Visible = dgvAlumnos.DataSource is DataTable
-                && ((DataTable)dgvAlumnos.DataSource).Rows.Cast<DataRow>().Any(f => f["avisa_sin_internet"].ToString().Length > 0);
-
-            dgvAlumnos.Columns["nombre_completo"].DisplayIndex = 0;
+            dgvAlumnos.Columns[ColEstudiante].DisplayIndex = 0;
             dgvAlumnos.Columns["numero_identificador"].DisplayIndex = 1;
             dgvAlumnos.Columns["hora_registro"].DisplayIndex = 2;
             dgvAlumnos.Columns["numero_computadora"].DisplayIndex = 3;
-            dgvAlumnos.Columns["nombre_completo"].FillWeight = 26;
-            dgvAlumnos.Columns["numero_identificador"].FillWeight = 12;
+            // La ultima: entre las ocultas, un numero fijo la dejaba antes del Equipo.
+            reporte.DisplayIndex = dgvAlumnos.Columns.Count - 1;
+            dgvAlumnos.Columns[ColEstudiante].FillWeight = 28;
+            dgvAlumnos.Columns["numero_identificador"].FillWeight = 13;
             dgvAlumnos.Columns["hora_registro"].FillWeight = 7;
             dgvAlumnos.Columns["numero_computadora"].FillWeight = 10;
-            foreach (string area in Consultas.AreasDeFalla)
+            reporte.FillWeight = 42;
+            // La lista los recuerda (si los cambia sola al quedar angosta, los vuelve a poner).
+            ListaDigBit lista = dgvAlumnos as ListaDigBit;
+            if (lista != null)
             {
-                dgvAlumnos.Columns["comentarios_" + area].FillWeight = 17;
+                lista.RecordarPesos();
             }
         }
 
-        /// <summary>Fila suave si reporto algo y celda intensa en la falla concreta.</summary>
+        /// <summary>
+        /// Como Mis bitacoras: la fila suave si reporto algo y el Reporte en naranja
+        /// intenso; "Sin novedad" en gris; solo el aviso de otros equipos sin internet,
+        /// en naranja. La asistencia que dio su docente, en verde claro.
+        /// </summary>
         private void dgvAlumnos_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0)
@@ -800,25 +942,35 @@ namespace DigBit
             }
 
             string columna = dgvAlumnos.Columns[e.ColumnIndex].Name;
-            string area;
-            bool esColumnaDeArea = Consultas.EsColumnaDeFalla(columna, out area);
-            if (esColumnaDeArea)
+            if (EsDada(vista.Row))
             {
-                e.Value = Consultas.ConFallaEn(vista.Row, area) ? Consultas.DetalleDeFalla(vista.Row, area) : "";
-                e.FormattingApplied = true;
-            }
-            else if (columna == "avisa_sin_internet" && e.Value != null)
-            {
-                e.Value = e.Value.ToString().Replace(",", ", ");
-                e.FormattingApplied = true;
+                e.CellStyle.BackColor = ColorDada;
+                e.CellStyle.SelectionBackColor = ColorDadaElegida;
+                if (columna == ColReporte)
+                {
+                    e.CellStyle.ForeColor = TextoDada;
+                }
+
+                e.CellStyle.SelectionForeColor = e.CellStyle.ForeColor;
+                return;
             }
 
             if (!Consultas.ConFalla(vista.Row))
             {
+                if (columna == ColReporte)
+                {
+                    e.CellStyle.ForeColor = Consultas.AvisoSinInternet(vista.Row).Length > 0 ? TextoSinInternet : Color.Gray;
+                    e.CellStyle.SelectionForeColor = e.CellStyle.ForeColor;
+                }
+                else if (columna == "hora_registro" && Convert.ToString(e.Value, CultureInfo.InvariantCulture) == "—")
+                {
+                    e.CellStyle.ForeColor = Color.Gray;
+                }
+
                 return;
             }
 
-            bool esLaFalla = esColumnaDeArea && Consultas.ConFallaEn(vista.Row, area);
+            bool esLaFalla = columna == ColReporte;
             e.CellStyle.BackColor = esLaFalla ? ColorFallaCelda : ColorConFalla;
             // Elegida, su naranja mas intenso (no el verde: se perderia la falla) y su letra de siempre.
             e.CellStyle.SelectionBackColor = esLaFalla ? ColorFallaCeldaElegida : ColorConFallaElegida;
@@ -946,8 +1098,10 @@ namespace DigBit
                 datosPdf.Profesor = nombreProfesor;
             }
 
-            // Con las asistencias que dio su docente (db/22), en su propia tabla; sin la 22, el de siempre.
-            PdfBitacora.Escribir(datosPdf, consultas.consultaRegistroSesion(idSesion), lectorDadas.DeLaSesion(idSesion), destino);
+            // Con lo que reporto su docente (db/15) y las asistencias que dio (db/22), cada
+            // uno en su propia tabla; sin las dos, el de siempre.
+            PdfBitacora.Escribir(datosPdf, consultas.consultaRegistroSesion(idSesion), lectorDadas.DeLaSesion(idSesion),
+                new ReportesProfesorDatos().DeLaSesion(idSesion), destino);
         }
     }
 }

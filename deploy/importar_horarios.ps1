@@ -11,7 +11,8 @@
         - clave: como se nombra al maestro en el CSV de franjas (TREJO, ZITA...).
         - numero: su numero de empleado (con el que entra a DigBit). Si ya existe
           en la base se usa ese maestro; si no, se da de alta con una contrasena
-          aleatoria y su codigo de clase. Solo letras y numeros.
+          aleatoria y su codigo de clase. Solo letras y numeros. Un maestro ya
+          enlazado con el SIIA (db/24) se encuentra tambien por su numero de antes.
 
       Franjas (separador ';'):  laboratorio;dia;hora;materia;grupo;profesor
         - una fila por HORA de laboratorio, como las celdas del horario impreso;
@@ -230,13 +231,13 @@ function Existe([string]$tabla, [string]$columna) {
 $codigoPorProfesor = Existe 'usuarios' 'codigo_clase'
 $hayBajasLab = Existe 'laboratorios' 'activo'
 $conVigencia = Existe 'horarios' 'vigente_hasta'
-# Las franjas nuevas llevan fecha de inicio solo con db/20 y los cambios de horario
-# desde una fecha encendidos en Ajustes, como VigenciaFranjas.ConFecha en DigBit:
-# antes, un DigBit viejo en algun equipo no veria esa fecha.
-$conFecha = $false
+# Las franjas nuevas llevan fecha de inicio con db/20, como VigenciaFranjas.ConFecha
+# en DigBit: desde 2026-10-31 siempre (el historial no se reescribe); solo un '0'
+# escrito a mano en configuracion.franjas_con_fecha lo apaga.
+$conFecha = $conVigencia
 if ($conVigencia -and (Existe 'configuracion' 'valor')) {
     $valorConFecha = Escalar "SELECT valor FROM configuracion WHERE clave = 'franjas_con_fecha'"
-    $conFecha = $null -ne $valorConFecha -and $valorConFecha -isnot [DBNull] -and "$valorConFecha".Trim() -eq '1'
+    $conFecha = $null -eq $valorConFecha -or $valorConFecha -is [DBNull] -or "$valorConFecha".Trim() -ne '0'
 }
 # Sin la 09, clases.codigo sigue siendo UNICO (db/04) y este guion da el mismo
 # codigo a todas las clases de un maestro: la carga fallaria, y se desharia, en
@@ -278,6 +279,14 @@ $usuarios = @{}
 $columnasUsuario = 'idusuarios, numero_identificador, fk_tipo_usuario' + $(if ($codigoPorProfesor) { ', codigo_clase' } else { ', NULL AS codigo_clase' })
 foreach ($r in (Tabla "SELECT $columnasUsuario FROM usuarios")) {
     $usuarios[$r.numero_identificador.ToString().ToUpperInvariant()] = $r
+}
+# Docentes ya enlazados con el SIIA (db/24): al enlazarlos, su numero del horario
+# (provisional) paso a ser su numero de empleado; se les encuentra por el de antes.
+$enlazadosPorAnterior = @{}
+if (Existe 'siia_solicitudes' 'numero_anterior') {
+    foreach ($r in (Tabla "SELECT numero_anterior, usuario_id FROM siia_solicitudes WHERE estado = 'enlazada' AND numero_anterior IS NOT NULL AND usuario_id IS NOT NULL ORDER BY resuelta_en")) {
+        $enlazadosPorAnterior[$r.numero_anterior.ToString().ToUpperInvariant()] = [int]$r.usuario_id
+    }
 }
 
 $codigosUsados = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
@@ -364,6 +373,14 @@ foreach ($clave in ($franjasPlan | Select-Object -ExpandProperty Profesor -Uniqu
     $p = $profesPorClave[$clave]
     $numero = $p.numero.Trim()
     $existente = $usuarios[$numero.ToUpperInvariant()]
+    if (-not $existente -and $enlazadosPorAnterior.ContainsKey($numero.ToUpperInvariant())) {
+        $idEnlazado = $enlazadosPorAnterior[$numero.ToUpperInvariant()]
+        $existente = $usuarios.Values | Where-Object { [int]$_.idusuarios -eq $idEnlazado } | Select-Object -First 1
+        if ($existente) {
+            Write-Host ("   {0} ({1}) esta enlazado con el SIIA: ahora es el numero {2}" -f $clave, $numero, $existente.numero_identificador)
+            $numero = $existente.numero_identificador.ToString()
+        }
+    }
     if ($existente -and [int]$existente.fk_tipo_usuario -ne 2) { $errores.Add("El numero $numero ($clave) ya es de una cuenta que no es docente."); continue }
     $codigo = if ($existente -and $existente.codigo_clase -isnot [DBNull] -and $existente.codigo_clase) { $existente.codigo_clase.ToString() } else { $null }
     $profesPlan[$clave] = [pscustomobject]@{
@@ -448,11 +465,12 @@ foreach ($f in $franjasPlan) {
     }
 }
 
-# --- Choques ----------------------------------------------------------------------
+# --- Horas encimadas y choques -----------------------------------------------------
 # Lo mismo que HorariosDatos.ValidarFranja: nada a la misma hora en el mismo
-# laboratorio, ni el mismo maestro ni el mismo grupo en dos sitios, en los dias en
-# que las dos se dan (SeDanALaVez, con la vigencia de cada franja: una terminada no
-# choca con la que la sustituye).
+# laboratorio (dos clases encimadas: el CSV esta mal hecho), ni el mismo maestro
+# ni el mismo grupo en dos sitios (un choque), en los dias en que las dos se dan
+# (SeDanALaVez, con la vigencia de cada franja: una terminada no se cruza con la
+# que la sustituye).
 function Describir($f) { return "{0} {1}-{2} {3}: {4}, {5} ({6})" -f $nombresDia[$f.Dia], (Hora $f.Inicio), (Hora $f.Fin), $f.Lab, $f.Materia, $f.Grupo, $f.Profesor }
 $nuevas = @($franjasPlan | Where-Object { -not $_.Omitir })
 for ($i = 0; $i -lt $nuevas.Count; $i++) {
@@ -461,7 +479,8 @@ for ($i = 0; $i -lt $nuevas.Count; $i++) {
         if ($a.Dia -ne $b.Dia -or $a.Inicio -ge $b.Fin -or $b.Inicio -ge $a.Fin) { continue }
         if (-not (SeDanALaVez $a.VigenteDesde $a.VigenteHasta $b.VigenteDesde $b.VigenteHasta $a.Dia)) { continue }
         $motivo = if ($a.Lab -eq $b.Lab) { 'mismo laboratorio' } elseif ($a.Profesor -eq $b.Profesor) { 'misma persona docente' } elseif ($a.Grupo -eq $b.Grupo) { 'mismo grupo' } else { $null }
-        if ($motivo) { $errores.Add("Choque ($motivo): $(Describir $a)  <->  $(Describir $b)") }
+        if ($motivo -eq 'mismo laboratorio') { $errores.Add("Se enciman en el mismo laboratorio: $(Describir $a)  <->  $(Describir $b)") }
+        elseif ($motivo) { $errores.Add("Choque ($motivo): $(Describir $a)  <->  $(Describir $b)") }
     }
 }
 foreach ($e in $franjasExistentes.Rows) {
@@ -476,8 +495,9 @@ foreach ($e in $franjasExistentes.Rows) {
             elseif ($p.Id -ne 0 -and $p.Id -eq [int]$e.usuarios_idusuarios) { 'misma persona docente' } `
             elseif ($grupos.ContainsKey($n.Grupo) -and $grupos[$n.Grupo] -eq [int]$e.grupos_idgrupos) { 'mismo grupo' } else { $null }
         if ($motivo) {
+            $que = $(if ($motivo -eq 'mismo laboratorio') { 'Se encima con la base en el mismo laboratorio' } else { "Choque con la base ($motivo)" })
             # Entre parentesis: dentro de Add(...) las comas del -f serian otros argumentos.
-            $errores.Add(("Choque con la base ($motivo): $(Describir $n)  <->  clase $($e.clases_idclases) {0} {1}-{2} {3}: {4}, {5}" -f `
+            $errores.Add(("${que}: $(Describir $n)  <->  clase $($e.clases_idclases) {0} {1}-{2} {3}: {4}, {5}" -f `
                 $nombresDia[[int]$e.dia_semana], $e.hora_inicio.ToString('hh\:mm'), $e.hora_fin.ToString('hh\:mm'), $e.nombre_laboratorio, $e.nombre_materia, $e.nombre_grupo))
         }
     }

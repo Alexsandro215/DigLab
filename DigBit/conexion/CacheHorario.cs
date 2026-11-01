@@ -649,7 +649,7 @@ namespace DigBit.conexion
             List<ClaseCache> clases = Clases.Where(c => string.Equals(c.Codigo, codigo, StringComparison.OrdinalIgnoreCase)).ToList();
             if (clases.Count == 0)
             {
-                return new ResultadoCodigo { Motivo = MotivoCodigo.NoExiste, Modo = Modo, Mensaje = "Código no válido. Revisa que esté bien escrito." };
+                return new ResultadoCodigo { Motivo = MotivoCodigo.NoExiste, Modo = Modo, Mensaje = ReglasCodigo.NoExisteElCodigo(codigo) };
             }
 
             List<ClaseCache> vigentes = clases.Where(c => ahora.Date >= c.VigenteDesde.Date && ahora.Date <= c.VigenteHasta.Date).ToList();

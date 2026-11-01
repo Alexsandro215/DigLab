@@ -26,6 +26,21 @@ namespace DigBit.conexion
         /// <summary>La direccion del aviso de privacidad integral (vacio = sin enlace).</summary>
         public const string AvisoPrivacidadUrl = "aviso_privacidad_url";
 
+        /// <summary>"1": los docentes entran con su contrasena del SIIA del TESCHI (InicioConSiia); sin valor, apagado.</summary>
+        public const string SiiaActivo = "siia_docentes";
+
+        /// <summary>"1": los estudiantes entran con su matricula y su contrasena del SIIA; sin valor, apagado.</summary>
+        public const string SiiaEstudiantes = "siia_estudiantes";
+
+        /// <summary>La direccion de login.ashx del SIIA (vacio = InicioConSiia.UrlPorOmision).</summary>
+        public const string SiiaUrl = "siia_url";
+
+        /// <summary>La pagina del SIIA para recuperar la contrasena, solo https (vacio = InicioConSiia.RecuperarPorOmision).</summary>
+        public const string SiiaRecuperarUrl = "siia_recuperar_url";
+
+        /// <summary>La pagina de inicio del SIIA, donde se crea el NIP, solo https (vacio = InicioConSiia.PaginaPorOmision).</summary>
+        public const string SiiaPaginaUrl = "siia_pagina_url";
+
         /// <summary>
         /// Lo mas largo que se guarda de un ajuste (el aviso de privacidad, que
         /// Ajustes deja pegar hasta aqui): TrozosMaximos trozos de LargoTrozo.

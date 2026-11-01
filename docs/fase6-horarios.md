@@ -103,6 +103,16 @@
 >   dicen cuántas asistencias dio su docente en una clase sin bitácoras.
 > - Sin la 22, todo como antes.
 
+> **Cambio del 2026-10-31: «Crear plantilla nueva...»** (Próximo ciclo,
+> 1. Plantillas, junto a «Guardar el horario de hoy como plantilla...»). Un
+> horario nuevo desde cero: pregunta si se usan los docentes y sus clases
+> (docente, materia y grupo) de una plantilla ya hecha, **sin sus horas**, que
+> se acomodan de nuevo en la cuadrícula; si no, empieza vacía
+> (`DialogoCrearPlantilla`, `FuentePreparacion.ClasesDeConfiguracion`,
+> `CopiarCiclo(..., conHoras: false)`, sin horario de origen). Queda en
+> preparación, como con «Cargar como base...», que sigue copiando también las
+> horas.
+>
 > **Cambio del 2026-10-24: configuraciones de horario y su aplicación
 > (`db/16_ciclo_preliminar.sql` y `db/23_horarios_guardados.sql`).** Dos
 > pestañas nuevas al final de Horarios (desde el 2026-10-25 son una sola,
@@ -245,14 +255,18 @@
 >   de un día, Faltas y la preparación de Próximo ciclo.
 > - **Choques del horario en uso:** Horario semanal cuenta los de la semana que
 >   se ve (de lunes a domingo, en todos los laboratorios activos) con la regla
->   de la revisión de Próximo ciclo: el mismo día, a horas que se cruzan, en el
->   mismo laboratorio, con la misma persona docente o con el mismo grupo
->   (`ChoqueEnUso`, sobre `HorariosDatos.ObtenerTodasLasFranjas`). Los dice la
+>   de la revisión de Próximo ciclo (decisión del 2026-10-31): el mismo día, a
+>   horas que se cruzan, en **dos laboratorios distintos**, con la misma persona
+>   docente o con el mismo grupo (`ChoqueEnUso`, sobre
+>   `HorariosDatos.ObtenerTodasLasFranjas`). Dos clases a la vez en el mismo
+>   laboratorio no son un choque: al poner una encima de otra, la reemplaza
+>   (Horario semanal con db/25 y la preparación de Próximo ciclo), y si llegan
+>   así por datos viejos o copiados, «se enciman» y no dejan aplicar. Los dice la
 >   pastilla roja «Choques: N» (clic: la lista, con «Ver en el horario») y, en
 >   el laboratorio que se ve, cada clase que choca va en rojo con «Choca: mismo
->   grupo». Con la base local salen los 22 que encontró la revisión de una copia
->   del horario de hoy (datos de prueba cargados con SQL, sin pasar por la
->   validación).
+>   grupo». Con la base local salen 20 (todos «mismo grupo»; datos de prueba
+>   cargados con SQL, sin pasar por la validación). Prueba:
+>   `deploy\probar_choques.ps1`.
 > - **Clases antes de las 07:00 o después de las 21:00:** la cuadrícula
 >   (Horario semanal, Faltas y el PDF; `CuadriculaSemanal.HorasSegunClases`)
 >   amplía sus horas a las de las clases de esa semana. Con más de 14 horas,

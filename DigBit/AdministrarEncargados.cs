@@ -55,7 +55,7 @@ namespace DigBit
 
             txtBuscar = CrearBuscador(new Point(Margen, 112), 330);
 
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Mostrar", new Point(380, 88)));
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Mostrar", new Point(380, 86)));
             cboMostrar = EstiloHorarios.CrearCombo(new Point(380, 111), 170);
             cboMostrar.Items.AddRange(new object[] { Activos, DadosDeBaja, Todos });
             cboMostrar.SelectedIndex = 0;
@@ -156,6 +156,9 @@ namespace DigBit
                 x => !x.Activo, x => x.Matricula, seleccionar);
 
             int bajas = encargados.Count(x => !x.Activo);
+            // Lo mismo, en medio de la lista vacia (no un rectangulo blanco).
+            ListaDigBit.PonerTextoVacio(grid, encargados.Count == 0 ? "Todavía no hay responsables de laboratorio."
+                : "Nadie coincide con la búsqueda. Borra la búsqueda o cambia «Mostrar».");
             if (encargados.Count == 0)
             {
                 lblResumen.Text = "Todavía no hay responsables de laboratorio.";

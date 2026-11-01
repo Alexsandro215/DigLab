@@ -87,7 +87,8 @@ namespace DigBit.conexion
                         + (revision.EnLaboratorioDesactivado == 1 ? "): cámbiale el horario." : "): cámbiales el horario."), FiltroClases.LaboratorioDesactivado));
             }
 
-            // 4. Choques, tambien con las clases que ya estan en Clases en esas fechas.
+            // 4. Choques (la misma persona docente o el mismo grupo a la misma hora en
+            // otro laboratorio), tambien con las clases que ya estan en Clases en esas fechas.
             int choques = revision.Choques.Count;
             int conProgramadas = revision.Choques.Count(c => c.Programada != null);
             renglones.Add(choques == 0
@@ -97,6 +98,22 @@ namespace DigBit.conexion
                         : conProgramadas == choques
                             ? (choques == 1 ? " (es con una clase que ya está en Clases en esas fechas)." : " (son con clases que ya están en Clases en esas fechas).")
                             : " (" + conProgramadas + " con clases que ya están en Clases en esas fechas)."), FiltroClases.Choques));
+
+            // 4b. Dos clases a la misma hora en el mismo laboratorio (datos viejos o
+            // copiados: al ponerlas, una reemplaza a la otra). No es un choque, pero
+            // asi no pueden llegar al horario en uso. Solo si las hay.
+            if (revision.Encimadas.Count > 0)
+            {
+                ChoqueCiclo primera = revision.Encimadas[0];
+                string otra = primera.Programada != null
+                    ? primera.Programada.Materia + " con " + primera.Programada.Grupo + " (" + primera.Programada.ProfesorCorto + ", ya está en Clases en esas fechas)"
+                    : primera.CargaB.Nombre + " (" + (primera.CargaB.ProfesorId.HasValue ? primera.CargaB.ProfesorCorto : "sin docente") + ")";
+                renglones.Add(Rojo("Se enciman en el mismo laboratorio: " + primera.CargaA.Nombre + " ("
+                    + (primera.CargaA.ProfesorId.HasValue ? primera.CargaA.ProfesorCorto : "sin docente") + ") y " + otra
+                    + " el " + HorariosDatos.NombresDia[primera.Dia] + " de " + HorariosDatos.Hora(primera.Inicio) + " a " + HorariosDatos.Hora(primera.Fin)
+                    + " en el " + EstiloHorarios.NombreLaboratorio(primera.FranjaA.Laboratorio) + ". Quítale esas horas a una de las dos."
+                    + Mas(revision.Encimadas.Count - 1), FiltroClases.Encimadas));
+            }
 
             // 5. Repetidas: la misma persona docente con la misma materia y grupo dos veces.
             List<CargaCiclo> repetidas = revision.Repetidas
@@ -205,10 +222,11 @@ namespace DigBit.conexion
                 renglones.Add(Ambar("Empieza mañana: aplícalo al menos un día de clases antes, para que cada equipo guarde el horario nuevo en su copia local."));
             }
 
-            // 17 y 19. La casilla de Ajustes: si esta encendida y donde se enciende.
+            // 17 y 19. Los cambios a mitad del ciclo desde una fecha (VigenciaFranjas.ConFecha):
+            // desde 2026-10-31 siempre con db/20, ya sin casilla en Ajustes. Sin la 20, que falta.
             renglones.Add(datos.ConFecha
-                ? Verde("La casilla «Los cambios de horario aplican desde una fecha» de Ajustes está encendida: los cambios a mitad del ciclo aplican desde una fecha y lo que ya pasó no se reescribe.")
-                : Ambar("La casilla «Los cambios de horario aplican desde una fecha» está apagada (se enciende en el panel de la administración, Ajustes, apartado Cambios de horario): si a mitad del ciclo cambias una hora, también cambian las semanas que ya pasaron. Enciéndela cuando todos los equipos tengan esta versión."));
+                ? Verde("Los cambios a mitad del ciclo aplican desde una fecha: lo que ya pasó no se reescribe.")
+                : Ambar("Los cambios a mitad del ciclo todavía no aplican desde una fecha (falta aplicar db/20_vigencia_franjas.sql en la base): si a mitad del ciclo cambias una hora, también cambian las semanas que ya pasaron."));
 
             // 18. Las clases que ya estan en Clases en esas fechas (informa).
             List<FranjaInfo> programadas = leido.YaProgramadas.GroupBy(f => f.ClaseId).Select(g => g.First()).ToList();

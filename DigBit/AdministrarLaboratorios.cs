@@ -32,8 +32,9 @@ namespace DigBit
         private readonly Button btnCodigos;
 
         public AdministrarLaboratorios()
+            // La responsable no instala equipos: a ella, que hay aqui (sin instrucciones de instalacion).
             : base("Laboratorios", Permisos.SoloConsulta
-                ? "Cada equipo se instala con el nombre exacto de su laboratorio. Doble clic para ver su horario. F5 actualiza."
+                ? "Cuánto se usa cada laboratorio y cómo se entra a sus clases. Doble clic para ver su horario. F5 actualiza."
                 : "Cada equipo se instala con el nombre exacto de su laboratorio. Doble clic para cambiarlo. F5 actualiza.", new Size(1100, 600))
         {
             if (!soloConsulta)
@@ -172,6 +173,9 @@ namespace DigBit
                 l => !l.Activo, l => l.Nombre, seleccionar);
 
             int desactivados = laboratorios.Count(l => !l.Activo);
+            // En medio de la lista vacia, por que lo esta (no un rectangulo blanco).
+            ListaDigBit.PonerTextoVacio(grid, laboratorios.Count == 0 ? "Todavía no hay laboratorios."
+                : "Ningún laboratorio coincide con la búsqueda. Borra la búsqueda.");
             lblResumen.Text = laboratorios.Count == 0
                 ? "Todavía no hay laboratorios."
                 : ordenados.Count < laboratorios.Count

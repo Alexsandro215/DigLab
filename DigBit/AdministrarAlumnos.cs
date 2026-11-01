@@ -42,26 +42,38 @@ namespace DigBit
         private readonly Button btnDatosPersonales;
         private bool cargandoFiltros;
 
+        // Los estudiantes entran con el SIIA (Ajustes): su cuenta se crea sola al
+        // entrar, asi que aqui no se registran (2026-10-31: "no tiene sentido
+        // agregar si ya tienen el SIIA"). Sin el SIIA, "Registrar estudiante" vuelve.
+        private readonly bool estudiantesConSiia;
+
         // 1400 de ancho pedidos: a 1366x768 PantallaAdmin la deja en lo que cabe
         // (unos 1350) y la Carrera entera cabe a 10 pt tambien con la columna Estado.
         public AdministrarAlumnos()
+            : this(InicioConSiia.LeerSinFallar().Estudiantes)
+        {
+        }
+
+        private AdministrarAlumnos(bool conSiia)
             : base("Estudiantes", Permisos.SoloConsulta
                 ? "Busca por matrícula, nombre o correo. Doble clic para ver sus bitácoras. F5 actualiza."
-                : "Busca por matrícula, nombre o correo. Doble clic para editar. F5 actualiza.", new Size(1400, 700))
+                : "Busca por matrícula, nombre o correo. Doble clic para editar. F5 actualiza."
+                  + (conSiia ? " Las cuentas se crean solas cuando el estudiante entra con el SIIA." : ""), new Size(1400, 700))
         {
-            if (!soloConsulta)
+            estudiantesConSiia = conSiia;
+            if (!soloConsulta && !estudiantesConSiia)
             {
                 BotonPrincipalArriba("Registrar estudiante", 200).Click += (s, e) => NuevoAlumno();
             }
 
             txtBuscar = CrearBuscador(new Point(Margen, 112), 330);
 
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Carrera", new Point(380, 88)));
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Carrera", new Point(380, 86)));
             cboCarrera = EstiloHorarios.CrearCombo(new Point(380, 111), 300);
             cboCarrera.SelectedIndexChanged += (s, e) => { if (!cargandoFiltros) Aplicar(null); };
             Controls.Add(cboCarrera);
 
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Mostrar", new Point(700, 88)));
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Mostrar", new Point(700, 86)));
             cboMostrar = EstiloHorarios.CrearCombo(new Point(700, 111), 170);
             cboMostrar.Items.AddRange(new object[] { Activos, DadosDeBaja, Todos });
             cboMostrar.SelectedIndex = 0;
@@ -93,9 +105,9 @@ namespace DigBit
             grid.Columns.Add("estado", "Estado");
             // A 10 pt: la Carrera ("Ingenieria en Sistemas Computacionales") entera a
             // 1366 de ancho, tambien con Estado (ColumnasDeLista.TextoEntero, al leer);
-            // las cortas, con el peso de su encabezado entero, y lo demas al nombre y al correo.
+            // las cortas, con el peso de su encabezado entero (ListaDigBit no las deja
+            // mas angostas que su titulo), y lo demas al nombre y al correo.
             EstiloHorarios.Pesos(grid, 100, 220, 320, 95, 240, 95, 95, 127);
-            ColumnasDeLista.EncabezadoEntero(grid, "matricula", "semestre", "bitacoras", "estado");
             grid.Columns["bitacoras"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
 
             Button cerrar = BotonAbajo("Cerrar", 110);
@@ -107,8 +119,12 @@ namespace DigBit
             {
                 btnBaja = BotonAbajo("Dar de baja", 150);
                 btnBaja.Click += (s, e) => CambiarEstadoSeleccionado();
-                btnContrasena = BotonAbajo("Restablecer contraseña", 210);
-                btnContrasena.Click += (s, e) => RestablecerContrasenaSeleccionado();
+                // Con el SIIA su contrasena es la del SIIA y se recupera alla: aqui no se restablece.
+                if (!estudiantesConSiia)
+                {
+                    btnContrasena = BotonAbajo("Restablecer contraseña", 210);
+                    btnContrasena.Click += (s, e) => RestablecerContrasenaSeleccionado();
+                }
             }
 
             // Su historial: cada bitacora que registro, con "Ver la sesion" y la
@@ -237,7 +253,8 @@ namespace DigBit
                 a => new object[]
                 {
                     a.Matricula,
-                    a.NombreParaLista,
+                    // Como la lista oficial: "Arias Mora Gisela" (igual en todas las pantallas).
+                    a.NombreComoEnLaLista,
                     EstiloAdmin.Guion(a.Carrera),
                     EstiloAdmin.Guion(a.Semestre),
                     a.Correo,
@@ -250,6 +267,9 @@ namespace DigBit
             ColumnasDeLista.TextoEntero(grid, 340, "carrera");
 
             int bajas = alumnos.Count(a => !a.Activo);
+            // Lo mismo, en medio de la lista vacia (no un rectangulo blanco).
+            ListaDigBit.PonerTextoVacio(grid, alumnos.Count == 0 ? "Todavía no hay cuentas de estudiantes."
+                : "Nadie coincide con la búsqueda. Borra la búsqueda o cambia «Carrera» o «Mostrar».");
             if (alumnos.Count == 0)
             {
                 lblResumen.Text = "Todavía no hay cuentas de estudiantes.";
@@ -293,7 +313,10 @@ namespace DigBit
             // Una cuenta anonimizada ya no se edita ni se reactiva (UsuariosDatos.Anonimizar).
             bool anonimizada = alumno != null && alumno.Anonimizada;
             btnEditar.Enabled = alumno != null && !anonimizada;
-            btnContrasena.Enabled = alumno != null && alumno.Activo;
+            if (btnContrasena != null)
+            {
+                btnContrasena.Enabled = alumno != null && alumno.Activo;
+            }
             btnBaja.Enabled = alumno != null && datos.BajasDisponibles && !anonimizada;
             btnBaja.Text = alumno != null && !alumno.Activo ? "Reactivar" : "Dar de baja";
             btnDatosPersonales.Enabled = alumno != null;

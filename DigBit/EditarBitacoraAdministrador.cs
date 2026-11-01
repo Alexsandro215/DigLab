@@ -42,8 +42,9 @@ namespace DigBit
                 : "";
             descripcionSesion = sesion ?? "";
 
-            EstiloHorarios.PrepararDialogo(this, "Corregir registro", new Size(680, 470));
+            EstiloHorarios.PrepararDialogo(this, "Corregir registro", new Size(680, 430));
             Controls.Add(EstiloAdmin.TituloDialogo("Registro de " + alumno, 632));
+            // Quien es (su matricula) y de que sesion, debajo del nombre.
             Controls.Add(new Label
             {
                 AutoSize = false,
@@ -52,7 +53,8 @@ namespace DigBit
                 ForeColor = Color.FromArgb(90, 90, 90),
                 Location = new Point(24, 48),
                 Size = new Size(632, 20),
-                Text = sesion
+                Text = (matricula.Length > 0 ? "Matrícula " + matricula + " · " : "") + sesion,
+                UseMnemonic = false
             });
 
             Controls.Add(EstiloHorarios.CrearEtiqueta("Equipo *", new Point(24, 82)));
@@ -63,6 +65,12 @@ namespace DigBit
             txtEquipo.TextChanged += (s, e) => txtEquipo.BackColor = SystemColors.Window;
             Controls.Add(txtEquipo);
 
+            // La falla, tan ancha como su etiqueta mas larga ("El cable está suelto o
+            // desconectado"); el comentario, con lo que quede.
+            DrawingFont letraFalla = new DrawingFont("Century Gothic", 10F);
+            int anchoFalla = Math.Max(250, Consultas.AreasDeFalla.SelectMany(Consultas.OpcionesDeFalla)
+                .Max(v => TextRenderer.MeasureText(Consultas.EtiquetaDeFalla(v), letraFalla).Width) + 30);
+            int xComentario = 24 + anchoFalla + 16;
             int y = 146;
             foreach (string area in Consultas.AreasDeFalla)
             {
@@ -70,41 +78,68 @@ namespace DigBit
                 ComboBox falla = new ComboBox
                 {
                     DropDownStyle = ComboBoxStyle.DropDown,
-                    Font = new DrawingFont("Century Gothic", 10F),
+                    Font = letraFalla,
                     Location = new Point(24, y + 23),
-                    Size = new Size(250, 26),
+                    Size = new Size(anchoFalla, 26),
                     MaxLength = 45
                 };
                 falla.Items.Add("Ninguno");
                 falla.Items.AddRange(Consultas.OpcionesDeFalla(area));
                 falla.Items.Add("Otro");
-                falla.Text = original["falla_" + area];
+                // Las mismas palabras que ve el estudiante (Consultas.EtiquetaDeFalla); se
+                // guarda el valor de siempre (Guardar, ValorDeFalla).
+                falla.FormattingEnabled = true;
+                falla.Format += (s, e) => e.Value = Consultas.EtiquetaDeFalla(e.ListItem as string);
+                falla.Text = Consultas.EtiquetaDeFalla(original["falla_" + area]);
                 Controls.Add(falla);
                 fallas[area] = falla;
 
-                Controls.Add(EstiloHorarios.CrearEtiqueta("Comentario de " + area, new Point(290, y)));
-                TextBox comentario = EstiloHorarios.CrearTexto(new Point(290, y + 23), 366);
+                Controls.Add(EstiloHorarios.CrearEtiqueta("Comentario de " + area, new Point(xComentario, y)));
+                TextBox comentario = EstiloHorarios.CrearTexto(new Point(xComentario, y + 23), 680 - 24 - xComentario);
                 comentario.MaxLength = 255;
                 comentario.Text = original["comentarios_" + area];
+                comentario.TextChanged += (s, e) => comentario.BackColor = SystemColors.Window;
                 Controls.Add(comentario);
                 comentarios[area] = comentario;
+                // Con "Ninguno" no hay nada que comentar: al elegirlo de la lista, el
+                // comentario se vacia y se apaga, como lo registra el estudiante. Al abrir
+                // y al teclear solo se apaga si ya esta vacio (no se borra nada a medias).
+                string estaArea = area;
+                AjustarComentario(estaArea, false);
+                falla.SelectedIndexChanged += (s, e) => AjustarComentario(estaArea, true);
+                falla.TextChanged += (s, e) => AjustarComentario(estaArea, false);
                 y += 62;
             }
 
-            Controls.Add(new Label
-            {
-                AutoSize = false,
-                Font = new DrawingFont("Century Gothic", 9F),
-                ForeColor = Color.FromArgb(90, 90, 90),
-                Location = new Point(24, y + 4),
-                Size = new Size(632, 20),
-                Text = "Sin falla en un área: «Ninguno» y el comentario vacío."
-            });
-
-            lblError = EstiloAdmin.LineaError(new Point(24, y + 30), 632, 22);
+            lblError = EstiloAdmin.LineaError(new Point(24, y + 8), 632, 22);
             Controls.Add(lblError);
             EstiloAdmin.BotonesDialogo(this, "Guardar", Guardar);
             ActiveControl = txtEquipo;
+        }
+
+        private static bool EsNinguno(string falla)
+        {
+            string valor = Consultas.ValorDeFalla(falla);
+            return valor.Length == 0 || valor.Equals("Ninguno", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// El comentario de un area con "Ninguno": vacio y apagado. alElegir: se eligio
+        /// "Ninguno" de la lista (se vacia); si no, solo se apaga si ya esta vacio.
+        /// </summary>
+        private void AjustarComentario(string area, bool alElegir)
+        {
+            TextBox comentario = comentarios[area];
+            ComboBox falla = fallas[area];
+            // Al elegir de la lista, el elemento (el valor): el texto de la caja puede ir un paso atras.
+            string elegido = alElegir ? falla.SelectedItem as string : null;
+            bool ninguno = EsNinguno(elegido ?? falla.Text);
+            if (ninguno && elegido != null)
+            {
+                comentario.Text = "";
+            }
+
+            comentario.Enabled = !ninguno || comentario.Text.Trim().Length > 0;
         }
 
         private void Guardar()
@@ -121,9 +156,21 @@ namespace DigBit
             Dictionary<string, string> nuevo = new Dictionary<string, string> { { "numero_computadora", equipo } };
             foreach (string area in Consultas.AreasDeFalla)
             {
-                string falla = fallas[area].Text.Trim();
+                // Lo que se lee ("No tiene cable de red") se guarda como siempre ("Sin cable de red").
+                string falla = Consultas.ValorDeFalla(fallas[area].Text);
+                string comentario = comentarios[area].Text.Trim();
+                // "Otro" lleva escrito que falla, como lo registra el estudiante.
+                if (falla.Equals("Otro", StringComparison.OrdinalIgnoreCase) && comentario.Length == 0)
+                {
+                    lblError.Text = "Con «Otro», escribe qué falla en el comentario de " + area + ".";
+                    comentarios[area].Enabled = true;
+                    comentarios[area].BackColor = EstiloAdmin.FondoError;
+                    comentarios[area].Focus();
+                    return;
+                }
+
                 nuevo["falla_" + area] = falla.Length == 0 ? "Ninguno" : falla;
-                nuevo["comentarios_" + area] = comentarios[area].Text.Trim();
+                nuevo["comentarios_" + area] = comentario;
             }
 
             if (nuevo.All(par => par.Value == original[par.Key].Trim()))

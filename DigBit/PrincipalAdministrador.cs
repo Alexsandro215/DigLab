@@ -163,12 +163,12 @@ namespace DigBit
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
                 RowCount = 4,
-                Padding = new Padding(20, 8, 20, 16),
+                Padding = new Padding(28, 12, 28, 18),
                 BackColor = Color.White
             };
             raiz.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            raiz.RowStyles.Add(new RowStyle(SizeType.Absolute, 84F));
-            raiz.RowStyles.Add(new RowStyle(SizeType.Absolute, 122F));
+            raiz.RowStyles.Add(new RowStyle(SizeType.Absolute, 90F));
+            raiz.RowStyles.Add(new RowStyle(SizeType.Absolute, 128F));
             raiz.RowStyles.Add(new RowStyle(SizeType.Absolute, 46F));
             raiz.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
@@ -377,6 +377,9 @@ namespace DigBit
         /// reloj; si no, "Sesion: X", solo X y luego "..." (al pasar el raton sale
         /// el texto entero). La fecha, entera si cabe; si no, sin el ano.
         /// </summary>
+        // Entre una pastilla y la siguiente (antes 2: se veian pegadas).
+        private const int EntrePastillas = 8;
+
         private void ColocarCabecera()
         {
             int derecha = cabecera.ClientSize.Width;
@@ -388,7 +391,7 @@ namespace DigBit
             int anchoPastillas = ultima.AnchoReservado;
             for (int i = 0; i < pastillas.Count - 1; i++)
             {
-                anchoPastillas += pastillas[i].Width + 2;
+                anchoPastillas += pastillas[i].Width + EntrePastillas;
             }
 
             // Antes del primer tic del reloj (al construir la ventana), la de hoy.
@@ -416,7 +419,7 @@ namespace DigBit
             foreach (BotonCabecera pastilla in pastillas)
             {
                 pastilla.Location = new Point(x, 40);
-                x = pastilla.Right + 2;
+                x = pastilla.Right + EntrePastillas;
             }
 
             // La fecha, alineada a la derecha, nunca debajo de las pastillas: en una
@@ -449,17 +452,14 @@ namespace DigBit
             control.AccessibleDescription = texto;
         }
 
-        /// <summary>La pastilla "Solo consulta" del encargado de laboratorio: que puede ver y que no.</summary>
+        /// <summary>
+        /// La pastilla "Solo consulta" del encargado de laboratorio: que puede ver,
+        /// que puede guardar, donde esta el codigo y que hace la administracion (lo
+        /// mismo que la etiqueta junto al titulo de cada seccion).
+        /// </summary>
         private void ExplicarSoloConsulta()
         {
-            MessageBox.Show(this, "Entraste como responsable de laboratorio." + Environment.NewLine + Environment.NewLine
-                + "Puedes ver los laboratorios en vivo, las alertas, las bitácoras (y descargarlas en PDF), las listas de estudiantes y de docentes, "
-                + "los laboratorios, los horarios y las estadísticas (y guardar en Excel las de laboratorios, grupos y equipos)."
-                + Environment.NewLine + Environment.NewLine
-                + "No puedes registrar, editar ni dar de baja a nadie, cambiar horarios ni clases, corregir bitácoras, ni cambiar "
-                + "los códigos de las clases o los ajustes. Si hace falta un cambio, pídeselo a la administración de DigBit." + Environment.NewLine + Environment.NewLine
-                + "Tu correo y tu contraseña sí los cambias tú, en Mi perfil.",
-                "Solo consulta", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Permisos.ExplicarSoloConsulta(this);
         }
 
         /// <summary>
@@ -505,7 +505,7 @@ namespace DigBit
                 Dock = DockStyle.Fill,
                 ColumnCount = 6,
                 RowCount = 1,
-                Margin = new Padding(0, 14, 0, 8)
+                Margin = new Padding(0, 18, 0, 10)
             };
             for (int i = 0; i < fila.ColumnCount; i++)
             {
@@ -530,9 +530,9 @@ namespace DigBit
                 ? "Buscar; ver su carrera y sus bitácoras."
                 : "Buscar, registrar, editar y dar de baja.", AbrirAlumnos);
             AgregarSeccion(fila, 2, "Docentes", soloConsulta
-                ? "Buscar docentes; ver su horario y sus bitácoras."
-                : "Buscar, registrar y editar docentes y responsables de laboratorio; dar de baja.", soloConsulta
-                ? null
+                ? "Buscar docentes; ver su horario, sus bitácoras y todo lo suyo."
+                : "Buscar, registrar y editar docentes y responsables; ver todo lo de cada uno.", soloConsulta
+                ? "Buscar; ver todo lo de cada uno."
                 : "Docentes y responsables de laboratorio.", AbrirProfesores);
             AgregarSeccion(fila, 3, "Laboratorios", soloConsulta
                 ? "Ver cada laboratorio, cuánto se usa y su horario."
@@ -550,7 +550,7 @@ namespace DigBit
             {
                 DescripcionCorta = corta,
                 Dock = DockStyle.Fill,
-                Margin = new Padding(columna == 0 ? 0 : 6, 0, columna == fila.ColumnCount - 1 ? 0 : 6, 0)
+                Margin = new Padding(columna == 0 ? 0 : 8, 0, columna == fila.ColumnCount - 1 ? 0 : 8, 0)
             };
             tarjeta.Click += (s, e) => abrir();
             fila.Controls.Add(tarjeta, columna, 0);
@@ -602,12 +602,19 @@ namespace DigBit
             panel.Controls.Add(titulo);
             panel.Controls.Add(lnkAcceso);
             panel.Controls.Add(lblEstado);
-            panel.Resize += (s, e) =>
+            // El estado, del ancho de lo que dice (hasta 560): con 560 fijos, a 1366 la
+            // linea de los codigos de la responsable ("...te piden el codigo: va en la
+            // tarjeta de cada clase") se cortaba junto a un "Actualizado a las 10:42".
+            Action acomodar = () =>
             {
+                int pide = TextRenderer.MeasureText(lblEstado.Text ?? "", lblEstado.Font).Width + 8;
+                lblEstado.Width = Math.Max(160, Math.Min(560, pide));
                 lblEstado.Location = new Point(panel.ClientSize.Width - lblEstado.Width, 16);
                 lnkAcceso.Location = new Point(titulo.Right + 24, 16);
                 lnkAcceso.Width = Math.Max(120, lblEstado.Left - 16 - lnkAcceso.Left);
             };
+            panel.Resize += (s, e) => acomodar();
+            lblEstado.TextChanged += (s, e) => acomodar();
             return panel;
         }
 
@@ -645,8 +652,12 @@ namespace DigBit
             if (Permisos.SoloConsulta)
             {
                 // El encargado de laboratorio lo ve, pero no lo cambia: sin "Cambiar..."
-                // ni enlace, y habilitado para que su ayuda salga (como sin db/11).
-                lnkAcceso.Text = forma;
+                // ni enlace, y habilitado para que su ayuda salga (como sin db/11). Con
+                // "Los docentes no ven los codigos", a la vista que se los piden a ella
+                // (si en algun laboratorio se entra con codigo).
+                bool conCodigos = general != ModoCodigo.SinCodigo || otros > 0;
+                lnkAcceso.Text = forma + (datos.CodigosSoloResponsables && conCodigos
+                    ? ". Los docentes te piden el código: va en la tarjeta de cada clase." : "");
                 lnkAcceso.LinkArea = new LinkArea(0, 0);
                 ayudaAcceso.SetToolTip(lnkAcceso, ComoEntran + quienLosVe + " Solo la administración de DigBit puede cambiarlo.");
                 return;
@@ -752,8 +763,60 @@ namespace DigBit
             {
                 AdministrarProfesores profesores = new AdministrarProfesores();
                 profesores.VerBitacoras += AbrirBitacorasBuscando;
+                profesores.VerTodo += p => AbrirFichaDocente(p, profesores.Enlaces);
                 return profesores;
             });
+        }
+
+        /// <summary>
+        /// "Ver todo lo suyo..." de Docentes: la ficha de ese docente (FichaDocente), una ventana
+        /// por docente; si ya esta abierta, al frente. Solo lee: tambien la persona responsable.
+        /// Se cierra con el panel (es suya), que al cerrar suelta la lectura de Estadisticas.
+        /// </summary>
+        private void AbrirFichaDocente(ProfesorInfo profesor, LecturaEnlaces enlaces)
+        {
+            if (profesor == null)
+            {
+                return;
+            }
+
+            Mostrar("docente:" + profesor.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), () =>
+            {
+                FichaDocente ficha = new FichaDocente(profesor, enlaces);
+                ficha.VerBitacoras += AbrirBitacorasBuscando;
+                ficha.VerEnEstadisticas += (docente, periodo) => AbrirEstadisticasDelDocente(docente, periodo, ficha.LecturaVista);
+                return ficha;
+            });
+        }
+
+        /// <summary>
+        /// "Ver en Estadisticas" de la ficha: Estadisticas con ese docente, ese periodo y la lectura de
+        /// la ficha (sus mismas cifras aunque Estadisticas tuviera otra mas vieja). Cambia lo que
+        /// recuerda, a proposito.
+        /// </summary>
+        private void AbrirEstadisticasDelDocente(int docente, PeriodoElegido periodo, LecturaEstadisticas deLaFicha)
+        {
+            VentanaEstadisticas estadisticas = Mostrar("estadisticas", () => new VentanaEstadisticas()) as VentanaEstadisticas;
+            if (estadisticas != null)
+            {
+                estadisticas.MostrarDocente(docente, periodo, deLaFicha);
+            }
+        }
+
+        /// <summary>
+        /// "Docentes por enlazar" de Alertas: Docentes, y encima la lista de quienes
+        /// entraron con el SIIA y esperan, para enlazarlos (despues de que Docentes
+        /// lea su lista, que se lee al mostrarse).
+        /// </summary>
+        private void AbrirDocentesPorEnlazar()
+        {
+            AbrirProfesores();
+            Form ventana;
+            AdministrarProfesores profesores = ventanas.TryGetValue("profesores", out ventana) ? ventana as AdministrarProfesores : null;
+            if (profesores != null && !profesores.IsDisposed)
+            {
+                profesores.BeginInvoke(new Action(profesores.AbrirPorEnlazar));
+            }
         }
 
         /// <summary>Bitacoras ya buscando ese texto: "Ver sus bitacoras" de Profesores (su nombre y su numero de empleado).</summary>
@@ -780,6 +843,13 @@ namespace DigBit
                 : panorama.Laboratorios.Where(l => l.Id == clase.LaboratorioId).Select(l => l.Texto).FirstOrDefault() ?? "";
             string horario = (clase.EsExtra ? "Sesión extra de hoy" : "Hoy") + ", " + HorariosDatos.Hora(clase.Inicio) + " a "
                 + HorariosDatos.Hora(clase.Fin) + (laboratorio.Length > 0 ? ", " + laboratorio : "");
+            // Con "Los docentes no ven los codigos", el que se le da al grupo tambien
+            // en la Bitacora de la clase: el docente se lo pide a quien la tiene abierta.
+            if (panorama != null && panorama.CodigosSoloResponsables && !string.IsNullOrEmpty(clase.CodigoParaDar))
+            {
+                horario += ". Código " + TarjetaCodigo.Mayusculas(clase.CodigoParaDar);
+            }
+
             try
             {
                 using (BitacoraSesion bitacora = new BitacoraSesion(clase.FranjaId, clase.ExcepcionId, clase.Materia + ", " + clase.Grupo,
@@ -969,7 +1039,8 @@ namespace DigBit
                 DateTime? vistas = null;
                 try
                 {
-                    vistas = datos.LeerVistas(usuario, soloConsulta);
+                    // La responsable, en un equipo donde aun no las vio: desde el inicio de hoy.
+                    vistas = datos.LeerVistas(usuario, soloConsulta, leidas.Ahora);
                 }
                 catch (Exception ex)
                 {
@@ -1023,7 +1094,10 @@ namespace DigBit
         /// </summary>
         private void AvisarNuevas()
         {
-            List<Alerta> nuevas = avisos.QueAvisar(alertas, alertasVistasHasta, DateTime.UtcNow);
+            // La responsable: sin lo que no le toca (CuentaComoNueva).
+            ResultadoAlertas paraAvisar = alertas == null || !Permisos.SoloConsulta ? alertas
+                : new ResultadoAlertas { Ahora = alertas.Ahora, Alertas = alertas.Alertas.Where(CuentaComoNueva).ToList() };
+            List<Alerta> nuevas = avisos.QueAvisar(paraAvisar, alertasVistasHasta, DateTime.UtcNow);
             if (nuevas.Count == 0 || avisoWindows == null)
             {
                 return;
@@ -1052,7 +1126,7 @@ namespace DigBit
                 return;
             }
 
-            List<Alerta> nuevas = alertas.Alertas.Where(a => !alertasVistasHasta.HasValue || a.Momento > alertasVistasHasta.Value).ToList();
+            List<Alerta> nuevas = alertas.Alertas.Where(a => (!alertasVistasHasta.HasValue || a.Momento > alertasVistasHasta.Value) && CuentaComoNueva(a)).ToList();
             btnAlertas.Nuevas = nuevas.Count;
             int total = alertas.Alertas.Count;
             string periodo = " en los últimos " + DiasDeAlertas + " días";
@@ -1087,9 +1161,27 @@ namespace DigBit
                     partes.Add(cambios + (cambios == 1 ? " cambio de horario" : " cambios de horario"));
                 }
 
+                Alerta porEnlazar = nuevas.FirstOrDefault(a => a.Tipo == TipoAlerta.DocentesPorEnlazar);
+                if (porEnlazar != null)
+                {
+                    partes.Add(porEnlazar.PorEnlazar + (porEnlazar.PorEnlazar == 1 ? " docente por enlazar con el SIIA" : " docentes por enlazar con el SIIA"));
+                }
+
                 Ayuda(btnAlertas, nuevas.Count + (nuevas.Count == 1 ? " nueva" : " nuevas") + " de " + total + periodo
                     + (partes.Count == 0 ? "." : ": " + EstiloAdmin.Enumerar(partes) + ".") + verlas);
             }
+        }
+
+        /// <summary>
+        /// Si una alerta cuenta en la campana y en el aviso de Windows. A la
+        /// responsable (solo consulta) no le cuentan los docentes por enlazar con el
+        /// SIIA, que no puede enlazar (siguen en la lista de Alertas): una campana
+        /// siempre en rojo deja de servir. La ventana de Alertas usa lo mismo para
+        /// sus nuevas (negritas, el punto y "(N nuevas)"): asi dice lo que la campana.
+        /// </summary>
+        internal static bool CuentaComoNueva(Alerta alerta)
+        {
+            return !(Permisos.SoloConsulta && alerta.Tipo == TipoAlerta.DocentesPorEnlazar);
         }
 
         /// <summary>
@@ -1101,12 +1193,17 @@ namespace DigBit
         private void AbrirAlertas()
         {
             // Antes de la primera lectura (o si fallo) no se sabe hasta cuando las
-            // vio, y saldrian todas como nuevas.
+            // vio, y saldrian todas como nuevas. La responsable, en un equipo donde
+            // aun no las vio (con Deep Freeze, tras cada reinicio), desde el inicio de
+            // hoy: con la hora del servidor de la lectura o, si aun no hay ninguna, con
+            // la de este equipo (sin eso salian las 65 de la semana como nuevas, y al
+            // ensenarlas todas se daban por vistas). La administracion no la usa.
             if (!alertasVistasHasta.HasValue)
             {
                 try
                 {
-                    DateTime? guardadas = new AlertasDatos().LeerVistas(Datos_User.getUser(), Permisos.SoloConsulta);
+                    DateTime? guardadas = new AlertasDatos().LeerVistas(Datos_User.getUser(), Permisos.SoloConsulta,
+                        alertas == null ? DateTime.Now : alertas.Ahora);
                     if (guardadas.HasValue)
                     {
                         alertasVistasHasta = guardadas;
@@ -1128,6 +1225,7 @@ namespace DigBit
                 ventana.Leidas += MarcarVistas;
                 ventana.VerBitacoras += AbrirBitacorasDeAlerta;
                 ventana.VerHorario += AbrirHorarios;
+                ventana.VerDocentesPorEnlazar += AbrirDocentesPorEnlazar;
                 ventana.FormClosed += (s, e) => LeerAlertas();
                 return ventana;
             });

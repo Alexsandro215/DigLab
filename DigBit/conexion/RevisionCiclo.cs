@@ -28,8 +28,13 @@ namespace DigBit.conexion
     }
 
     /// <summary>
-    /// Dos horas que se cruzan el mismo dia en el mismo laboratorio, con el
-    /// mismo profesor o con el mismo grupo (la regla de HorariosDatos.ValidarFranja).
+    /// Dos horas que se cruzan el mismo dia. Sin MismoLaboratorio es un choque
+    /// (RevisionDelCiclo.Choques): en laboratorios distintos, con la misma
+    /// persona docente o con el mismo grupo (decision del 2026-10-31). Con
+    /// MismoLaboratorio, dos clases que se enciman en un laboratorio
+    /// (RevisionDelCiclo.Encimadas): no es un choque (al poner una encima de
+    /// otra, la reemplaza), pero si llegan asi (datos viejos o copiados) no
+    /// dejan aplicar.
     /// A siempre es de la configuracion; B, de la configuracion o una clase que ya esta en Clases.
     /// </summary>
     public class ChoqueCiclo
@@ -70,13 +75,12 @@ namespace DigBit.conexion
             get { return Programada != null ? Programada.Fin : FranjaB.Fin; }
         }
 
-        /// <summary>"mismo laboratorio", "misma persona docente y mismo grupo"...</summary>
+        /// <summary>"misma persona docente", "mismo grupo" o "misma persona docente y mismo grupo".</summary>
         public string Motivos
         {
             get
             {
                 List<string> motivos = new List<string>();
-                if (MismoLaboratorio) motivos.Add("mismo laboratorio");
                 if (MismoProfesor) motivos.Add("misma persona docente");
                 if (MismoGrupo) motivos.Add("mismo grupo");
                 return RevisionCiclo.Enumerar(motivos);
@@ -88,9 +92,17 @@ namespace DigBit.conexion
             return CargaA == carga || CargaB == carga;
         }
 
+        /// <summary>El laboratorio de la otra, vista desde esa materia.</summary>
+        private string LaboratorioDeLaOtra(CargaCiclo carga)
+        {
+            return Programada != null ? Programada.Laboratorio : carga == CargaB ? FranjaA.Laboratorio : FranjaB.Laboratorio;
+        }
+
         /// <summary>
         /// Visto desde una de sus materias: "Choca con Redes de computadoras con
-        /// 6ISC11 (Jorge Salinas) el Lunes de 08:00 a 09:00: mismo laboratorio."
+        /// 6ISC11 (Jorge Salinas) en el Laboratorio CISCO el Lunes de 08:00 a
+        /// 09:00: mismo grupo." o, si se enciman, "Se encima con ... el Lunes de
+        /// 08:00 a 09:00 en el mismo laboratorio: quitale esas horas a una de las dos."
         /// </summary>
         public string DescribirPara(CargaCiclo carga)
         {
@@ -105,8 +117,13 @@ namespace DigBit.conexion
                 otra = b == carga ? "otro horario suyo" : b.Nombre + " (" + (b.ProfesorId.HasValue ? b.ProfesorCorto : "sin docente") + ")";
             }
 
-            return "Choca con " + otra + " el " + HorariosDatos.NombresDia[Dia] + " de " + HorariosDatos.Hora(Inicio) + " a " + HorariosDatos.Hora(Fin)
-                + ": " + Motivos + ".";
+            string cuando = " el " + HorariosDatos.NombresDia[Dia] + " de " + HorariosDatos.Hora(Inicio) + " a " + HorariosDatos.Hora(Fin);
+            if (MismoLaboratorio)
+            {
+                return "Se encima con " + otra + cuando + " en el mismo laboratorio: quítale esas horas a una de las dos.";
+            }
+
+            return "Choca con " + otra + " en el " + EstiloHorarios.NombreLaboratorio(LaboratorioDeLaOtra(carga)) + cuando + ": " + Motivos + ".";
         }
     }
 
@@ -127,13 +144,18 @@ namespace DigBit.conexion
         Repetidas,
         SinHorario,
         /// <summary>La misma materia con el mismo grupo con dos personas docentes (o dos veces sin docente).</summary>
-        DosDocentes
+        DosDocentes,
+        /// <summary>Encimada con otra en el mismo laboratorio (RevisionDelCiclo.Encimadas).</summary>
+        Encimadas
     }
 
     /// <summary>Lo que se calcula de una configuracion leida (RevisionCiclo.Revisar).</summary>
     public class RevisionDelCiclo
     {
+        /// <summary>La misma persona docente o el mismo grupo a la misma hora en laboratorios distintos.</summary>
         public List<ChoqueCiclo> Choques = new List<ChoqueCiclo>();
+        /// <summary>Dos clases a la misma hora en el mismo laboratorio (MismoLaboratorio): no dejan aplicar.</summary>
+        public List<ChoqueCiclo> Encimadas = new List<ChoqueCiclo>();
         public Dictionary<int, ComoQueda> ComoQueda = new Dictionary<int, ComoQueda>();
         public Dictionary<int, List<AvisoDeCarga>> Avisos = new Dictionary<int, List<AvisoDeCarga>>();
         /// <summary>Personas docentes distintas con clases.</summary>
@@ -327,7 +349,9 @@ namespace DigBit.conexion
         {
             RevisionDelCiclo revision = new RevisionDelCiclo();
             List<CargaCiclo> vivas = leido.Cargas.Where(c => !c.Quitada).ToList();
-            revision.Choques = Choques(vivas, leido.YaProgramadas);
+            List<ChoqueCiclo> cruces = Cruces(vivas, leido.YaProgramadas);
+            revision.Choques = cruces.Where(c => !c.MismoLaboratorio).ToList();
+            revision.Encimadas = cruces.Where(c => c.MismoLaboratorio).ToList();
             HashSet<string> deBaja = new HashSet<string>();
             HashSet<string> desactivados = new HashSet<string>();
 
@@ -380,6 +404,11 @@ namespace DigBit.conexion
                 foreach (ChoqueCiclo choque in revision.Choques.Where(c => c.Toca(carga)))
                 {
                     avisos.Add(Rojo(choque.DescribirPara(carga)));
+                }
+
+                foreach (ChoqueCiclo encimada in revision.Encimadas.Where(c => c.Toca(carga)))
+                {
+                    avisos.Add(Rojo(encimada.DescribirPara(carga)));
                 }
 
                 if (EsRepetida(vivas, carga))
@@ -440,6 +469,8 @@ namespace DigBit.conexion
                     return leido.ConLaboratoriosDesactivables && carga.Franjas.Any(f => !f.LaboratorioActivo);
                 case FiltroClases.Choques:
                     return revision.Choques.Any(c => c.Toca(carga));
+                case FiltroClases.Encimadas:
+                    return revision.Encimadas.Any(c => c.Toca(carga));
                 case FiltroClases.Repetidas:
                     return EsRepetida(leido.Cargas.Where(c => !c.Quitada).ToList(), carga);
                 case FiltroClases.SinHorario:
@@ -471,6 +502,8 @@ namespace DigBit.conexion
                     return "Sin horario";
                 case FiltroClases.DosDocentes:
                     return "Con dos docentes";
+                case FiltroClases.Encimadas:
+                    return "Encimadas en un laboratorio";
                 default:
                     return "";
             }
@@ -486,8 +519,24 @@ namespace DigBit.conexion
             return new AvisoDeCarga { Texto = texto, Bloquea = false };
         }
 
-        /// <summary>Los choques entre las franjas de esas materias y con las clases ya programadas, cada par una vez.</summary>
+        /// <summary>
+        /// Los choques entre las franjas de esas materias y con las clases ya
+        /// programadas, cada par una vez: el mismo dia, a horas que se cruzan, en
+        /// laboratorios distintos, con la misma persona docente o con el mismo grupo.
+        /// </summary>
         public static List<ChoqueCiclo> Choques(List<CargaCiclo> cargas, List<FranjaInfo> programadas)
+        {
+            return Cruces(cargas, programadas).Where(c => !c.MismoLaboratorio).ToList();
+        }
+
+        /// <summary>Las que se enciman en el mismo laboratorio (de cualquier docente o grupo), cada par una vez.</summary>
+        public static List<ChoqueCiclo> Encimadas(List<CargaCiclo> cargas, List<FranjaInfo> programadas)
+        {
+            return Cruces(cargas, programadas).Where(c => c.MismoLaboratorio).ToList();
+        }
+
+        /// <summary>Choques y encimadas juntos (MismoLaboratorio dice cual es cual).</summary>
+        private static List<ChoqueCiclo> Cruces(List<CargaCiclo> cargas, List<FranjaInfo> programadas)
         {
             List<ChoqueCiclo> choques = new List<ChoqueCiclo>();
             List<KeyValuePair<CargaCiclo, FranjaCiclo>> todas = cargas
@@ -516,7 +565,7 @@ namespace DigBit.conexion
                         MismoProfesor = a.ProfesorId.HasValue && a.ProfesorId == b.ProfesorId,
                         MismoGrupo = a.GrupoId == b.GrupoId
                     };
-                    if (choque.MismoLaboratorio || choque.MismoProfesor || choque.MismoGrupo)
+                    if (EsCruce(choque))
                     {
                         choques.Add(choque);
                     }
@@ -538,7 +587,7 @@ namespace DigBit.conexion
                         MismoProfesor = a.ProfesorId.HasValue && a.ProfesorId.Value == p.ProfesorId,
                         MismoGrupo = a.GrupoId == p.GrupoId
                     };
-                    if (choque.MismoLaboratorio || choque.MismoProfesor || choque.MismoGrupo)
+                    if (EsCruce(choque))
                     {
                         choques.Add(choque);
                     }
@@ -548,11 +597,18 @@ namespace DigBit.conexion
             return choques;
         }
 
+        /// <summary>En el mismo laboratorio, cualquiera; en otro, solo con la misma persona docente o el mismo grupo.</summary>
+        private static bool EsCruce(ChoqueCiclo choque)
+        {
+            return choque.MismoLaboratorio || choque.MismoProfesor || choque.MismoGrupo;
+        }
+
         /// <summary>
         /// Para los dialogos, antes de guardar: con que chocarian esas horas si la
-        /// materia fuera de ese profesor y ese grupo. Las de las materias de
-        /// "excluir" (la misma que se cambia) no cuentan, ni las franjas de
-        /// "sinFranjas" (las que se estan cambiando, en "Cambiar horas").
+        /// materia fuera de ese profesor y ese grupo (en otro laboratorio: lo del
+        /// mismo se reemplaza, Reemplazos). Las de las materias de "excluir" (la
+        /// misma que se cambia) no cuentan, ni las franjas de "sinFranjas" (las
+        /// que se estan cambiando, en "Cambiar horas").
         /// </summary>
         public static List<string> ChoquesSi(CicloLeido leido, int? profesor, int grupo, IEnumerable<FranjaCiclo> franjas, ICollection<int> excluir,
             ICollection<int> sinFranjas = null)
@@ -577,11 +633,107 @@ namespace DigBit.conexion
                     : (choque.CargaA == supuesta ? choque.CargaB : choque.CargaA).Nombre + " ("
                         + ((choque.CargaA == supuesta ? choque.CargaB : choque.CargaA).ProfesorId.HasValue
                             ? (choque.CargaA == supuesta ? choque.CargaB : choque.CargaA).ProfesorCorto : "sin docente") + ")";
+                string laboratorio = choque.Programada != null ? choque.Programada.Laboratorio
+                    : choque.CargaA == supuesta ? choque.FranjaB.Laboratorio : choque.FranjaA.Laboratorio;
                 textos.Add(HorariosDatos.NombresDia[choque.Dia] + " de " + HorariosDatos.Hora(choque.Inicio) + " a " + HorariosDatos.Hora(choque.Fin)
-                    + ": choca con " + otra + ", " + choque.Motivos + ".");
+                    + ": choca con " + otra + " en el " + EstiloHorarios.NombreLaboratorio(laboratorio) + ", " + choque.Motivos + ".");
             }
 
             return textos.Distinct().ToList();
+        }
+
+        /// <summary>
+        /// Lo que quedaria de una franja si encima se ponen esas horas: los trozos
+        /// de antes y de despues de lo que se cruza en su laboratorio y su dia
+        /// (ninguno si la tapan entera). Null si ninguna la toca: se queda igual.
+        /// </summary>
+        public static List<TimeSpan[]> Resto(FranjaCiclo franja, IEnumerable<FranjaCiclo> encima)
+        {
+            List<TimeSpan[]> trozos = new List<TimeSpan[]> { new[] { franja.Inicio, franja.Fin } };
+            bool tocada = false;
+            foreach (FranjaCiclo n in encima.Where(n => n.LaboratorioId == franja.LaboratorioId && n.DiaSemana == franja.DiaSemana))
+            {
+                List<TimeSpan[]> quedan = new List<TimeSpan[]>();
+                foreach (TimeSpan[] t in trozos)
+                {
+                    if (!(n.Inicio < t[1] && n.Fin > t[0]))
+                    {
+                        quedan.Add(t);
+                        continue;
+                    }
+
+                    tocada = true;
+                    if (t[0] < n.Inicio)
+                    {
+                        quedan.Add(new[] { t[0], n.Inicio });
+                    }
+
+                    if (n.Fin < t[1])
+                    {
+                        quedan.Add(new[] { n.Fin, t[1] });
+                    }
+                }
+
+                trozos = quedan;
+            }
+
+            return tocada ? trozos : null;
+        }
+
+        /// <summary>
+        /// En la preparacion, lo que haria poner esas horas a esa clase: a que
+        /// franjas de OTRAS clases del mismo laboratorio se les quitaria lo que se
+        /// cruza (como Horario semanal con db/25, pero aqui no hay "Falta
+        /// asignar"). Sin las franjas de "sinFranjas" (la que se mueve con
+        /// "Cambiar horas"). Lo de la misma persona docente o el mismo grupo en
+        /// otro laboratorio no se reemplaza: es un choque (ChoquesSi).
+        /// </summary>
+        public static List<FranjaReemplazada> Reemplazos(CicloLeido leido, int idCarga, IList<FranjaCiclo> nuevas, ICollection<int> sinFranjas = null)
+        {
+            List<FranjaReemplazada> quitadas = new List<FranjaReemplazada>();
+            foreach (CargaCiclo otra in leido.Cargas.Where(c => !c.Quitada && c.Id != idCarga))
+            {
+                foreach (FranjaCiclo f in otra.Franjas.Where(f => sinFranjas == null || !sinFranjas.Contains(f.Id)))
+                {
+                    foreach (FranjaCiclo n in nuevas.Where(n => n.LaboratorioId == f.LaboratorioId && n.DiaSemana == f.DiaSemana
+                        && n.Inicio < f.Fin && n.Fin > f.Inicio))
+                    {
+                        quitadas.Add(new FranjaReemplazada
+                        {
+                            FranjaId = f.Id,
+                            ClaseId = otra.Id,
+                            Materia = otra.Materia,
+                            Grupo = otra.Grupo,
+                            Profesor = otra.ProfesorId.HasValue ? otra.ProfesorCorto : "sin docente",
+                            LaboratorioId = f.LaboratorioId,
+                            Laboratorio = f.Laboratorio,
+                            DiaSemana = f.DiaSemana,
+                            Inicio = f.Inicio,
+                            Fin = f.Fin,
+                            QuitaInicio = n.Inicio > f.Inicio ? n.Inicio : f.Inicio,
+                            QuitaFin = n.Fin < f.Fin ? n.Fin : f.Fin
+                        });
+                    }
+                }
+            }
+
+            return quitadas.OrderBy(q => q.DiaSemana).ThenBy(q => q.QuitaInicio).ToList();
+        }
+
+        /// <summary>De las clases que pierden horas con esos reemplazos, las que se quedarian sin ninguna (salen en "Sin horario").</summary>
+        public static List<CargaCiclo> SeQuedanSinHoras(CicloLeido leido, IList<FranjaCiclo> nuevas, IList<FranjaReemplazada> quitadas)
+        {
+            List<CargaCiclo> sinHoras = new List<CargaCiclo>();
+            foreach (int id in quitadas.Select(q => q.ClaseId).Distinct())
+            {
+                CargaCiclo carga = leido.Carga(id);
+                if (carga != null && carga.Franjas.All(f => quitadas.Any(q => q.FranjaId == f.Id) && Resto(f, nuevas).Count == 0))
+                {
+                    sinHoras.Add(carga);
+                }
+            }
+
+            return sinHoras;
         }
 
         /// <summary>La clase tal cual o, si tiene alguna de esas franjas, una copia sin ellas (para ChoquesSi).</summary>

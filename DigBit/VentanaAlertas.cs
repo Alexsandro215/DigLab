@@ -30,12 +30,15 @@ namespace DigBit
         private const string SinBitacoras = "Sin bitácoras";
         private const string Fallas = "Fallas reportadas";
         private const string Cambios = "Cambios de horario";
+        private const string PorEnlazar = "Docentes por enlazar";
         private static readonly string[] DiasCortos = { "dom", "lun", "mar", "mié", "jue", "vie", "sáb" };
         private static readonly Color FondoSinBitacoras = Color.FromArgb(253, 234, 231);
         private static readonly Color FondoEnCurso = Color.FromArgb(255, 243, 214);
         private static readonly Color FondoFallas = Color.FromArgb(255, 240, 214);
         // Un cambio no es un problema: un gris calido, que no se confunde con la fila elegida.
         private static readonly Color FondoCambio = Color.FromArgb(244, 242, 238);
+        // Quien espera que lo enlacen con el SIIA: una tarea, no una falla.
+        private static readonly Color FondoPorEnlazar = Color.FromArgb(230, 241, 251);
         private static readonly Color RojoNueva = Color.FromArgb(198, 40, 40);
 
         private readonly AlertasDatos datos = new AlertasDatos();
@@ -69,11 +72,14 @@ namespace DigBit
         /// <summary>Ver el horario de un laboratorio (lo abre el panel principal).</summary>
         public event Action<int> VerHorario;
 
+        /// <summary>Docentes con la lista de quienes entraron con el SIIA y esperan que los enlacen (la abre el panel principal).</summary>
+        public event Action VerDocentesPorEnlazar;
+
         /// <param name="vistasAntes">Hasta cuando las habia visto: las de despues salen como nuevas.</param>
         // 1400 de ancho pedidos: a 1366x768 PantallaAdmin la deja en lo que cabe y
         // a 1920 el Detalle tiene mas sitio.
         public VentanaAlertas(DateTime? vistasAntes)
-            : base("Alertas", "Clases en que nadie registró bitácora, fallas reportadas en los laboratorios y cambios de horario que hizo otra persona. F5 actualiza.",
+            : base("Alertas", "Clases en que nadie registró bitácora, fallas reportadas, cambios de horario que hizo otra persona y docentes por enlazar con el SIIA. F5 actualiza.",
                 new Size(1400, 680))
         {
             this.vistasAntes = vistasAntes;
@@ -82,7 +88,7 @@ namespace DigBit
             txtBuscar = CrearBuscador(new Point(Margen, 112), 300);
             ayuda.SetToolTip(txtBuscar, "Laboratorio, materia, grupo, docente, equipo o quién hizo un cambio");
 
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Periodo", new Point(350, 88)));
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Periodo", new Point(350, 86)));
             cboPeriodo = EstiloHorarios.CrearCombo(new Point(350, 111), 170);
             cboPeriodo.Items.AddRange(new object[] { Hoy, Semana, Mes });
             cboPeriodo.SelectedItem = Semana;
@@ -100,13 +106,14 @@ namespace DigBit
             };
             Controls.Add(cboPeriodo);
 
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Tipo", new Point(540, 88)));
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Tipo", new Point(540, 86)));
             cboTipo = EstiloHorarios.CrearCombo(new Point(540, 111), 190);
-            cboTipo.Items.AddRange(new object[] { Todas, SinBitacoras, Fallas, Cambios });
+            cboTipo.Items.AddRange(new object[] { Todas, SinBitacoras, Fallas, Cambios, PorEnlazar });
             cboTipo.SelectedItem = Todas;
             cboTipo.SelectedIndexChanged += (s, e) => Aplicar(null);
             ayuda.SetToolTip(cboTipo, "Sin bitácoras: desde que cada laboratorio usa DigBit.\n"
-                + "Cambios de horario: franjas, clases, cancelaciones y sesiones extra que cambió otra persona.");
+                + "Cambios de horario: franjas, clases, cancelaciones y sesiones extra que cambió otra persona.\n"
+                + "Docentes por enlazar: entraron con su contraseña del SIIA y esperan que los enlaces con su cuenta.");
             Controls.Add(cboTipo);
 
             // Todo lo que cambio quien sea, con lo que decia antes (db/21): en su propia ventana.
@@ -129,6 +136,8 @@ namespace DigBit
             foreach (string columna in new[] { "laboratorio", "alerta", "detalle" })
             {
                 grid.Columns[columna].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+                // En dos lineas, con aire arriba y abajo (antes tocaban la raya de la fila).
+                grid.Columns[columna].DefaultCellStyle.Padding = new Padding(8, 6, 8, 6);
             }
 
             grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
@@ -238,9 +247,13 @@ namespace DigBit
             Aplicar(null);
         }
 
+        /// <summary>
+        /// De despues de lo visto y de las que cuentan en la campana: a la responsable
+        /// los docentes por enlazar no le salen como nuevos (PrincipalAdministrador.CuentaComoNueva).
+        /// </summary>
         private bool EsNueva(Alerta alerta)
         {
-            return !vistasAntes.HasValue || alerta.Momento > vistasAntes.Value;
+            return (!vistasAntes.HasValue || alerta.Momento > vistasAntes.Value) && PrincipalAdministrador.CuentaComoNueva(alerta);
         }
 
         /// <summary>Si la alerta es del tipo del filtro ("Sin bitacoras" incluye las en curso).</summary>
@@ -254,6 +267,8 @@ namespace DigBit
                     return alerta.Tipo == TipoAlerta.Fallas;
                 case Cambios:
                     return alerta.Tipo == TipoAlerta.CambioDeHorario;
+                case PorEnlazar:
+                    return alerta.Tipo == TipoAlerta.DocentesPorEnlazar;
                 default:
                     return true;
             }
@@ -281,7 +296,8 @@ namespace DigBit
 
                 fila.DefaultCellStyle.BackColor = alerta.Tipo == TipoAlerta.Fallas ? FondoFallas
                     : alerta.Tipo == TipoAlerta.EnCursoSinBitacoras ? FondoEnCurso
-                    : alerta.Tipo == TipoAlerta.CambioDeHorario ? FondoCambio : FondoSinBitacoras;
+                    : alerta.Tipo == TipoAlerta.CambioDeHorario ? FondoCambio
+                    : alerta.Tipo == TipoAlerta.DocentesPorEnlazar ? FondoPorEnlazar : FondoSinBitacoras;
                 if (EsNueva(alerta))
                 {
                     fila.DefaultCellStyle.Font = negrita;
@@ -289,8 +305,14 @@ namespace DigBit
             }
 
             int nuevas = visibles.Count(EsNueva);
+            // En medio de la lista vacia, por que lo esta (no un rectangulo blanco).
+            ListaDigBit.PonerTextoVacio(grid,
+                lecturaFallida ? "No se pudieron leer las alertas. F5 lo vuelve a intentar."
+                : resultado.Alertas.Count == 0 ? "Sin alertas en " + Periodo() + "."
+                : "Ninguna alerta coincide con la búsqueda. Borra la búsqueda o cambia «Tipo».",
+                lecturaFallida);
             // En naranja si la ultima lectura fallo: no es un resumen, es un aviso.
-            lblResumen.ForeColor = lecturaFallida ? Color.FromArgb(190, 85, 0) : Color.DarkGreen;
+            lblResumen.ForeColor = lecturaFallida ? Color.FromArgb(190, 85, 0) : EstiloAdmin.TextoOscuro;
             if (lecturaFallida)
             {
                 lblResumen.Text = "No se pudieron leer las alertas" + (resultado.Ahora == DateTime.MinValue ? ""
@@ -336,6 +358,7 @@ namespace DigBit
             switch (alerta.Tipo)
             {
                 case TipoAlerta.Fallas:
+                case TipoAlerta.DocentesPorEnlazar:
                     return "último " + alerta.Momento.ToString("HH:mm", CultureInfo.InvariantCulture);
                 case TipoAlerta.CambioDeHorario:
                     // Cuando se hizo el cambio; el dia al que afecta lo dice el detalle.
@@ -356,7 +379,9 @@ namespace DigBit
             bool sinNadie = alerta != null && alerta.Tipo == TipoAlerta.SinBitacoras;
             btnVer.Enabled = alerta != null;
             btnVer.Text = alerta != null && alerta.Tipo == TipoAlerta.Fallas ? "Ver sus bitácoras"
-                : alerta != null && alerta.Tipo == TipoAlerta.CambioDeHorario ? "Ver en el historial" : "Ver quién registró";
+                : alerta != null && alerta.Tipo == TipoAlerta.CambioDeHorario ? "Ver en el historial"
+                : alerta != null && alerta.Tipo == TipoAlerta.DocentesPorEnlazar ? (Permisos.SoloConsulta ? "Ver en Docentes" : "Enlazar...")
+                : "Ver quién registró";
             // Un cambio de una clase (no de una franja) no tiene laboratorio.
             btnHorario.Enabled = alerta != null && alerta.LaboratorioId > 0;
             btnHorario.Text = sinNadie ? "Ver en Faltas" : "Ver horario";
@@ -399,6 +424,18 @@ namespace DigBit
             if (alerta.Tipo == TipoAlerta.CambioDeHorario)
             {
                 AbrirHistorial(alerta);
+                return;
+            }
+
+            // Docentes, con la lista de quienes esperan: se enlazan ahi. Al volver a
+            // Alertas (F5 o al reabrirla) ya no estan los que se enlazaron.
+            if (alerta.Tipo == TipoAlerta.DocentesPorEnlazar)
+            {
+                if (VerDocentesPorEnlazar != null)
+                {
+                    VerDocentesPorEnlazar();
+                }
+
                 return;
             }
 

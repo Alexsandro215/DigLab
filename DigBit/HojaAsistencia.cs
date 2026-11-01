@@ -96,6 +96,7 @@ namespace DigBit
         private const int AntesDeLaAyuda = 4;
         private const string TextoSinAlumnos = "Aún no hay estudiantes: la lista se arma con la primera clase en que registren su bitácora.";
         private const string TextoSinAlumnosConDadas = "Aún no hay estudiantes: la lista se arma con la primera clase en que registren su bitácora o les des la asistencia.";
+        private const string TextoSinAlumnosConDadasTercera = "Aún no hay estudiantes: la lista se arma con la primera clase en que registren su bitácora o su docente les dé la asistencia.";
         // La ayuda de debajo de la simbologia, segun lo que la base deja cambiar (db/17 quitar, db/22 dar).
         private const string AyudaQuitar = "Mientras dura la clase de hoy, pulsa la casilla de hoy de quien registró sin estar en el salón "
             + "para quitarle la asistencia: su fila se pinta de naranja. Vuelve a pulsarla para devolvérsela.";
@@ -161,6 +162,9 @@ namespace DigBit
         private bool marcando;
         // El color que el profesor eligio para la clase (db/19), o null: sin cinta.
         private Color? colorDeLaClase;
+        // La ve otra persona (la ficha del docente): "Su docente le dio..." en vez de "Le diste...".
+        private bool enTerceraPersona;
+        private bool conComoCopiar = true;
 
         /// <summary>El profesor quiere quitar, devolver, dar o anular (la que dio) la asistencia de hoy a ese alumno.</summary>
         public event Action<AlumnoDeAsistencia, DateTime, AccionAsistencia> CambiarAsistencia;
@@ -361,6 +365,68 @@ namespace DigBit
         /// no). Quien decide de verdad es el servidor, con su reloj.
         /// </summary>
         public bool PuedeCambiar { get; set; } = true;
+
+        /// <summary>
+        /// La ve otra persona y no su docente (la lista de una clase desde la ficha del docente,
+        /// solo para ver): los textos dicen "Su docente le dio la asistencia" en vez de "Le diste
+        /// la asistencia". Se pone antes de Mostrar.
+        /// </summary>
+        public bool EnTerceraPersona
+        {
+            get
+            {
+                return enTerceraPersona;
+            }
+
+            set
+            {
+                enTerceraPersona = value;
+                Texto queEs = muestraDada.Controls.OfType<Texto>().FirstOrDefault();
+                if (queEs != null)
+                {
+                    queEs.Text = value ? "Se la dio su docente sin bitácora" : "Se la diste sin bitácora";
+                }
+            }
+        }
+
+        /// <summary>
+        /// Debajo de la simbologia, como pasarla a Excel ("Copiar la lista" y "Guardar en Excel"). Sin
+        /// ellos (la persona responsable del laboratorio los tiene apagados), false. Nunca en kiosco.
+        /// </summary>
+        public bool ConComoCopiar
+        {
+            get { return conComoCopiar; }
+            set { conComoCopiar = value; }
+        }
+
+        /// <summary>
+        /// Nada de la hoja sale al portapapeles, tampoco con Ctrl+A y Ctrl+C (ClipboardCopyMode.Disable):
+        /// la persona responsable del laboratorio, que la ve desde la ficha del docente con "Copiar la
+        /// lista" apagado (los nombres solo en pantalla). En kiosco, siempre.
+        /// </summary>
+        public bool SinCopiar
+        {
+            get
+            {
+                return grid.ClipboardCopyMode == DataGridViewClipboardCopyMode.Disable;
+            }
+
+            set
+            {
+                grid.ClipboardCopyMode = value || Kiosco.Activo ? DataGridViewClipboardCopyMode.Disable : DataGridViewClipboardCopyMode.EnableAlwaysIncludeHeaderText;
+            }
+        }
+
+        /// <summary>
+        /// Se puede dar la asistencia de hoy a quien no esta en la lista: lo mismo
+        /// que ensena el enlace "Dar asistencia a alguien que no esta en la lista..."
+        /// (con db/22, una columna de hoy y PuedeCambiar). Mis grupos lo usa para su
+        /// boton "Dar asistencia..." de la cabecera; cambia con cada Mostrar.
+        /// </summary>
+        public bool PuedeDarSinLista
+        {
+            get { return verEnlace; }
+        }
 
         /// <summary>Hay un menu abierto: no conviene rehacer la hoja debajo de el.</summary>
         public bool MenuAbierto
@@ -686,7 +752,7 @@ namespace DigBit
 
                 if (alumno.SinBitacora.Count > 0)
                 {
-                    delNombre.Add("Le diste la asistencia sin bitácora: "
+                    delNombre.Add((enTerceraPersona ? "Su docente le dio la asistencia sin bitácora: " : "Le diste la asistencia sin bitácora: ")
                         + string.Join(", ", alumno.SinBitacora.OrderBy(d => d).Select(d => d.ToString("dd/MM"))) + ".");
                 }
 
@@ -717,7 +783,7 @@ namespace DigBit
                         asistieron[i]++;
                         dadas[i]++;
                         Formato(celda, "A", DadaFondo, DadaTexto);
-                        celda.ToolTipText = (dada == null ? "Le diste la asistencia." : QueLeDiste(dada)) + " No registró su bitácora."
+                        celda.ToolTipText = (dada == null ? (enTerceraPersona ? "Su docente le dio la asistencia." : "Le diste la asistencia.") : QueLeDiste(dada, enTerceraPersona)) + " No registró su bitácora."
                             + (cambiable && leida.ConDadas ? " Pulsa aquí para quitársela." : "");
                     }
                     else if (alumno.Presente.Contains(dia.Fecha))
@@ -726,7 +792,8 @@ namespace DigBit
                         asistieron[i]++;
                         celda.Value = "A";
                         celda.ToolTipText = (dada == null ? "Registró su bitácora."
-                                : "Registró su bitácora; también le diste la asistencia a las " + Hora(dada.DadaEn) + " (cuenta una sola vez).")
+                                : (enTerceraPersona ? "Registró su bitácora; su docente también le dio la asistencia a las " : "Registró su bitácora; también le diste la asistencia a las ")
+                                    + Hora(dada.DadaEn) + " (cuenta una sola vez).")
                             + (cambiable && leida.ConRetiro ? " Si no está en el salón, pulsa aquí para quitarle la asistencia." : "");
                     }
                     else if (alumno.Retiradas.Contains(dia.Fecha))
@@ -773,7 +840,7 @@ namespace DigBit
                 for (int i = 0; i < total; i++)
                 {
                     fila.Cells["d" + i].Value = asistieron[i];
-                    fila.Cells["d" + i].ToolTipText = AyudaAsistieron(asistieron[i], dadas[i], leida.Alumnos.Count);
+                    fila.Cells["d" + i].ToolTipText = AyudaAsistieron(asistieron[i], dadas[i], leida.Alumnos.Count, enTerceraPersona);
                 }
 
                 fila.Cells["asist"].Value = asistenciasDelGrupo;
@@ -840,10 +907,10 @@ namespace DigBit
             simbologia.Visible = conAlumnos;
             // Como pasarla a Excel va y viene con la simbologia: con alumnos, hay que copiar.
             // En kiosco no: alli no hay donde pegarla y no se ofrece copiar (VentanaMisGrupos).
-            lblComoCopiar.Visible = conAlumnos && !Kiosco.Activo;
+            lblComoCopiar.Visible = conAlumnos && !Kiosco.Activo && conComoCopiar;
             verAviso = !conAlumnos;
             lblSinAlumnos.ForeColor = TextoGris;
-            lblSinAlumnos.Text = leida.ConDadas ? TextoSinAlumnosConDadas : TextoSinAlumnos;
+            lblSinAlumnos.Text = leida.ConDadas ? (enTerceraPersona ? TextoSinAlumnosConDadasTercera : TextoSinAlumnosConDadas) : TextoSinAlumnos;
             lblSinAlumnos.Visible = !conAlumnos;
             verAyuda = hoy != null && (leida.ConRetiro || leida.ConDadas) && PuedeCambiar && conAlumnos;
             lblComoQuitar.Text = leida.ConRetiro && leida.ConDadas ? AyudaQuitarYDar : leida.ConDadas ? AyudaDar : AyudaQuitar;
@@ -853,11 +920,11 @@ namespace DigBit
             lnkDarSinLista.Visible = verEnlace;
         }
 
-        /// <summary>"Le diste la asistencia a las 10:42: su equipo no tenia internet (PC-07)." (con "otro", el detalle).</summary>
-        private static string QueLeDiste(AsistenciaDada dada)
+        /// <summary>"Le diste la asistencia a las 10:42: su equipo no tenia internet (PC-07)." (con "otro", el detalle); en tercera persona, "Su docente le dio...".</summary>
+        private static string QueLeDiste(AsistenciaDada dada, bool tercera)
         {
             string equipo = AsistenciasDadas.ConEquipo(dada.Motivo) && !string.IsNullOrWhiteSpace(dada.Equipo) ? " (" + dada.Equipo.Trim() + ")" : "";
-            return "Le diste la asistencia a las " + Hora(dada.DadaEn) + ": " + AsistenciasDadas.EnFrase(dada) + equipo + ".";
+            return (tercera ? "Su docente le dio la asistencia a las " : "Le diste la asistencia a las ") + Hora(dada.DadaEn) + ": " + AsistenciasDadas.EnFrase(dada) + equipo + ".";
         }
 
         /// <summary>"10:42": la hora del servidor en que se dio.</summary>
@@ -871,7 +938,7 @@ namespace DigBit
         /// bitacora."; con asistencias dadas ese dia, "18 de 24 tienen asistencia: 16
         /// registraron su bitacora y a 2 les diste la asistencia.".
         /// </summary>
-        private static string AyudaAsistieron(int asistieron, int dadas, int enLista)
+        private static string AyudaAsistieron(int asistieron, int dadas, int enLista, bool tercera)
         {
             if (dadas <= 0)
             {
@@ -881,7 +948,8 @@ namespace DigBit
             int registraron = Math.Max(0, asistieron - dadas);
             return asistieron + " de " + enLista + (asistieron == 1 ? " tiene" : " tienen") + " asistencia: "
                 + (registraron == 0 ? "nadie registró su bitácora" : registraron == 1 ? "1 registró su bitácora" : registraron + " registraron su bitácora")
-                + " y " + (dadas == 1 ? "a 1 le diste la asistencia." : "a " + dadas + " les diste la asistencia.");
+                + " y " + (tercera ? (dadas == 1 ? "a 1 se la dio su docente." : "a " + dadas + " se la dio su docente.")
+                    : dadas == 1 ? "a 1 le diste la asistencia." : "a " + dadas + " les diste la asistencia.");
         }
 
         /// <summary>
@@ -1729,7 +1797,7 @@ namespace DigBit
                         frase = frase.Substring(0, DetalleEnMenu).TrimEnd() + "...";
                     }
 
-                    menu.Items.Add(new ToolStripMenuItem("Se la diste a las " + Hora(dada.DadaEn) + ": " + frase) { Enabled = false });
+                    menu.Items.Add(new ToolStripMenuItem((enTerceraPersona ? "Se la dio su docente a las " : "Se la diste a las ") + Hora(dada.DadaEn) + ": " + frase) { Enabled = false });
                 }
 
                 menu.Items.Add("Quitarle la asistencia que le diste: no está en el salón", null,

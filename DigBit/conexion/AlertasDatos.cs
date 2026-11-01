@@ -17,7 +17,9 @@ namespace DigBit.conexion
         /// <summary>Fallas que reportaron los alumnos (y equipos que avisaron sin internet) en un laboratorio un dia.</summary>
         Fallas,
         /// <summary>Un cambio del horario (franja, clase, cancelacion o sesion extra) que hizo otra persona (db/21).</summary>
-        CambioDeHorario
+        CambioDeHorario,
+        /// <summary>Docentes que entraron con su contrasena del SIIA y esperan que la administracion los enlace (db/24): una sola, con cuantos.</summary>
+        DocentesPorEnlazar
     }
 
     /// <summary>Una alerta del panel del administrador (AlertasDatos).</summary>
@@ -62,6 +64,10 @@ namespace DigBit.conexion
         public string QueCambio = "";
         public string Quien = "";
 
+        // De los docentes por enlazar con el SIIA (db/24): cuantos y los mas recientes ("12345 Zita López, ...").
+        public int PorEnlazar;
+        public string QuienesPorEnlazar = "";
+
         /// <summary>Para conservar la fila elegida al recargar.</summary>
         public string Clave
         {
@@ -70,6 +76,11 @@ namespace DigBit.conexion
                 if (Tipo == TipoAlerta.CambioDeHorario)
                 {
                     return (int)Tipo + "|c" + CambioId.ToString(CultureInfo.InvariantCulture);
+                }
+
+                if (Tipo == TipoAlerta.DocentesPorEnlazar)
+                {
+                    return (int)Tipo + "|enlazar";
                 }
 
                 return (int)Tipo + "|" + LaboratorioId + "|" + Fecha.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
@@ -89,6 +100,8 @@ namespace DigBit.conexion
                         return "En curso y nadie ha registrado";
                     case TipoAlerta.CambioDeHorario:
                         return TituloDelCambio;
+                    case TipoAlerta.DocentesPorEnlazar:
+                        return "Docentes por enlazar (" + PorEnlazar + ")";
                     default:
                         // Las de los alumnos y las que reporto el profesor (db/15).
                         int fallas = ConFallas + DelProfesor;
@@ -116,6 +129,18 @@ namespace DigBit.conexion
                             : clase + ": empezó a las " + HorariosDatos.Hora(Inicio) + " y nadie ha registrado. ¿Llegó su docente?";
                     case TipoAlerta.CambioDeHorario:
                         return QueCambio.TrimEnd('.') + ". Lo hizo " + Quien + ".";
+                    case TipoAlerta.DocentesPorEnlazar:
+                        // La persona responsable no enlaza (solo consulta): lo hace la administracion.
+                        if (Permisos.SoloConsulta)
+                        {
+                            return (PorEnlazar == 1 ? "1 docente entró con su contraseña del SIIA y espera que la administración lo enlace"
+                                    : PorEnlazar + " docentes entraron con su contraseña del SIIA y esperan que la administración los enlace")
+                                + " con su cuenta de DigBit: " + QuienesPorEnlazar + ". Si te pregunta, que vaya con la administración.";
+                        }
+
+                        return (PorEnlazar == 1 ? "1 docente entró con su contraseña del SIIA y espera que lo enlaces"
+                                : PorEnlazar + " docentes entraron con su contraseña del SIIA y esperan que los enlaces")
+                            + " con su cuenta de DigBit: " + QuienesPorEnlazar + ".";
                     default:
                         List<string> partes = new List<string>();
                         if (ConFallas > 0)
@@ -228,6 +253,12 @@ namespace DigBit.conexion
             if (alerta.Tipo == TipoAlerta.CambioDeHorario)
             {
                 return "cambio|" + alerta.CambioId.ToString(CultureInfo.InvariantCulture);
+            }
+
+            // Otra vez cada que alguien mas entra con el SIIA sin estar enlazado.
+            if (alerta.Tipo == TipoAlerta.DocentesPorEnlazar)
+            {
+                return "enlazar|" + alerta.Momento.Ticks.ToString(CultureInfo.InvariantCulture);
             }
 
             return alerta.Tipo == TipoAlerta.Fallas
@@ -400,6 +431,21 @@ namespace DigBit.conexion
                         QueCambio = cambio.Descripcion,
                         Quien = cambio.Quien
                     });
+                }
+
+                // 5. Quien entro con el SIIA y espera que lo enlacen (db/24): mientras
+                // haya alguno, cualquiera que sea el periodo. Si falla, las demas siguen.
+                try
+                {
+                    Alerta porEnlazar = EnlacesSiia.ParaAlertas(conexion);
+                    if (porEnlazar != null)
+                    {
+                        resultado.Alertas.Add(porEnlazar);
+                    }
+                }
+                catch (MySqlException ex)
+                {
+                    Log.Error("Alertas: leer los docentes por enlazar con el SIIA", ex);
                 }
             }
 
@@ -669,13 +715,17 @@ namespace DigBit.conexion
         /// Hasta cuando vio las alertas ese usuario (hora del servidor), o null. En
         /// solo consulta (enElEquipo: lo decide quien llama, en el hilo de la
         /// pantalla y con la sesion de ese momento), del archivo de este equipo
-        /// (ArchivoVistas).
+        /// (ArchivoVistas); si este equipo aun no tiene nada, el inicio del dia de
+        /// ahoraServidor (si se da): la responsable entra desde cualquier PC y en
+        /// cada una nueva la campana decia "66" (todas las de los ultimos dias, como
+        /// nuevas). Asi solo cuentan las de hoy. Solo la usa la responsable: la
+        /// administracion lo guarda en la base.
         /// </summary>
-        public DateTime? LeerVistas(string usuario, bool enElEquipo)
+        public DateTime? LeerVistas(string usuario, bool enElEquipo, DateTime? ahoraServidor = null)
         {
             if (enElEquipo)
             {
-                return LeerVistasDelEquipo(usuario);
+                return LeerVistasDelEquipo(usuario) ?? (ahoraServidor.HasValue ? ahoraServidor.Value.Date : (DateTime?)null);
             }
 
             using (MySqlConnection conexion = mconexion.GetConexion())

@@ -55,6 +55,10 @@ namespace DigBit.conexion
         // dialogo y se vuelva a abrir, y vuelven a cero al acertar.
         public static int ConfirmacionesFallidas { get; set; }
 
+        // Docente que entro con el SIIA encendido en Ajustes (InicioConSiia): su
+        // contrasena es la del SIIA y Mi perfil no ofrece cambiarla.
+        public static bool ContrasenaDelSiia { get; set; }
+
         // Al cerrar sesion: sin esto el siguiente usuario del mismo equipo hereda
         // la matricula y el codigo del anterior (todo es estatico).
         public static void Limpiar()
@@ -65,6 +69,7 @@ namespace DigBit.conexion
             VentanaActual = null;
             SesionSinConexion = null;
             ConfirmacionesFallidas = 0;
+            ContrasenaDelSiia = false;
             // La del encargado era de solo consulta: el siguiente vuelve a la del equipo.
             Conexion.UsarCuentaDelEquipo();
         }

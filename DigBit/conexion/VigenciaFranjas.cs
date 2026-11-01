@@ -146,18 +146,29 @@ namespace DigBit.conexion
         /// vieja y crear la nueva desde una fecha): db/20 aplicada y encendido
         /// en Ajustes. Si no, editar y borrar hacen lo de antes (con aviso).
         /// </summary>
+        /// <remarks>
+        /// Desde 2026-10-31 SIEMPRE con db/20 (pedido del usuario: "incluso si hay
+        /// faltas se deben guardar el historial y estadisticas"): un cambio nunca
+        /// reescribe las semanas pasadas. Ya no hay casilla en Ajustes; solo un '0'
+        /// escrito a mano en configuracion lo apaga (las pruebas lo usan).
+        /// </remarks>
         public static bool ConFecha(MySqlConnection conexion, MySqlTransaction transaccion = null)
         {
-            if (!Esquema.VigenciaDeFranjas(conexion, transaccion) || !Esquema.Ajustes(conexion, transaccion))
+            if (!Esquema.VigenciaDeFranjas(conexion, transaccion))
             {
                 return false;
+            }
+
+            if (!Esquema.Ajustes(conexion, transaccion))
+            {
+                return true;
             }
 
             using (MySqlCommand comando = new MySqlCommand("SELECT valor FROM configuracion WHERE clave = @Clave", conexion, transaccion))
             {
                 comando.Parameters.AddWithValue("@Clave", ClaveConFecha);
                 object valor = comando.ExecuteScalar();
-                return valor != null && valor != DBNull.Value && Convert.ToString(valor).Trim() == "1";
+                return valor == null || valor == DBNull.Value || Convert.ToString(valor).Trim() != "0";
             }
         }
     }

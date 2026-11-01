@@ -70,6 +70,9 @@ namespace DigBit
 
         // Pestana Horario semanal
         private ComboBox cboLabHorario;
+        // Las flechas del laboratorio (Deslizamiento): Horario semanal y Cambios de un dia.
+        private FlechasDeLista flechasLabHorario;
+        private FlechasDeLista flechasLabExcepciones;
         // La leyenda en dos renglones: arriba, como esta el laboratorio (el acceso y
         // si "Cambiar horas" vale desde una fecha o tambien para lo pasado, en verde
         // o en ambar); debajo, en gris, como se usa la cuadricula.
@@ -80,6 +83,13 @@ namespace DigBit
         private PastillaConfiguracion pastChoques;
         private readonly DrawingFont fuentePastilla = new DrawingFont("Century Gothic", 9F, FontStyle.Bold);
         private List<ChoqueEnUso> choquesDeLaSemana = new List<ChoqueEnUso>();
+        // Con db/25: "Falta asignar: N h" (todos los laboratorios), a la izquierda de
+        // los choques; lo que se leyo, y si se puede reemplazar (sin db/25, como antes).
+        private PastillaConfiguracion pastPorAsignar;
+        private List<HoraPorAsignar> porAsignar = new List<HoraPorAsignar>();
+        private bool conPorAsignar;
+        // "Ponerla..." de la lista: la clase que el siguiente "Poner clase..." trae elegida.
+        private HoraPorAsignar porPoner;
         private LinkLabel lnkFaltasDeLaSemana;
         // Una etiqueta por profesor del laboratorio, con su color (PonerLeyenda).
         private FlowLayoutPanel leyendaProfesores;
@@ -349,22 +359,15 @@ namespace DigBit
             {
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 18F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
+                ForeColor = EstiloHorarios.VerdeTeschi,
                 Location = new Point(28, 14),
                 Text = "Horarios por laboratorio"
             };
 
-            // Solo consulta: lo dice tambien junto al titulo grande, no solo la barra de titulo.
-            lblSoloConsulta = new Label
-            {
-                AutoSize = true,
-                BackColor = Color.FromArgb(240, 240, 240),
-                Font = new DrawingFont("Century Gothic", 9F, FontStyle.Bold),
-                ForeColor = Color.FromArgb(80, 80, 80),
-                Padding = new Padding(8, 3, 8, 3),
-                Text = "Solo consulta",
-                Visible = soloConsulta
-            };
+            // Solo consulta: lo dice tambien junto al titulo grande, no solo la barra de
+            // titulo; se pulsa para ver que puede hacer aqui (como en las demas secciones).
+            lblSoloConsulta = EstiloAdmin.EtiquetaSoloConsulta(ayuda);
+            lblSoloConsulta.Visible = soloConsulta;
             lblSoloConsulta.Location = new Point(lblTitulo.Left + TextRenderer.MeasureText(lblTitulo.Text, lblTitulo.Font).Width + 8, 24);
 
             // Lo que se hace en la pestana que se ve (PonerFrase, al elegirla); en un renglon.
@@ -372,7 +375,8 @@ namespace DigBit
             {
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 9.75F, FontStyle.Regular),
-                ForeColor = Color.FromArgb(50, 50, 50),
+                // Gris, como el subtitulo de las demas ventanas de la administracion.
+                ForeColor = EstiloAdmin.TextoSecundario,
                 Location = new Point(30, 48),
                 Text = ""
             };
@@ -476,7 +480,9 @@ namespace DigBit
             }
             else if (pestana == tabCalendario)
             {
-                frase = "Las clases que ya pasaron: en rojo, nadie registró bitácora; en ámbar, su docente dio asistencia; en verde, se dieron.";
+                // Los colores, solo en la leyenda de la pestana (LeyendaDelMes): antes se
+                // explicaban en tres sitios y ninguno completo.
+                frase = "Qué clases ya pasadas se dieron y cuáles no, por laboratorio y por semana.";
             }
             else if (tabProximo != null && pestana == tabProximo)
             {
@@ -698,6 +704,14 @@ namespace DigBit
                 return true;
             }
 
+            // Sin nada elegido, Esc olvida la clase traida de "Falta asignar" antes de cerrar.
+            if (keyData == Keys.Escape && tabs.SelectedTab == tabHorario && porPoner != null)
+            {
+                porPoner = null;
+                PonerLeyendaHorario();
+                return true;
+            }
+
             // Proximo ciclo: Esc vuelve atras dentro de la pestana (cuadros elegidos,
             // lista de clases, plantilla abierta, paso 3) y, sin a donde, cierra.
             if (keyData == Keys.Escape && proximoCiclo != null && tabs.SelectedTab == tabProximo && proximoCiclo.ManejarEscape())
@@ -827,7 +841,7 @@ namespace DigBit
         {
             Label lblLab = EstiloHorarios.CrearEtiqueta("Laboratorio", new Point(12, 16));
 
-            cboLabHorario = EstiloHorarios.CrearCombo(new Point(110, 12), 240);
+            cboLabHorario = EstiloHorarios.CrearCombo(new Point(110, 12), 300);
             cboLabHorario.SelectedIndexChanged += (s, e) =>
             {
                 OpcionCombo elegido = cboLabHorario.SelectedItem as OpcionCombo;
@@ -839,7 +853,8 @@ namespace DigBit
                 // Puesto desde otra pestana (CompartirLaboratorio): se lee al volver aqui.
                 if (!compartiendo || tabs.SelectedTab == tabHorario)
                 {
-                    CargarFranjas();
+                    // Con las flechas (o la lista), el horario se desliza hacia ese lado.
+                    Deslizamiento.Cambiar(flechasLabHorario == null ? 0 : flechasLabHorario.Direccion, CargarFranjas, lienzo);
                 }
 
                 if (elegido != null)
@@ -847,6 +862,7 @@ namespace DigBit
                     CompartirLaboratorio(elegido.Id, cboLabHorario);
                 }
             };
+            flechasLabHorario = new FlechasDeLista(cboLabHorario, "Laboratorio");
 
             // Botones en la misma fila del selector: la cuadricula se queda con
             // todo el alto de la pestana. Los tres primeros, en el mismo sitio y con
@@ -870,7 +886,9 @@ namespace DigBit
                 + "Las demás semanas no cambian.");
 
             // Apagados sin nada elegido (ActualizarBotonesFranjas); al pasar el raton dicen que elegir.
-            PiezasConfiguracion.AyudaSiDesactivado(ayuda, btnAsignar, () => "Elige primero cuadros libres en la cuadrícula (arrastra o usa Ctrl+clic).");
+            PiezasConfiguracion.AyudaSiDesactivado(ayuda, btnAsignar, () => conPorAsignar
+                ? "Elige primero cuadros en la cuadrícula, libres u ocupados (arrastra o usa Ctrl+clic)."
+                : "Elige primero cuadros libres en la cuadrícula (arrastra o usa Ctrl+clic).");
             PiezasConfiguracion.AyudaSiDesactivado(ayuda, btnFranjaEditar, () => "Elige primero una clase en la cuadrícula (clic en ella).");
             PiezasConfiguracion.AyudaSiDesactivado(ayuda, btnFranjaBorrar, () => "Elige primero una clase en la cuadrícula (clic en ella).");
             PiezasConfiguracion.AyudaSiDesactivado(ayuda, btnExcepcion, () => "Elige primero cuadros en la cuadrícula, libres u ocupados (arrastra o usa Ctrl+clic).");
@@ -890,12 +908,14 @@ namespace DigBit
 
             // La semana que se ve, con sus fechas en las columnas.
             selectorSemana = new SelectorSemana { Location = new Point(12, 46) };
-            selectorSemana.Cambio += () =>
+            selectorSemana.Cambio += () => Deslizamiento.Cambiar(selectorSemana.Direccion, () =>
             {
                 semanaElegida = true;
                 CargarFranjas();
-            };
+            }, lienzo);
             selectorSemana.SizeChanged += (s, e) => AjustarAltoCuadricula();
+            // Ctrl+flechas del teclado: la semana (las flechas solas, el laboratorio).
+            TeclasDeFlechas.Registrar(selectorSemana, true, selectorSemana.Mover);
             ayuda.SetToolTip(selectorSemana, "La semana que se ve: cada columna dice su fecha y salen sus cancelaciones y sesiones extra,\n"
                 + "también las que ya pasaron, y las franjas que se dan esa semana (una cambiada desde una fecha, con su horario de entonces).");
 
@@ -937,12 +957,21 @@ namespace DigBit
 
             // Los choques que ya tiene el horario en uso esa semana, en todos los
             // laboratorios (decision 3): la misma regla que la revision de Proximo
-            // ciclo. Solo se ve si los hay; clic: cuales.
+            // ciclo (la misma persona docente o el mismo grupo en dos laboratorios a
+            // la vez, decision del 2026-10-31). Solo se ve si los hay; clic: cuales.
             pastChoques = new PastillaConfiguracion("Choques", 0, 22, fuentePastilla, true) { Visible = false };
             pastChoques.Colores(PiezasConfiguracion.FondoRojo, PiezasConfiguracion.BordeRojo, PiezasConfiguracion.TextoRojo);
             pastChoques.Click += (s, e) => VerChoques();
-            ayuda.SetToolTip(pastChoques, "Clases del horario en uso que se cruzan en la semana que ves: el mismo día y a la misma hora, en el mismo\n"
-                + "laboratorio, con la misma persona docente o con el mismo grupo. En este laboratorio salen en rojo. Clic: ver cuáles.");
+            ayuda.SetToolTip(pastChoques, "Clases del horario en uso que chocan en la semana que ves: la misma persona docente o el mismo grupo,\n"
+                + "el mismo día y a la misma hora, en dos laboratorios distintos. En este laboratorio salen en rojo. Clic: ver cuáles.");
+
+            // Con db/25, lo que le falta a alguna clase (todos los laboratorios), en
+            // ambar: un aviso que no impide nada. Solo se ve si falta algo; clic: cuales.
+            pastPorAsignar = new PastillaConfiguracion("Falta asignar", 0, 22, fuentePastilla, true) { Visible = false };
+            pastPorAsignar.Colores(PiezasConfiguracion.FondoAmbar, PiezasConfiguracion.BordeAmbar, PiezasConfiguracion.TextoAmbar);
+            pastPorAsignar.Click += (s, e) => VerPorAsignar();
+            ayuda.SetToolTip(pastPorAsignar, "Horas que le faltan a alguna clase en el horario en uso, en todos los laboratorios: las que otra clase desplazó\n"
+                + "o las que se quitaron para darlas en otro horario. Bajan solas al ponerle horas a la clase. Clic: ver cuáles.");
 
             lnkFaltasDeLaSemana = new LinkLabel
             {
@@ -1053,6 +1082,7 @@ namespace DigBit
             tabHorario.Controls.Add(lblLeyendaHorario);
             tabHorario.Controls.Add(leyendaProfesores);
             tabHorario.Controls.Add(pastChoques);
+            tabHorario.Controls.Add(pastPorAsignar);
             tabHorario.Controls.Add(lnkFaltasDeLaSemana);
             tabHorario.Controls.Add(contenedorSemana);
         }
@@ -1071,30 +1101,48 @@ namespace DigBit
                 contenedorSemana.Width = ancho;
             }
 
-            // "Imprimir PDF" a la derecha, alineado con la cuadricula, sin taparle
-            // nada a los botones de arriba (en solo consulta no estan). Si no cabe
-            // (una ventana estrecha, de 1120), baja a la fila de la semana.
-            bool imprimirAbajo = false;
-            if (btnImprimir != null && btnExcepcion != null)
+            // Fila de arriba: el laboratorio a la izquierda, la semana en medio (o
+            // tras el laboratorio, si no cabe) e "Imprimir PDF" a la derecha; si no
+            // cabe (una ventana estrecha), baja a la derecha de la segunda fila.
+            // Segunda fila: los botones de la cuadricula y, a su derecha, la leyenda.
+            const int filaUno = 8;
+            const int filaDos = 48;
+            if (selectorSemana != null && flechasLabHorario != null)
             {
-                int minimo = (soloConsulta ? cboLabHorario.Right : btnExcepcion.Right) + 14;
-                imprimirAbajo = minimo + btnImprimir.Width > contenedorSemana.Right && selectorSemana != null;
-                btnImprimir.Location = imprimirAbajo
-                    ? new Point(contenedorSemana.Right - btnImprimir.Width, selectorSemana.Top + (selectorSemana.Height - btnImprimir.Height) / 2)
-                    : new Point(Math.Max(minimo, contenedorSemana.Right - btnImprimir.Width), 8);
+                int centrado = contenedorSemana.Left + (contenedorSemana.Width - selectorSemana.Width) / 2;
+                selectorSemana.Location = new Point(Math.Max(flechasLabHorario.Derecha + 24, centrado), filaUno + (34 - selectorSemana.Height) / 2);
             }
 
-            // La leyenda, a la derecha del selector de semana hasta el borde: el
-            // estado arriba y como se usa debajo, un renglon cada uno. Empieza justo
-            // bajo los botones de arriba: a 1366x768 la cuadricula no pierde alto.
-            int debajoDelSelector = selectorSemana == null ? 76 : selectorSemana.Bottom + 4;
+            int derechaBotones = contenedorSemana.Left;
+            if (!soloConsulta && btnAsignar != null)
+            {
+                int x = contenedorSemana.Left;
+                foreach (Button boton in new[] { btnAsignar, btnFranjaEditar, btnFranjaBorrar, btnExcepcion })
+                {
+                    boton.Location = new Point(x, filaDos);
+                    x = boton.Right + 8;
+                }
+
+                derechaBotones = btnExcepcion.Right;
+            }
+
+            bool imprimirAbajo = false;
+            if (btnImprimir != null && selectorSemana != null)
+            {
+                imprimirAbajo = selectorSemana.Right + 14 + btnImprimir.Width > contenedorSemana.Right;
+                btnImprimir.Location = new Point(contenedorSemana.Right - btnImprimir.Width, imprimirAbajo ? filaDos : filaUno);
+            }
+
+            // La leyenda, a la derecha de los botones hasta el borde: el estado
+            // arriba y como se usa debajo, un renglon cada uno.
+            int debajoDelSelector = filaDos + 38;
             if (selectorSemana != null && lblLeyendaHorario != null && lblEstadoHorario != null)
             {
-                int izquierda = selectorSemana.Right + 14;
+                int izquierda = derechaBotones + 14;
                 int derecha = imprimirAbajo && btnImprimir.Visible ? btnImprimir.Left - 10 : contenedorSemana.Right;
                 int anchoLeyenda = Math.Max(60, derecha - izquierda);
                 int altoLinea = lblLeyendaHorario.Font.Height + 1;
-                int arriba = selectorSemana.Top - 4;
+                int arriba = filaDos + (34 - 2 * altoLinea) / 2;
                 lblEstadoHorario.SetBounds(izquierda, arriba, anchoLeyenda, altoLinea);
                 lblLeyendaHorario.SetBounds(izquierda, arriba + altoLinea, anchoLeyenda, altoLinea);
                 debajoDelSelector = Math.Max(debajoDelSelector, lblLeyendaHorario.Bottom + 2);
@@ -1103,10 +1151,11 @@ namespace DigBit
             // La fila de los docentes ocupa las lineas que necesite (con muchos, dos)
             // y, a su derecha, la pastilla de los choques y "Ver las faltas de esta
             // semana >". La cuadricula empieza justo debajo.
-            if (leyendaProfesores != null && lnkFaltasDeLaSemana != null && pastChoques != null)
+            if (leyendaProfesores != null && lnkFaltasDeLaSemana != null && pastChoques != null && pastPorAsignar != null)
             {
                 int derecha = contenedorSemana.Right;
-                int anchoDerecha = lnkFaltasDeLaSemana.PreferredWidth + (pastChoques.Visible ? pastChoques.Width + 12 : 0) + 12;
+                int anchoDerecha = lnkFaltasDeLaSemana.PreferredWidth + (pastChoques.Visible ? pastChoques.Width + 12 : 0)
+                    + (pastPorAsignar.Visible ? pastPorAsignar.Width + 8 : 0) + 12;
                 bool hayLeyenda = leyendaProfesores.Controls.Count > 0;
                 int anchoChips = Math.Max(100, contenedorSemana.Width - anchoDerecha);
                 leyendaProfesores.Top = debajoDelSelector;
@@ -1119,6 +1168,8 @@ namespace DigBit
                 int centro = debajoDelSelector + Math.Min(altoFila, 26) / 2 - 2;
                 lnkFaltasDeLaSemana.Location = new Point(derecha - lnkFaltasDeLaSemana.PreferredWidth, centro - lnkFaltasDeLaSemana.PreferredHeight / 2);
                 pastChoques.Location = new Point(lnkFaltasDeLaSemana.Left - 12 - pastChoques.Width, centro - pastChoques.Height / 2);
+                int izquierdaDeChoques = pastChoques.Visible ? pastChoques.Left - 8 : lnkFaltasDeLaSemana.Left - 12;
+                pastPorAsignar.Location = new Point(izquierdaDeChoques - pastPorAsignar.Width, centro - pastPorAsignar.Height / 2);
                 contenedorSemana.Top = leyendaProfesores.Top + altoFila + 2;
             }
 
@@ -1259,13 +1310,14 @@ namespace DigBit
             cboLabExcepciones.SelectedIndexChanged += (s, e) =>
             {
                 // Puesto desde otra pestana (CompartirLaboratorio): se lee al volver aqui.
-                CargarAgendaSiSeVe();
+                Deslizamiento.Cambiar(flechasLabExcepciones == null ? 0 : flechasLabExcepciones.Direccion, CargarAgendaSiSeVe, dgvAgenda);
                 OpcionCombo elegido = LaboratorioExcepciones();
                 if (elegido != null)
                 {
                     CompartirLaboratorio(elegido.Id, cboLabExcepciones);
                 }
             };
+            flechasLabExcepciones = new FlechasDeLista(cboLabExcepciones, "Laboratorio");
 
             lblDiaAgenda = new Label
             {
@@ -1459,6 +1511,14 @@ namespace DigBit
                 : LaboratorioEquipo.Resuelto ? LaboratorioEquipo.Id : 0;
             SeleccionarPorId(cboLabHorario, preferido);
             SeleccionarPorId(cboLabExcepciones, preferido);
+            // Items.Clear no avisa a las flechas (sin laboratorios se quedaria el nombre de antes).
+            foreach (FlechasDeLista flechas in new[] { flechasLabHorario, flechasLabExcepciones })
+            {
+                if (flechas != null)
+                {
+                    flechas.Refrescar();
+                }
+            }
         }
 
         private static void SeleccionarPorId(ComboBox combo, int id)
@@ -1668,7 +1728,7 @@ namespace DigBit
             foreach (ClaseInfo clase in clases)
             {
                 int fila = dgvClases.Rows.Add(
-                    conCodigo ? clase.Codigo : "",
+                    conCodigo ? EstiloAdmin.Codigo(clase.Codigo) : "",
                     clase.Materia,
                     clase.Grupo,
                     clase.Profesor,
@@ -2048,14 +2108,14 @@ namespace DigBit
         {
             string cambios = soloConsulta || !conFecha.HasValue ? ""
                 : conFecha.Value ? "Cambiar horas: vale desde una fecha."
-                : "Cambiar horas: vale también para las semanas pasadas (Ajustes).";
+                : "Cambiar horas: vale también para las semanas pasadas (falta db/20).";
             lblEstadoHorario.Text = (acceso + " " + cambios).Trim();
             lblEstadoHorario.ForeColor = conFecha.HasValue && !conFecha.Value && !soloConsulta ? Color.FromArgb(190, 85, 0) : Color.DarkGreen;
             string ayudaCambios = soloConsulta || !conFecha.HasValue ? ""
                 : conFecha.Value
                     ? "Cambiar o quitar horas que ya tienen historia vale desde la fecha que elijas: lo que ya pasó se queda como fue (Faltas, la asistencia y las bitácoras)."
                     : "Cambiar o quitar horas que ya tienen historia cambia también las semanas que ya pasaron (Faltas las vuelve a contar).\n"
-                      + "Para que valga solo desde una fecha, enciende en Ajustes «Los cambios de horario aplican desde una fecha».";
+                      + "Para que valga solo desde una fecha falta aplicar db/20_vigencia_franjas.sql en la base (ya no hay casilla en Ajustes: con ella, siempre).";
             ayuda.SetToolTip(lblEstadoHorario, string.IsNullOrEmpty(lblEstadoHorario.Text) ? null
                 : lblEstadoHorario.Text + (ayudaCambios.Length > 0 ? "\n" + ayudaCambios : ""));
         }
@@ -2192,14 +2252,15 @@ namespace DigBit
 
             // Los choques que ya tiene el horario en uso esa semana (lunes a domingo),
             // entre las clases de los laboratorios activos: la regla de la revision de
-            // Proximo ciclo (decision 3). Los de este laboratorio, en rojo.
+            // Proximo ciclo (decision 3; docente o grupo en dos laboratorios). Los de
+            // este laboratorio, en rojo.
             HashSet<int> activos = new HashSet<int>(cboLabHorario.Items.OfType<OpcionCombo>().Select(o => o.Id));
             choquesDeLaSemana = ChoqueEnUso.DeLaSemana(todas.Where(f => activos.Contains(f.LaboratorioId)), lunes);
             motivosDeChoque = ChoqueEnUso.MotivosPorFranja(choquesDeLaSemana);
             pastChoques.Mostrado = "Choques: " + choquesDeLaSemana.Count;
             pastChoques.Visible = choquesDeLaSemana.Count > 0;
-            lblLeyendaHorario.Text = Leyenda;
-            ayuda.SetToolTip(lblLeyendaHorario, AyudaLeyenda());
+            LeerPorAsignar();
+            PonerLeyendaHorario();
 
             FranjaInfo anterior = FranjaSeleccionada();
             lienzo.CodigosGenerados = codigos;
@@ -2216,6 +2277,149 @@ namespace DigBit
 
         // Los motivos de cada franja que choca esa semana (ChoqueEnUso.MotivosPorFranja): AspectoDeChoque.
         private Dictionary<int, string> motivosDeChoque = new Dictionary<int, string>();
+
+        /// <summary>
+        /// Con db/25: lo que falta asignar en todos los laboratorios, para la
+        /// pastilla ambar, y si poner o cambiar horas puede reemplazar a otra
+        /// clase. Sin db/25 (null; Esquema ya lo dijo en el log), como antes: ni
+        /// pastilla ni reemplazo. Si no se puede leer, tampoco (se anota por que).
+        /// </summary>
+        private void LeerPorAsignar()
+        {
+            List<HoraPorAsignar> leidas = null;
+            try
+            {
+                leidas = datos.LeerHorasPorAsignar();
+            }
+            catch (Exception ex)
+            {
+                Log.Error("AdministrarHorarios.LeerPorAsignar (horas por asignar, db/25): sin reemplazo ni \"Falta asignar\" hasta volver a leer", ex);
+            }
+
+            conPorAsignar = leidas != null && !soloConsulta;
+            porAsignar = leidas ?? new List<HoraPorAsignar>();
+            if (porPoner != null && !porAsignar.Any(x => x.ClaseId == porPoner.ClaseId))
+            {
+                // Ya se puso (o ya no hace falta): no se sigue trayendo elegida.
+                porPoner = null;
+            }
+
+            int minutos = porAsignar.Sum(x => x.Minutos);
+            pastPorAsignar.Mostrado = "Falta asignar: " + HorariosDatos.Duracion(minutos);
+            pastPorAsignar.Visible = minutos > 0;
+            ayuda.SetToolTip(btnAsignar, conPorAsignar
+                ? "Pon una clase en los cuadros que elegiste (arrastra o usa Ctrl+clic en la cuadrícula). Si ocupan otra clase de este\n"
+                  + "laboratorio, antes te pregunta si la reemplaza: lo que se le quite queda en «Falta asignar» para ponerlo en otro horario."
+                : TextosDelHorario.AyudaPonerClase);
+        }
+
+        /// <summary>
+        /// La leyenda de abajo: la de siempre o, con una clase traida de "Falta
+        /// asignar" (porPoner), que elegir para ponerla, en ambar.
+        /// </summary>
+        private void PonerLeyendaHorario()
+        {
+            if (porPoner != null && !soloConsulta)
+            {
+                HoraPorAsignar suya = porAsignar.FirstOrDefault(x => x.ClaseId == porPoner.ClaseId) ?? porPoner;
+                int faltan = porAsignar.Where(x => x.ClaseId == porPoner.ClaseId).Sum(x => x.Minutos);
+                int minutos = faltan > 0 ? faltan : suya.Minutos;
+                lblLeyendaHorario.Text = "Para poner " + suya.Clase + " (" + (minutos <= 60 ? "falta " : "faltan ") + HorariosDatos.Duracion(minutos)
+                    + "): elige cuadros y pulsa «Poner clase...», ya la trae elegida. Esc: olvidarla.";
+                lblLeyendaHorario.ForeColor = PiezasConfiguracion.TextoAmbar;
+                ayuda.SetToolTip(lblLeyendaHorario, lblLeyendaHorario.Text + "\n" + suya.Profesor + ". Salió de " + suya.Origen + ".");
+                return;
+            }
+
+            lblLeyendaHorario.Text = Leyenda;
+            lblLeyendaHorario.ForeColor = Color.Gray;
+            ayuda.SetToolTip(lblLeyendaHorario, AyudaLeyenda());
+        }
+
+        /// <summary>
+        /// "Falta asignar: N h": la lista. "Ponerla..." lleva al laboratorio
+        /// elegido con la clase preelegida para el siguiente "Poner clase..."
+        /// (porPoner); "Ya no hace falta" la resuelve. En solo consulta, solo la lista.
+        /// </summary>
+        private void VerPorAsignar()
+        {
+            if (porAsignar.Count == 0)
+            {
+                return;
+            }
+
+            OpcionCombo laboratorio = LaboratorioHorario();
+            List<OpcionCombo> laboratorios = cboLabHorario.Items.OfType<OpcionCombo>().ToList();
+            Func<HoraPorAsignar, bool> resolver = null;
+            if (!soloConsulta)
+            {
+                resolver = p =>
+                {
+                    if (Permisos.Bloquear(this, "Dar por resueltas unas horas por asignar")) return false;
+                    if (!DialogoConfirmacion.Preguntar(this, "Ya no hace falta",
+                        "¿Ya no hace falta asignar " + HorariosDatos.Duracion(p.Minutos) + " a " + p.Clase + "?",
+                        p.Profesor + ". Salieron de " + p.Origen + ". Salen de «Falta asignar» y queda en el historial de cambios; "
+                        + "el horario de la clase no cambia.", "Ya no hace falta", false))
+                    {
+                        return false;
+                    }
+
+                    try
+                    {
+                        datos.YaNoHaceFalta(p.Id);
+                        return true;
+                    }
+                    catch (InvalidOperationException ex) when (EstiloHorarios.EsAvisoDeDigBit(ex))
+                    {
+                        MessageBox.Show(this, ex.Message, "Ya no hace falta", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                    catch (Exception ex)
+                    {
+                        MostrarError("AdministrarHorarios.VerPorAsignar (ya no hace falta)", "No se pudo quitar de «Falta asignar».", ex);
+                    }
+
+                    return false;
+                };
+            }
+
+            HoraPorAsignar elegida = null;
+            int donde = 0;
+            bool cambios;
+            using (DialogoFaltaAsignar dialogo = new DialogoFaltaAsignar(porAsignar, laboratorios, laboratorio == null ? 0 : laboratorio.Id, resolver))
+            {
+                if (dialogo.ShowDialog(this) == DialogResult.OK)
+                {
+                    elegida = dialogo.Elegida;
+                    donde = dialogo.LaboratorioElegido;
+                }
+
+                cambios = dialogo.HuboCambios;
+            }
+
+            if (elegida == null)
+            {
+                if (cambios)
+                {
+                    CargarFranjas();
+                }
+
+                return;
+            }
+
+            porPoner = elegida;
+            lienzo.LimpiarSeleccion();
+            if (laboratorio != null && laboratorio.Id == donde)
+            {
+                CargarFranjas();
+            }
+            else
+            {
+                // El combo lo lee (CargarFranjas) y lo pasa a las demas pestanas.
+                SeleccionarSiEsta(cboLabHorario, donde);
+            }
+
+            ActiveControl = lienzo;
+        }
 
         /// <summary>
         /// Una clase que choca, en rojo con "Choca: mismo grupo" (como en la
@@ -2248,7 +2452,7 @@ namespace DigBit
                     return;
                 }
 
-                // El laboratorio de la clase elegida (si es este, el de la otra), con su docente resaltado.
+                // El laboratorio de la clase elegida (si es este, el de la otra: un choque siempre es entre dos), con su docente resaltado.
                 ChoqueEnUso choque = dialogo.Elegido;
                 FranjaInfo ver = laboratorio != null && choque.A.LaboratorioId == laboratorio.Id && choque.B.LaboratorioId != laboratorio.Id ? choque.B : choque.A;
                 profesorFijado = ver.ProfesorId;
@@ -2541,7 +2745,8 @@ namespace DigBit
             bool hayLaboratorio = LaboratorioHorario() != null;
             bool hay = FranjaSeleccionada() != null;
             bool cuadros = hayLaboratorio && lienzo.SelectedCells.Cast<DataGridViewCell>().Any(c => c.ColumnIndex >= 1);
-            btnAsignar.Enabled = cuadros && lienzo.ObtenerHuecosSeleccionados().Count > 0;
+            // Con db/25 tambien sobre cuadros ocupados: los reemplaza (antes pregunta).
+            btnAsignar.Enabled = cuadros && (conPorAsignar || lienzo.ObtenerHuecosSeleccionados().Count > 0);
             btnExcepcion.Enabled = cuadros;
             btnFranjaEditar.Enabled = hay;
             btnFranjaBorrar.Enabled = hay;
@@ -2577,9 +2782,12 @@ namespace DigBit
             // semanas, o cada semana desde una fecha con los cambios desde una
             // fecha); el cambio de un dia, todo lo elegido y solo ese dia de la
             // semana que se ve: cada opcion dice a que horas y cuando.
-            List<RangoHueco> libres = lienzo.ObtenerHuecosSeleccionados();
+            // Con db/25 tambien los ocupados: los reemplaza (antes pregunta).
+            List<RangoHueco> libres = conPorAsignar ? rangos : lienzo.ObtenerHuecosSeleccionados();
+            string reemplaza = conPorAsignar && lienzo.HayOcupadosSeleccionados() ? ", reemplazando lo que haya" : "";
             menuHueco.Items[0].Text = libres.Count == 0 ? TextosDelHorario.SinCuadrosLibres
-                : cambiosConFecha ? "Poner una clase el " + TextosDelHorario.Rangos(libres) + " (cada semana, desde una fecha)..."
+                : cambiosConFecha ? "Poner una clase el " + TextosDelHorario.Rangos(libres) + " (cada semana, desde una fecha" + reemplaza + ")..."
+                : reemplaza.Length > 0 ? "Poner una clase el " + TextosDelHorario.Rangos(libres) + " (todas las semanas" + reemplaza + ")..."
                 : TextosDelHorario.MenuPonerEnHuecos(libres);
             menuHueco.Items[0].Enabled = libres.Count > 0;
             menuHueco.Items[1].Text = "Cambio de un día: solo el " + RangosConFecha(rangos) + "...";
@@ -2604,15 +2812,21 @@ namespace DigBit
 
         /// <summary>
         /// "Poner clase...": cada bloque de cuadros libres elegido pasa a ser unas
-        /// horas de la clase elegida. Los choques (mismo laboratorio, docente o
-        /// grupo) se dicen por bloque; los demas se ponen.
+        /// horas de la clase elegida. Lo que no deja ponerlas (sin db/25, otras
+        /// horas del mismo laboratorio; siempre, la misma persona docente o el
+        /// mismo grupo en otro laboratorio: un choque) se dice por bloque; los
+        /// demas se ponen. Con db/25 tambien los
+        /// cuadros ocupados: la otra clase del mismo laboratorio se reemplaza
+        /// (PonerReemplazando, antes pregunta) y lo de la misma persona docente o
+        /// el mismo grupo en otro laboratorio sigue sin ponerse.
         /// </summary>
         private void AsignarClaseASeleccion()
         {
             if (Permisos.Bloquear(this, "Poner una clase en cuadros del horario")) return;
             OpcionCombo laboratorio = LaboratorioHorario();
-            // El boton y el menu solo se encienden con un laboratorio y cuadros libres elegidos.
-            List<RangoHueco> rangos = lienzo.ObtenerHuecosSeleccionados();
+            // El boton y el menu solo se encienden con un laboratorio y cuadros libres
+            // (con db/25, tambien ocupados) elegidos.
+            List<RangoHueco> rangos = conPorAsignar ? lienzo.ObtenerRangosSeleccionados(false) : lienzo.ObtenerHuecosSeleccionados();
             if (laboratorio == null || rangos.Count == 0)
             {
                 ActualizarBotonesFranjas();
@@ -2624,8 +2838,16 @@ namespace DigBit
             // Con los cambios desde una fecha, "A partir del" propone el lunes de la semana que se ve (o hoy).
             DateTime? hoy = HoyConFecha();
             DateTime? propuesta = hoy.HasValue ? NoAntesDeHoy(selectorSemana.Lunes, hoy.Value) : (DateTime?)null;
-            using (DialogoAsignarClase dialogo = new DialogoAsignarClase(ClasesActivas(), laboratorio, rangos, CrearClaseDesdeDialogo, hoy, propuesta))
+            List<ClaseInfo> clases = ClasesActivas();
+            using (DialogoAsignarClase dialogo = new DialogoAsignarClase(clases, laboratorio, rangos, CrearClaseDesdeDialogo, hoy, propuesta))
             {
+                // Traida de "Falta asignar" (Ponerla...): ya elegida.
+                ClaseInfo preelegida = porPoner == null ? null : clases.FirstOrDefault(c => c.Id == porPoner.ClaseId);
+                if (preelegida != null)
+                {
+                    dialogo.Preelegir(preelegida);
+                }
+
                 if (dialogo.ShowDialog(this) != DialogResult.OK)
                 {
                     return;
@@ -2633,6 +2855,12 @@ namespace DigBit
 
                 claseId = dialogo.ClaseId;
                 desde = dialogo.Desde;
+            }
+
+            if (conPorAsignar)
+            {
+                PonerReemplazando(laboratorio, claseId, desde);
+                return;
             }
 
             int creadas = 0;
@@ -2662,6 +2890,105 @@ namespace DigBit
                         queHacer = AvisoDeFalloAdmin.Accion(ex);
                     }
                 }
+            }
+
+            CargarFranjas();
+            if (problemas.Count > 0)
+            {
+                MessageBox.Show((creadas == 1 ? "Se puso la clase en 1 horario. " : creadas > 1 ? "Se puso la clase en " + creadas + " horarios. " : "")
+                    + "No se pudo poner en:" + Environment.NewLine + Environment.NewLine
+                    + string.Join(Environment.NewLine, problemas)
+                    + (string.IsNullOrEmpty(queHacer) ? "" : Environment.NewLine + Environment.NewLine + queHacer),
+                    queHacer != null ? TextosDelHorario.TituloPoner
+                    : problemas.All(p => TextosDelHorario.TituloDeCruce(p) == "Laboratorio ocupado") ? "Laboratorio ocupado" : "Choques de horario",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        /// <summary>
+        /// Poner clase con db/25: los cuadros elegidos sin los que ya son de esa
+        /// clase; por bloque, lo que no deja ponerla (docente o grupo en otro
+        /// laboratorio) se dice y ese bloque no se pone; lo de otras clases de este
+        /// laboratorio se confirma una vez para todos («Reemplazar») y queda en
+        /// «Falta asignar». Cancelar no pone nada.
+        /// </summary>
+        private void PonerReemplazando(OpcionCombo laboratorio, int claseId, DateTime? desde)
+        {
+            List<RangoHueco> rangos = lienzo.ObtenerRangosSeleccionadosSin(claseId);
+            if (rangos.Count == 0)
+            {
+                MessageBox.Show(this, "Esas horas ya son de esa clase: no hay nada que poner.", TextosDelHorario.TituloPoner, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            List<string> problemas = new List<string>();
+            string queHacer = null;
+            List<RangoHueco> aPoner = new List<RangoHueco>();
+            List<FranjaReemplazada> quitadas = new List<FranjaReemplazada>();
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                foreach (RangoHueco rango in rangos)
+                {
+                    try
+                    {
+                        PlanReemplazo plan = datos.PlanDeReemplazo(null, claseId, laboratorio.Id, rango.Dia, rango.Inicio, rango.Fin, desde);
+                        if (plan.Bloqueo != null)
+                        {
+                            problemas.Add(rango.Descripcion + ": " + plan.Bloqueo);
+                            continue;
+                        }
+
+                        aPoner.Add(rango);
+                        quitadas.AddRange(plan.Quitadas);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error("AdministrarHorarios.PonerReemplazando (plan)", ex);
+                        problemas.Add(rango.Descripcion + ": " + AvisoDeFalloAdmin.Causa(ex) + ".");
+                        if (string.IsNullOrEmpty(queHacer))
+                        {
+                            queHacer = AvisoDeFalloAdmin.Accion(ex);
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+
+            if (aPoner.Count > 0 && quitadas.Count > 0 && !ConfirmarReemplazo.Preguntar(this, quitadas, cambiosConFecha ? desde : null))
+            {
+                return;
+            }
+
+            int creadas = 0;
+            foreach (RangoHueco rango in aPoner)
+            {
+                try
+                {
+                    datos.PonerClaseReemplazando(claseId, laboratorio.Id, rango.Dia, rango.Inicio, rango.Fin, desde);
+                    creadas++;
+                }
+                catch (InvalidOperationException ex) when (EstiloHorarios.EsAvisoDeDigBit(ex))
+                {
+                    problemas.Add(rango.Descripcion + ": " + ex.Message);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("AdministrarHorarios.PonerReemplazando", ex);
+                    problemas.Add(rango.Descripcion + ": " + AvisoDeFalloAdmin.Causa(ex) + ".");
+                    if (string.IsNullOrEmpty(queHacer))
+                    {
+                        queHacer = AvisoDeFalloAdmin.Accion(ex);
+                    }
+                }
+            }
+
+            if (creadas > 0 && porPoner != null && porPoner.ClaseId == claseId)
+            {
+                porPoner = null;
             }
 
             CargarFranjas();
@@ -2897,10 +3224,24 @@ namespace DigBit
             // columna del doble clic o, sin el, el lunes de la semana que se ve (o hoy).
             DateTime? hoy = HoyConFecha();
             DateTime? propuesta = hoy.HasValue ? NoAntesDeHoy(dia.HasValue ? lienzo.FechaDeColumna(dia.Value) : selectorSemana.Lunes, hoy.Value) : (DateTime?)null;
-            using (DialogoFranja dialogo = new DialogoFranja(datos, ClasesActivas(), laboratorio, null, dia, hora, hoy, propuesta))
+            List<ClaseInfo> clases = ClasesActivas();
+            using (DialogoFranja dialogo = new DialogoFranja(datos, clases, laboratorio, null, dia, hora, hoy, propuesta))
             {
+                // Con db/25 reemplaza (antes pregunta); la traida de "Falta asignar", ya elegida.
+                dialogo.Reemplazar = conPorAsignar;
+                ClaseInfo preelegida = porPoner == null ? null : clases.FirstOrDefault(c => c.Id == porPoner.ClaseId);
+                if (preelegida != null)
+                {
+                    dialogo.Preelegir(preelegida);
+                }
+
                 if (dialogo.ShowDialog(this) == DialogResult.OK)
                 {
+                    if (porPoner != null && dialogo.ClaseGuardada == porPoner.ClaseId)
+                    {
+                        porPoner = null;
+                    }
+
                     CargarFranjas();
                 }
             }
@@ -2921,6 +3262,8 @@ namespace DigBit
             // El dialogo lee lo que ya paso con la franja (HistoriaDeFranja) y decide como se guarda.
             using (DialogoFranja dialogo = new DialogoFranja(datos, ClasesActivas(), laboratorio, franja, null, null, null, null))
             {
+                // Con db/25, encima de otra clase de este laboratorio la reemplaza (antes pregunta).
+                dialogo.Reemplazar = conPorAsignar;
                 if (dialogo.ShowDialog(this) == DialogResult.OK)
                 {
                     CargarFranjas();
@@ -2965,6 +3308,13 @@ namespace DigBit
             catch (Exception ex)
             {
                 Log.Error("AdministrarHorarios.BorrarFranja (historia de la franja " + franja.Id + ")", ex);
+            }
+
+            if (conPorAsignar)
+            {
+                QuitarConPregunta(franja, cual, historia);
+                CargarFranjas();
+                return;
             }
 
             try
@@ -3033,6 +3383,71 @@ namespace DigBit
             }
 
             CargarFranjas();
+        }
+
+        /// <summary>
+        /// "Quitar horas..." con db/25: lo mismo que antes (desde una fecha si tiene
+        /// historia y los cambios desde una fecha; si no, se borra, con el aviso de
+        /// su pasado), en un solo dialogo que ademas pregunta "¿Se va a dar en otro
+        /// horario?": con «Si» (la opcion por omision) sus horas quedan en «Falta
+        /// asignar»; con «No», la clase tiene menos horas.
+        /// </summary>
+        private void QuitarConPregunta(FranjaInfo franja, string cual, HistoriaFranja historia)
+        {
+            int minutos = HorariosDatos.MinutosEntre(franja.Inicio, franja.Fin);
+            try
+            {
+                bool conFecha = historia != null && historia.ConFecha && historia.TieneHistoria;
+                if (conFecha && franja.VigenteHasta.Date < historia.PrimerDiaPosible)
+                {
+                    MessageBox.Show("Las horas de " + cual + " ya terminaron el " + franja.VigenteHasta.ToString("dd/MM/yyyy")
+                        + ": no hay nada que quitar. Lo que ya pasó se queda como fue.", "Quitar horas", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                string descripcion = conFecha
+                    ? "Las horas de " + cual + " dejan de darse desde la fecha que elijas. Lo que ya pasó se queda como fue (Faltas, la asistencia y las bitácoras)."
+                      + (historia.CancelacionesFuturas > 0 ? " Se borran sus cancelaciones de esa fecha en adelante y, con ellas, sus recortes "
+                          + "(lo que le quedaba a la clase esos días)." : "")
+                      + AvisoDeHoy(historia)
+                    : "Se quitan del horario las horas de " + cual + ".";
+                string aviso = !conFecha && historia != null && historia.TieneHistoria ? DialogoFranja.AvisoSinFecha(historia, true) : null;
+                bool porAsignarlas;
+                DateTime desde;
+                using (DialogoQuitarHoras dialogo = new DialogoQuitarHoras(descripcion, aviso,
+                    conFecha ? historia.PrimerDiaPosible : (DateTime?)null, conFecha ? franja.VigenteHasta.Date : (DateTime?)null, minutos))
+                {
+                    if (dialogo.ShowDialog(this) != DialogResult.OK)
+                    {
+                        return;
+                    }
+
+                    porAsignarlas = dialogo.PorAsignar;
+                    desde = dialogo.Fecha;
+                }
+
+                if (conFecha)
+                {
+                    datos.QuitarFranjaDesde(franja.Id, desde, porAsignarlas);
+                }
+                else if (historia != null && historia.ConFecha)
+                {
+                    // Como antes: si desde que se leyo gano historia, la quita desde hoy en vez de reescribirla.
+                    datos.QuitarFranjaDesde(franja.Id, historia.PrimerDiaPosible, porAsignarlas);
+                }
+                else
+                {
+                    datos.BorrarFranja(franja.Id, porAsignarlas);
+                }
+            }
+            catch (InvalidOperationException ex) when (EstiloHorarios.EsAvisoDeDigBit(ex))
+            {
+                MessageBox.Show(ex.Message, "No se pudo quitar", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            catch (Exception ex)
+            {
+                MostrarError("AdministrarHorarios.QuitarConPregunta", "No se pudieron quitar esas horas.", ex);
+            }
         }
 
         /// <summary>
@@ -3848,21 +4263,37 @@ namespace DigBit
         public const int HoraApertura = 7;
         public const int HoraCierre = 21;
 
+        // Los colores de la administracion, los del inicio de sesion (2026-10-31):
+        // el verde del TESCHI, sus tonos claros al pasar el raton y lineas suaves.
+        public static readonly Color VerdeTeschi = Color.FromArgb(0, 112, 64);
+        public static readonly Color VerdeSobre = Color.FromArgb(236, 246, 239);
+        public static readonly Color VerdePulsado = Color.FromArgb(214, 236, 221);
+        public static readonly Color LineaSuave = Color.FromArgb(226, 232, 228);
+
+        /// <summary>
+        /// Boton de la administracion: blanco con borde fino verde y, al pasar el
+        /// raton, un verde muy claro (antes, borde grueso: todo se veia cargado).
+        /// Apagado se ve apagado (BotonesApagados), tambien el principal y el rojo.
+        /// </summary>
         public static Button CrearBoton(string texto, Point posicion, Size tamaño)
         {
             Button boton = new Button
             {
                 BackColor = Color.White,
+                Cursor = Cursors.Hand,
                 FlatStyle = FlatStyle.Flat,
                 Font = new DrawingFont("Century Gothic", 10F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
+                ForeColor = VerdeTeschi,
                 Location = posicion,
                 Size = tamaño,
                 Text = texto,
                 UseVisualStyleBackColor = false
             };
-            boton.FlatAppearance.BorderColor = Color.DarkGreen;
-            boton.FlatAppearance.BorderSize = 2;
+            boton.FlatAppearance.BorderColor = VerdeTeschi;
+            boton.FlatAppearance.BorderSize = 1;
+            boton.FlatAppearance.MouseOverBackColor = VerdeSobre;
+            boton.FlatAppearance.MouseDownBackColor = VerdePulsado;
+            BotonesApagados.Seguir(boton);
             return boton;
         }
 
@@ -3872,7 +4303,7 @@ namespace DigBit
             {
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 10F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
+                ForeColor = VerdeTeschi,
                 Location = posicion,
                 Text = texto
             };
@@ -3931,6 +4362,8 @@ namespace DigBit
         /// </summary>
         public static DataGridView CrearGrid(Point posicion, Size tamaño)
         {
+            // Con aire (2026-10-31): renglones de 34, margen dentro de cada celda,
+            // solo lineas horizontales suaves y el encabezado en un renglon.
             DataGridView grid = new ListaDigBit
             {
                 Location = posicion,
@@ -3940,7 +4373,12 @@ namespace DigBit
                 AllowUserToResizeRows = false,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
                 BackgroundColor = Color.White,
-                BorderStyle = BorderStyle.FixedSingle,
+                BorderStyle = BorderStyle.None,
+                CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
+                ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None,
+                ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
+                ColumnHeadersHeight = 40,
+                GridColor = LineaSuave,
                 Font = new DrawingFont("Century Gothic", 10F),
                 MultiSelect = false,
                 ReadOnly = true,
@@ -3948,6 +4386,10 @@ namespace DigBit
                 ScrollBars = ScrollBars.Both,
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect
             };
+            grid.RowTemplate.Height = 34;
+            grid.DefaultCellStyle.Padding = new Padding(8, 0, 8, 0);
+            grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(8, 0, 8, 0);
+            grid.ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.False;
             grid.ColumnHeadersDefaultCellStyle.Font = new DrawingFont("Century Gothic", 10F, FontStyle.Bold);
             grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.DarkGreen;
             grid.EnableHeadersVisualStyles = false;
@@ -3977,6 +4419,18 @@ namespace DigBit
             for (int i = 0; i < pesos.Length && i < grid.Columns.Count; i++)
             {
                 grid.Columns[i].FillWeight = pesos[i];
+            }
+
+            // La lista los recuerda: si los cambia sola (una columna en su minimo), los vuelve a poner.
+            ListaDigBit lista = grid as ListaDigBit;
+            if (lista != null)
+            {
+                lista.RecordarPesos();
+                // Los que se pidieron, aunque la lista ya los haya movido al ponerlos.
+                for (int i = 0; i < pesos.Length && i < grid.Columns.Count; i++)
+                {
+                    lista.RecordarPeso(grid.Columns[i], pesos[i]);
+                }
             }
         }
 
@@ -4160,6 +4614,12 @@ namespace DigBit
     /// que pide su texto mas largo de lo que se ve. Las largas (materia, correo,
     /// detalle) se reparten el resto por su peso y, si no caben, se cortan con
     /// "..." (enteras al pasar el raton).
+    ///
+    /// Ademas (2026-10-31), nunca se ven rotas: el titulo de cada columna se lee
+    /// entero (AnchoDelEncabezado, al agregarla y si cambia su titulo; si no cabe
+    /// todo, sale la barra de abajo) y, sin filas, TextoVacio dice por que en
+    /// medio de la lista ("Nadie coincide con la búsqueda...") en vez de un
+    /// rectangulo blanco que no se sabe si esta vacio o no cargo.
     /// </summary>
     internal class ListaDigBit : DataGridView
     {
@@ -4169,11 +4629,297 @@ namespace DigBit
         // Las filas que se miden, desde la primera que se ve: nunca todas, una
         // lista de miles de sesiones se llena igual de rapido.
         private const int FilasMedidas = 60;
+        // Lo que el encabezado deja alrededor del texto, ademas de su Padding (los
+        // margenes de la celda), y el sitio de la flecha de ordenar. Medidos en las
+        // fotos de prueba: con menos, "Estudiantes" o "internet" perdian su ultima letra.
+        private const int MargenDelEncabezado = 6;
+        private const int FlechaDeOrden = 18;
+        private static readonly Color TextoVacioGris = Color.FromArgb(110, 110, 110);
+        private static readonly Color TextoVacioRojo = Color.FromArgb(190, 30, 30);
         private bool medidaPendiente;
+        // Mientras RepartirSiCabe cambia el modo de las columnas (no vuelve a entrar), y
+        // si ya hay una revision pedida tras cambiar de tamano.
+        private bool repartiendo;
+        private bool repartoPendiente;
+        // Cambiaron las filas desde la ultima medida: al medir, tambien se reparte.
+        private bool repartirAlMedir;
+        // Los pesos de la pantalla (RecordarPesos) y si el usuario esta arrastrando el borde de una columna.
+        private readonly Dictionary<DataGridViewColumn, float> pesosDeDiseno = new Dictionary<DataGridViewColumn, float>();
+        private bool anchoConRaton;
+        private string textoVacio = "";
+        private bool textoVacioEsError;
+        // El minimo que puso el titulo de cada columna, y el que tenia antes: si nadie
+        // lo cambio, al cambiar el titulo puede bajar (una columna enlazada nace con
+        // el nombre de su campo, "comentarios_hardware", y despues se llama "Hardware").
+        private readonly Dictionary<DataGridViewColumn, KeyValuePair<int, int>> minimosDelTitulo = new Dictionary<DataGridViewColumn, KeyValuePair<int, int>>();
+        // Lo mismo de las que acaban de salir, por su nombre (OnColumnRemoved).
+        private readonly Dictionary<string, KeyValuePair<int, int>> quitadas = new Dictionary<string, KeyValuePair<int, int>>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Lo que se dice en medio de la lista mientras no tiene filas: por que esta
+        /// vacia y que hacer ("Nadie coincide con la búsqueda. Borra la búsqueda o
+        /// cambia «Mostrar».", "Todavía no hay..."). Vacio: no se dice nada (por
+        /// ejemplo, mientras se lee). Se pone junto con el resumen de la pantalla.
+        /// </summary>
+        public string TextoVacio
+        {
+            get { return textoVacio; }
+            set
+            {
+                value = value ?? "";
+                if (value != textoVacio)
+                {
+                    textoVacio = value;
+                    Invalidate();
+                }
+            }
+        }
+
+        /// <summary>El TextoVacio es un fallo (no se pudo leer): va en rojo, no en gris.</summary>
+        public bool TextoVacioEsError
+        {
+            get { return textoVacioEsError; }
+            set
+            {
+                if (value != textoVacioEsError)
+                {
+                    textoVacioEsError = value;
+                    Invalidate();
+                }
+            }
+        }
+
+        /// <summary>
+        /// TextoVacio de una lista que se tiene como DataGridView (la de PantallaAdmin y
+        /// sus pantallas): si no es una ListaDigBit, no hace nada.
+        /// </summary>
+        public static void PonerTextoVacio(DataGridView lista, string texto, bool esError = false)
+        {
+            ListaDigBit digbit = lista as ListaDigBit;
+            if (digbit != null)
+            {
+                digbit.TextoVacioEsError = esError;
+                digbit.TextoVacio = texto;
+            }
+        }
+
+        /// <summary>
+        /// Lo minimo para que el titulo de esa columna se lea entero: en un renglon,
+        /// su texto; si la lista parte los titulos (WrapMode), en dos renglones como
+        /// mucho, partido donde quede mas angosto ("Código de / clase", nunca en tres;
+        /// "Estudiantes" entera). Con su margen y, si se puede ordenar, la flecha.
+        /// 0 si no tiene titulo o aun no esta en una lista.
+        /// </summary>
+        public static int AnchoDelEncabezado(DataGridViewColumn columna)
+        {
+            string texto = columna == null || columna.DataGridView == null ? "" : (columna.HeaderText ?? "").Trim();
+            if (texto.Length == 0)
+            {
+                return 0;
+            }
+
+            DataGridViewCellStyle estilo = columna.HeaderCell.InheritedStyle;
+            DrawingFont fuente = estilo.Font ?? columna.DataGridView.Font;
+            const TextFormatFlags Medir = TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine;
+            string[] palabras = texto.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            int ancho;
+            if (estilo.WrapMode == DataGridViewTriState.True && palabras.Length > 1)
+            {
+                ancho = int.MaxValue;
+                for (int i = 1; i < palabras.Length; i++)
+                {
+                    int arriba = TextRenderer.MeasureText(string.Join(" ", palabras, 0, i), fuente, Size.Empty, Medir).Width;
+                    int abajo = TextRenderer.MeasureText(string.Join(" ", palabras, i, palabras.Length - i), fuente, Size.Empty, Medir).Width;
+                    ancho = Math.Min(ancho, Math.Max(arriba, abajo));
+                }
+            }
+            else
+            {
+                ancho = TextRenderer.MeasureText(texto, fuente, Size.Empty, Medir).Width;
+            }
+
+            return ancho + estilo.Padding.Horizontal + MargenDelEncabezado + (ConFlecha(columna) ? FlechaDeOrden : 0);
+        }
+
+        /// <summary>
+        /// Si el titulo guarda sitio para la flecha de ordenar. Solo la columna por la
+        /// que se ordena la pinta: a las demas no se les guarda (WinForms tampoco
+        /// aparta ese sitio cuando no cabe: el titulo usa todo el ancho), y en Docentes
+        /// a 1366 las columnas de un digito le quitaban unos 60 px al nombre. Al
+        /// ordenar se vuelven a medir (OnSorted). Con orden programatico la lista no
+        /// avisa al cambiar la flecha: se le guarda siempre.
+        /// </summary>
+        private static bool ConFlecha(DataGridViewColumn columna)
+        {
+            switch (columna.SortMode)
+            {
+                case DataGridViewColumnSortMode.NotSortable:
+                    return false;
+                case DataGridViewColumnSortMode.Programmatic:
+                    return true;
+                default:
+                    return columna.DataGridView.SortedColumn == columna;
+            }
+        }
+
+        /// <summary>Se ordeno por otra columna: la que pinta la flecha le guarda sitio y la de antes lo devuelve.</summary>
+        protected override void OnSorted(EventArgs e)
+        {
+            base.OnSorted(e);
+            MedirTitulos();
+            RepartirSiCabe();
+        }
+
+        protected override void OnColumnAdded(DataGridViewColumnEventArgs e)
+        {
+            base.OnColumnAdded(e);
+            // Al enlazar una tabla, la lista cambia cada columna por una copia (con el
+            // mismo nombre y el minimo que le puso su titulo): la copia sigue siendo nuestra.
+            KeyValuePair<int, int> antes;
+            string nombre = e.Column.Name ?? "";
+            if (quitadas.TryGetValue(nombre, out antes))
+            {
+                quitadas.Remove(nombre);
+                if (e.Column.MinimumWidth == antes.Value)
+                {
+                    minimosDelTitulo[e.Column] = antes;
+                }
+            }
+
+            PonerMinimoDelTitulo(e.Column);
+        }
+
+        /// <summary>
+        /// Sale de la lista: si nadie cambio el minimo que le puso su titulo, se
+        /// recuerda por su nombre, para la copia que la sustituya (ver OnColumnAdded).
+        /// Si no, al enlazar se quedaba el minimo de "comentarios_hardware" aunque la
+        /// columna despues se llamara "Hardware".
+        /// </summary>
+        protected override void OnColumnRemoved(DataGridViewColumnEventArgs e)
+        {
+            base.OnColumnRemoved(e);
+            pesosDeDiseno.Remove(e.Column);
+            KeyValuePair<int, int> antes;
+            if (minimosDelTitulo.TryGetValue(e.Column, out antes))
+            {
+                minimosDelTitulo.Remove(e.Column);
+                if (e.Column.MinimumWidth == antes.Value)
+                {
+                    quitadas[e.Column.Name ?? ""] = antes;
+                }
+            }
+        }
+
+        /// <summary>Cambio el titulo de una columna (su celda de encabezado, fila -1).</summary>
+        protected override void OnCellValueChanged(DataGridViewCellEventArgs e)
+        {
+            base.OnCellValueChanged(e);
+            if (e.RowIndex == -1 && e.ColumnIndex >= 0 && e.ColumnIndex < Columns.Count)
+            {
+                PonerMinimoDelTitulo(Columns[e.ColumnIndex]);
+            }
+        }
+
+        /// <summary>Ya no se ordena por esa columna (o si): su titulo deja (o guarda) el sitio de la flecha.</summary>
+        protected override void OnColumnSortModeChanged(DataGridViewColumnEventArgs e)
+        {
+            base.OnColumnSortModeChanged(e);
+            PonerMinimoDelTitulo(e.Column);
+        }
+
+        /// <summary>Cambio la letra, el margen o el partir de los titulos: se vuelven a medir.</summary>
+        protected override void OnColumnHeadersDefaultCellStyleChanged(EventArgs e)
+        {
+            base.OnColumnHeadersDefaultCellStyleChanged(e);
+            MedirTitulos();
+        }
+
+        protected override void OnFontChanged(EventArgs e)
+        {
+            base.OnFontChanged(e);
+            MedirTitulos();
+        }
+
+        private void MedirTitulos()
+        {
+            foreach (DataGridViewColumn columna in Columns)
+            {
+                PonerMinimoDelTitulo(columna);
+            }
+        }
+
+        /// <summary>
+        /// El minimo de la columna, para que su titulo se lea entero. Solo crece,
+        /// salvo el que puso el propio titulo y nadie cambio despues: ese sigue al
+        /// titulo nuevo (sin bajar del que tenia la columna antes).
+        /// </summary>
+        private void PonerMinimoDelTitulo(DataGridViewColumn columna)
+        {
+            int pide = AnchoDelEncabezado(columna);
+            KeyValuePair<int, int> antes;
+            bool siguePuesto = minimosDelTitulo.TryGetValue(columna, out antes) && columna.MinimumWidth == antes.Value;
+            int anterior = siguePuesto ? antes.Key : columna.MinimumWidth;
+            int nuevo = Math.Max(anterior, pide);
+            if (nuevo == columna.MinimumWidth)
+            {
+                return;
+            }
+
+            columna.MinimumWidth = nuevo;
+            minimosDelTitulo[columna] = new KeyValuePair<int, int>(anterior, nuevo);
+        }
+
+        /// <summary>Sin filas, TextoVacio en medio de lo que queda bajo los titulos.</summary>
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            if (Rows.Count > 0 || textoVacio.Length == 0)
+            {
+                return;
+            }
+
+            int arriba = ColumnHeadersVisible ? ColumnHeadersHeight : 0;
+            Rectangle area = new Rectangle(24, arriba, Math.Max(10, ClientSize.Width - 48), Math.Max(10, ClientSize.Height - arriba));
+            TextRenderer.DrawText(e.Graphics, textoVacio, Font, area, textoVacioEsError ? TextoVacioRojo : TextoVacioGris,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+        }
+
+        protected override void OnRowsRemoved(DataGridViewRowsRemovedEventArgs e)
+        {
+            base.OnRowsRemoved(e);
+            if (Rows.Count == 0 && textoVacio.Length > 0)
+            {
+                Invalidate();
+            }
+
+            // Sin filas no hay OnRowsAdded que mida: el reparto se revisa igual.
+            repartirAlMedir = true;
+            PedirMedida();
+        }
+
+        protected override void OnSizeChanged(EventArgs e)
+        {
+            base.OnSizeChanged(e);
+            // Al cambiar el tamano, el reparto de las de relleno puede pasarse unos px
+            // (RepartirSiCabe): se revisa una vez, cuando termina de acomodarse.
+            if (IsHandleCreated && !repartoPendiente)
+            {
+                repartoPendiente = true;
+                BeginInvoke(new Action(() =>
+                {
+                    repartoPendiente = false;
+                    if (!IsDisposed)
+                    {
+                        RepartirSiCabe();
+                    }
+                }));
+            }
+        }
 
         protected override void OnRowsAdded(DataGridViewRowsAddedEventArgs e)
         {
             base.OnRowsAdded(e);
+            repartirAlMedir = true;
             PedirMedida();
         }
 
@@ -4215,8 +4961,22 @@ namespace DigBit
         private void MedirColumnasCortas()
         {
             medidaPendiente = false;
-            if (IsDisposed || Rows.Count == 0)
+            if (IsDisposed)
             {
+                return;
+            }
+
+            // Repartir, solo si cambiaron las filas o algun minimo (al desplazarse, no).
+            bool repartir = repartirAlMedir;
+            repartirAlMedir = false;
+            if (Rows.Count == 0)
+            {
+                // Vacia (se quito su barra vertical): que no quede la de abajo por nada.
+                if (repartir)
+                {
+                    RepartirSiCabe();
+                }
+
                 return;
             }
 
@@ -4240,6 +5000,187 @@ namespace DigBit
                 if (pide <= AnchoCorto && pide > columna.MinimumWidth)
                 {
                     columna.MinimumWidth = pide;
+                    repartir = true;
+                }
+            }
+
+            if (repartir)
+            {
+                RepartirSiCabe();
+            }
+        }
+
+        /// <summary>
+        /// Los pesos de ahora son los de la pantalla (EstiloHorarios.Pesos los guarda
+        /// al ponerlos; tambien los que deja el usuario al arrastrar un borde): ver
+        /// RepartirSiCabe.
+        /// </summary>
+        public void RecordarPesos()
+        {
+            pesosDeDiseno.Clear();
+            foreach (DataGridViewColumn columna in Columns)
+            {
+                pesosDeDiseno[columna] = columna.FillWeight;
+            }
+        }
+
+        /// <summary>El peso de la pantalla para esa columna (EstiloHorarios.Pesos).</summary>
+        public void RecordarPeso(DataGridViewColumn columna, float peso)
+        {
+            if (columna != null && columna.DataGridView == this)
+            {
+                pesosDeDiseno[columna] = peso;
+            }
+        }
+
+        protected override void OnColumnWidthChanged(DataGridViewColumnEventArgs e)
+        {
+            base.OnColumnWidthChanged(e);
+            if (!repartiendo && MouseButtons == MouseButtons.Left)
+            {
+                anchoConRaton = true;
+            }
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            // El usuario arrastro el borde de una columna: lo que dejo es lo que vale.
+            if (anchoConRaton)
+            {
+                anchoConRaton = false;
+                if (pesosDeDiseno.Count > 0)
+                {
+                    RecordarPesos();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Las columnas de relleno de un DataGridView se reparten mal cuando alguna
+        /// queda en su minimo, y con los minimos de los titulos (2026-10-31) pasa a menudo:
+        ///  - Al agrandarse, la lista reparte solo lo que crecio, sobre los anchos que
+        ///    tenia angosta (al abrirse): las cortas se quedaban anchas y la materia se
+        ///    cortaba (Clases a 1366, aunque cabia entera). Tambien cambia sola los pesos.
+        ///  - Reparte en una sola pasada: si al dar su minimo a una se le acaba el sitio
+        ///    a otra, se pasa unos px y sale la barra de abajo aunque todo cabia
+        ///    (Docentes a 1366). Tampoco reparte otra vez al salir o quitarse la barra vertical.
+        /// Aqui se reparte bien, desde cero: con los pesos de la pantalla (RecordarPesos;
+        /// si no hay, los de la primera vez), la que no llega a su minimo se queda en el
+        /// y el resto se reparte entre las demas, hasta que todas caben. A la lista se le
+        /// dan como pesos esos anchos: su pasada ya no tiene que recortar nada y cabe
+        /// justo. Si ni los minimos caben, reparte ella (y sale la barra de abajo).
+        /// Solo con las columnas que heredan el relleno de la lista (las de Estadisticas
+        /// llevan el suyo: ahi no se toca). Se llama al llenarse, al cambiar algun
+        /// minimo y al cambiar de tamano (nunca a cada paso).
+        /// </summary>
+        private void RepartirSiCabe()
+        {
+            if (repartiendo || AutoSizeColumnsMode != DataGridViewAutoSizeColumnsMode.Fill || Columns.Count == 0)
+            {
+                return;
+            }
+
+            List<DataGridViewColumn> relleno = new List<DataGridViewColumn>();
+            int fijas = 0;
+            foreach (DataGridViewColumn columna in Columns)
+            {
+                if (!columna.Visible)
+                {
+                    continue;
+                }
+
+                if (columna.InheritedAutoSizeMode != DataGridViewAutoSizeColumnMode.Fill)
+                {
+                    fijas += columna.Width;
+                }
+                else if (columna.AutoSizeMode == DataGridViewAutoSizeColumnMode.NotSet)
+                {
+                    relleno.Add(columna);
+                }
+                else
+                {
+                    // Una con su propio relleno: como siempre.
+                    return;
+                }
+            }
+
+            if (relleno.Count == 0)
+            {
+                return;
+            }
+
+            foreach (DataGridViewColumn columna in relleno)
+            {
+                if (!pesosDeDiseno.ContainsKey(columna))
+                {
+                    pesosDeDiseno[columna] = columna.FillWeight;
+                }
+            }
+
+            // 2 px de holgura: si la lista mide un poco distinto, sobra en vez de faltar.
+            int disponible = ClientSize.Width - (VerticalScrollBar.Visible ? VerticalScrollBar.Width : 0)
+                - (RowHeadersVisible ? RowHeadersWidth : 0) - fijas - 2;
+            Dictionary<DataGridViewColumn, float> anchos = AnchosConMinimos(relleno, disponible);
+            repartiendo = true;
+            try
+            {
+                // Sin relleno, los pesos se ponen sin que la lista reparta a cada uno; al
+                // volver al relleno reparte una sola vez.
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
+                foreach (DataGridViewColumn columna in relleno)
+                {
+                    columna.FillWeight = anchos != null ? Math.Max(1f, anchos[columna]) : pesosDeDiseno[columna];
+                }
+
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            }
+            finally
+            {
+                repartiendo = false;
+            }
+        }
+
+        /// <summary>
+        /// El ancho de cada columna de relleno en ese espacio, por sus pesos de la
+        /// pantalla y sin bajar de su minimo; null si ni los minimos caben.
+        /// </summary>
+        private Dictionary<DataGridViewColumn, float> AnchosConMinimos(List<DataGridViewColumn> relleno, int disponible)
+        {
+            if (disponible <= 0 || relleno.Sum(c => c.MinimumWidth) > disponible)
+            {
+                return null;
+            }
+
+            HashSet<DataGridViewColumn> enSuMinimo = new HashSet<DataGridViewColumn>();
+            Dictionary<DataGridViewColumn, float> anchos = new Dictionary<DataGridViewColumn, float>();
+            while (true)
+            {
+                float queda = disponible - enSuMinimo.Sum(c => c.MinimumWidth);
+                float pesos = relleno.Where(c => !enSuMinimo.Contains(c)).Sum(c => Math.Max(0.01f, pesosDeDiseno[c]));
+                bool otraVuelta = false;
+                foreach (DataGridViewColumn columna in relleno)
+                {
+                    if (enSuMinimo.Contains(columna))
+                    {
+                        anchos[columna] = columna.MinimumWidth;
+                        continue;
+                    }
+
+                    float ancho = pesos <= 0 ? columna.MinimumWidth : queda * Math.Max(0.01f, pesosDeDiseno[columna]) / pesos;
+                    if (ancho < columna.MinimumWidth)
+                    {
+                        enSuMinimo.Add(columna);
+                        otraVuelta = true;
+                    }
+
+                    anchos[columna] = ancho;
+                }
+
+                // Cada vuelta deja al menos una mas en su minimo: termina.
+                if (!otraVuelta)
+                {
+                    return anchos;
                 }
             }
         }
@@ -4268,6 +5209,9 @@ namespace DigBit
         /// <summary>El usuario cambio de semana (con las flechas o "Esta semana"; no al poner Lunes).</summary>
         public event Action Cambio;
 
+        /// <summary>En Cambio: 1 si fue a una semana posterior, -1 si a una anterior (para el Deslizamiento).</summary>
+        public int Direccion { get; private set; }
+
         public SelectorSemana()
         {
             AutoSize = true;
@@ -4291,7 +5235,9 @@ namespace DigBit
             btnActual.Margin = new Padding(8, 0, 0, 0);
             btnActual.Click += (s, e) =>
             {
-                Lunes = SemanaActual(hoy);
+                DateTime actual = SemanaActual(hoy);
+                Direccion = actual.CompareTo(lunes);
+                Lunes = actual;
                 if (Cambio != null)
                 {
                     Cambio();
@@ -4350,8 +5296,10 @@ namespace DigBit
             return "Semana del " + lunes.ToString("dd/MM") + " al " + sabado.ToString("dd/MM/yyyy");
         }
 
-        private void Mover(int semanas)
+        /// <summary>Una semana despues (1) o antes (-1), como las flechas (tambien Ctrl+flechas del teclado).</summary>
+        public void Mover(int semanas)
         {
+            Direccion = Math.Sign(semanas);
             Lunes = lunes.AddDays(7 * semanas);
             if (Cambio != null)
             {
@@ -4985,13 +5933,34 @@ namespace DigBit
         /// </summary>
         public List<RangoHueco> ObtenerRangosSeleccionados(bool soloLibres)
         {
+            return RangosDe(celda => !soloLibres || celda.Tag == null);
+        }
+
+        /// <summary>
+        /// Bloques contiguos de cuadros seleccionados, libres u ocupados, sin los
+        /// que ya son de esa clase: poner una clase reemplazando (db/25) no se pone
+        /// encima de si misma, como antes solo usaba los cuadros libres.
+        /// </summary>
+        public List<RangoHueco> ObtenerRangosSeleccionadosSin(int idClase)
+        {
+            return RangosDe(celda => !(celda.Tag is FranjaInfo) || ((FranjaInfo)celda.Tag).ClaseId != idClase);
+        }
+
+        /// <summary>Si entre los cuadros seleccionados hay alguno ocupado por una clase.</summary>
+        public bool HayOcupadosSeleccionados()
+        {
+            return SelectedCells.Cast<DataGridViewCell>().Any(c => c.ColumnIndex >= 1 && c.Tag is FranjaInfo);
+        }
+
+        private List<RangoHueco> RangosDe(Func<DataGridViewCell, bool> entra)
+        {
             List<RangoHueco> rangos = new List<RangoHueco>();
             for (int dia = 1; dia <= Dias; dia++)
             {
                 List<int> filas = new List<int>();
                 foreach (DataGridViewCell celda in SelectedCells)
                 {
-                    if (celda.ColumnIndex == dia && (!soloLibres || celda.Tag == null))
+                    if (celda.ColumnIndex == dia && entra(celda))
                     {
                         filas.Add(celda.RowIndex);
                     }
@@ -5291,7 +6260,7 @@ namespace DigBit
                     celda.Tag = franja;
                     // El valor no se pinta, pero lo copian Ctrl+C y lo leen los
                     // lectores de pantalla: sin codigos, vacio.
-                    celda.Value = f == desde && !SinCodigos ? franja.Codigo : "";
+                    celda.Value = f == desde && !SinCodigos ? EstiloAdmin.Codigo(franja.Codigo) : "";
                     celda.ToolTipText = descripcion;
                 }
             }
@@ -5356,7 +6325,7 @@ namespace DigBit
                 + (DeUnProfesor && !string.IsNullOrEmpty(x.Laboratorio) ? "Laboratorio " + x.Laboratorio + Environment.NewLine : "")
                 + "Sesión extra el " + HorariosDatos.NombresDia[((int)x.Fecha.DayOfWeek + 6) % 7 + 1] + " " + x.Fecha.ToString("dd/MM/yyyy")
                 + ", " + HorariosDatos.Hora(x.Inicio) + "-" + HorariosDatos.Hora(x.Fin)
-                + (conCodigo ? ", código " + x.Codigo : "")
+                + (conCodigo ? ", código " + EstiloAdmin.Codigo(x.Codigo) : "")
                 + (generado == null ? "" : Environment.NewLine + "Código: " + generado + " (solo tú lo ves; su docente, al entrar a DigBit durante la clase)")
                 + (x.Motivo.Length > 0 ? Environment.NewLine + "Motivo: " + x.Motivo : "")
                 + (aspecto != null && aspecto.Pie.Length > 0 ? Environment.NewLine + aspecto.Pie : "");
@@ -5467,7 +6436,7 @@ namespace DigBit
                 + f.Materia + " - " + f.Grupo + Environment.NewLine
                 + (conLaboratorio && !string.IsNullOrEmpty(f.Laboratorio) ? "Laboratorio " + f.Laboratorio + Environment.NewLine : "")
                 + HorariosDatos.NombresDia[f.DiaSemana] + " " + HorariosDatos.Hora(f.Inicio) + "-" + HorariosDatos.Hora(f.Fin)
-                + (conCodigo ? ", código " + f.Codigo : "")
+                + (conCodigo ? ", código " + EstiloAdmin.Codigo(f.Codigo) : "")
                 + (conVigencia
                     ? Environment.NewLine + "Vigente del " + f.VigenteDesde.ToString("dd/MM/yyyy") + " al " + f.VigenteHasta.ToString("dd/MM/yyyy") + VigenciaPropia(f)
                     : "");
@@ -5801,7 +6770,7 @@ namespace DigBit
                 string generado = CodigoGeneradoDe(franja);
                 string codigo = !string.IsNullOrEmpty(marca) ? marca
                     : generado != null ? generado
-                    : ConCodigo(franja.LaboratorioId) && !string.IsNullOrEmpty(franja.Codigo) ? franja.Codigo : "";
+                    : ConCodigo(franja.LaboratorioId) && !string.IsNullOrEmpty(franja.Codigo) ? EstiloAdmin.Codigo(franja.Codigo) : "";
                 Color colorCodigo = !string.IsNullOrEmpty(marca) ? colorMarca ?? Color.FromArgb(190, 90, 0) : texto;
                 int anchoCodigo = codigo.Length == 0 ? 0 : TextRenderer.MeasureText(g, codigo, fuenteNombre).Width;
                 bool cabeCodigo = anchoCodigo > 0 && arriba.Width - anchoCodigo >= Escalado(90);
@@ -6089,7 +7058,7 @@ namespace DigBit
         {
             string fecha = extra.Fecha.ToString("dd/MM");
             string codigo = DeUnProfesor ? null
-                : CodigoGeneradoDe(extra) ?? (ConCodigo(extra.LaboratorioId) && !string.IsNullOrEmpty(extra.Codigo) ? extra.Codigo : null);
+                : CodigoGeneradoDe(extra) ?? (ConCodigo(extra.LaboratorioId) && !string.IsNullOrEmpty(extra.Codigo) ? EstiloAdmin.Codigo(extra.Codigo) : null);
             if (codigo == null)
             {
                 return "EXTRA " + fecha;
@@ -6175,7 +7144,7 @@ namespace DigBit
                     grande ? fuenteCodigoGrande : fuenteCodigo, arriba, Color.FromArgb(190, 90, 0), unaLinea);
                 string generado = CodigoGeneradoDe(extra);
                 TextRenderer.DrawText(e.Graphics, (DeUnProfesor ? extra.Laboratorio + ", " : generado != null ? generado + " "
-                        : ConCodigo(extra.LaboratorioId) ? extra.Codigo + " " : "")
+                        : ConCodigo(extra.LaboratorioId) ? EstiloAdmin.Codigo(extra.Codigo) + " " : "")
                     + extra.Materia + " - " + extra.Grupo
                     + (extra.Motivo.Length > 0 ? " (" + extra.Motivo + ")" : ""),
                     grande ? fuenteTextoGrande : fuenteTexto, abajo, Color.Black, unaLinea);
@@ -6456,7 +7425,7 @@ namespace DigBit
 
         private void InicializarComponentes()
         {
-            EstiloHorarios.PrepararDialogo(this, existente == null ? "Nueva clase" : "Editar clase", new Size(520, 400));
+            EstiloHorarios.PrepararDialogo(this, existente == null ? "Nueva clase" : "Editar clase", new Size(520, 432));
 
             Label lblTitulo = new Label
             {
@@ -6467,11 +7436,11 @@ namespace DigBit
                 Text = existente == null ? "Nueva clase" : "Editar clase"
             };
 
-            Label lblProfesor = EstiloHorarios.CrearEtiqueta("Docente", new Point(24, 66));
-            cboProfesor = EstiloHorarios.CrearCombo(new Point(140, 62), 350);
+            Label lblProfesor = EstiloHorarios.CrearEtiqueta("Docente", new Point(24, 70));
+            cboProfesor = EstiloHorarios.CrearCombo(new Point(140, 66), 350);
 
-            Label lblGrupo = EstiloHorarios.CrearEtiqueta("Grupo", new Point(24, 106));
-            cboGrupo = EstiloHorarios.CrearCombo(new Point(140, 102), 250);
+            Label lblGrupo = EstiloHorarios.CrearEtiqueta("Grupo", new Point(24, 114));
+            cboGrupo = EstiloHorarios.CrearCombo(new Point(140, 110), 250);
 
             // Los grupos son de las clases: si falta el de esta, se crea aqui mismo.
             lnkNuevoGrupo = new LinkLabel
@@ -6479,21 +7448,21 @@ namespace DigBit
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 9F),
                 LinkColor = Color.DarkGreen,
-                Location = new Point(398, 107),
+                Location = new Point(398, 115),
                 Text = "Nuevo grupo"
             };
             lnkNuevoGrupo.LinkClicked += (s, e) => CrearGrupo();
 
-            Label lblMateria = EstiloHorarios.CrearEtiqueta("Materia", new Point(24, 146));
-            cboMateria = EstiloHorarios.CrearCombo(new Point(140, 142), 350);
+            Label lblMateria = EstiloHorarios.CrearEtiqueta("Materia", new Point(24, 158));
+            cboMateria = EstiloHorarios.CrearCombo(new Point(140, 154), 350);
 
-            Label lblCodigo = EstiloHorarios.CrearEtiqueta("Código", new Point(24, 186));
-            txtCodigo = EstiloHorarios.CrearTexto(new Point(140, 182), 140);
+            Label lblCodigo = EstiloHorarios.CrearEtiqueta("Código", new Point(24, 202));
+            txtCodigo = EstiloHorarios.CrearTexto(new Point(140, 198), 140);
             txtCodigo.MaxLength = 16;
             txtCodigo.CharacterCasing = CharacterCasing.Normal;
             txtCodigo.Font = new DrawingFont("Century Gothic", 11F, FontStyle.Bold);
 
-            btnProponer = EstiloHorarios.CrearBoton("Proponer otro", new Point(292, 178), new Size(140, 34));
+            btnProponer = EstiloHorarios.CrearBoton("Proponer otro", new Point(292, 194), new Size(140, 34));
             btnProponer.Click += (s, e) => ProponerCodigo();
 
             Label lblNotaCodigo = null;
@@ -6503,25 +7472,25 @@ namespace DigBit
                 txtCodigo.TabStop = false;
                 btnProponer.Visible = false;
                 // Tres lineas a 8.5 pt (con 40 de alto la tercera salia cortada): de
-                // 172 a 224, sin tocar las fechas de abajo (226).
+                // 190 a 242, sin tocar las fechas de abajo (254).
                 lblNotaCodigo = new Label
                 {
                     AutoSize = false,
                     Font = new DrawingFont("Century Gothic", 8.5F),
                     ForeColor = Color.FromArgb(90, 90, 90),
-                    Location = new Point(292, 172),
+                    Location = new Point(292, 190),
                     Size = new Size(210, 52),
                     Text = "Es el de su docente: el mismo en todas sus clases. Se cambia en Docentes."
                 };
                 cboProfesor.SelectedIndexChanged += (s, e) => MostrarCodigoDelProfesor();
             }
 
-            Label lblDesde = EstiloHorarios.CrearEtiqueta("Vigente desde", new Point(24, 230));
-            dtpDesde = EstiloHorarios.CrearFecha(new Point(140, 226));
+            Label lblDesde = EstiloHorarios.CrearEtiqueta("Vigente desde", new Point(24, 258));
+            dtpDesde = EstiloHorarios.CrearFecha(new Point(140, 254));
             dtpDesde.Value = DateTime.Today;
 
-            Label lblHasta = EstiloHorarios.CrearEtiqueta("hasta", new Point(290, 230));
-            dtpHasta = EstiloHorarios.CrearFecha(new Point(360, 226));
+            Label lblHasta = EstiloHorarios.CrearEtiqueta("hasta", new Point(290, 258));
+            dtpHasta = EstiloHorarios.CrearFecha(new Point(360, 254));
             dtpHasta.Value = DateTime.Today.AddMonths(5);
 
             lblAviso = new Label
@@ -6529,7 +7498,7 @@ namespace DigBit
                 AutoSize = false,
                 Font = new DrawingFont("Century Gothic", 8.5F, FontStyle.Regular),
                 ForeColor = Color.Gray,
-                Location = new Point(24, 268),
+                Location = new Point(24, 296),
                 Size = new Size(470, 50),
                 Text = (codigoPorProfesor
                     ? "El código es el de su docente y vale en todas sus clases, pero cada una solo en su laboratorio y a su hora."
@@ -6537,10 +7506,11 @@ namespace DigBit
                     + (hayOtrosModos ? " Solo se usa en los laboratorios con código único." : "")
             };
 
-            btnGuardar = EstiloHorarios.CrearBoton("Guardar", new Point(210, 336), new Size(135, 40));
+            // Guardar, la accion principal, relleno; Cancelar a su derecha, a 24 del borde.
+            btnGuardar = EstiloAdmin.BotonPrincipal("Guardar", new Point(214, 368), new Size(135, 40));
             btnGuardar.Click += (s, e) => Guardar();
 
-            btnCancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(355, 336), new Size(135, 40));
+            btnCancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(361, 368), new Size(135, 40));
             btnCancelar.Click += (s, e) => { DialogResult = DialogResult.Cancel; Close(); };
 
             AcceptButton = btnGuardar;
@@ -6861,6 +7831,41 @@ namespace DigBit
         // "Aplica desde" (la que se edita) o "A partir del" (una nueva); null si no se pide.
         private DateTimePicker dtpDesde;
         private Label lblDesdeNota;
+        // La nota gris de abajo: que pasa si se cruza con otras horas.
+        private Label lblNotaCruces;
+        private bool reemplazar;
+
+        /// <summary>
+        /// Con db/25 (Horario semanal): encima de otra clase de este laboratorio
+        /// la reemplaza en vez de chocar (antes lo confirma) y lo que se le quite
+        /// queda en «Falta asignar». Sin db/25, false: como siempre.
+        /// </summary>
+        public bool Reemplazar
+        {
+            get { return reemplazar; }
+            set
+            {
+                reemplazar = value;
+                lblNotaCruces.Text = value
+                    ? "Si se cruza con otra clase de este laboratorio, te pregunta si la reemplaza: lo que se le quite queda en «Falta asignar». "
+                      + "No se guarda si se cruza con la misma persona docente o el mismo grupo en otro laboratorio."
+                    : NotaCruces;
+            }
+        }
+
+        /// <summary>La clase con que se guardo (0 si no se guardo).</summary>
+        public int ClaseGuardada { get; private set; }
+
+        private const string NotaCruces = "No se guarda si se cruza con otras horas del mismo laboratorio, ni si choca con la misma persona docente o el mismo grupo en otro laboratorio.";
+
+        /// <summary>Una nueva con una clase ya elegida (la traida de "Falta asignar").</summary>
+        public void Preelegir(ClaseInfo clase)
+        {
+            if (existente == null && clase != null)
+            {
+                selector.Seleccionar(clase);
+            }
+        }
 
         /// <param name="hoyConFecha">Solo para una nueva: hoy segun el servidor si los cambios de horario aplican desde una fecha; si no, null.</param>
         /// <param name="desdePropuesto">Solo para una nueva con hoyConFecha: lo que propone "A partir del" (el dia de la columna, o el lunes de la semana que se ve); null o antes de hoy, hoy.</param>
@@ -6928,8 +7933,9 @@ namespace DigBit
                     : "Ojo: también cambia lo que ya pasó con estas horas (sus sesiones y cancelaciones).";
             }
 
-            return pasado + " Para que " + (quitar ? "se quiten" : "valga") + " solo desde una fecha, enciende en Ajustes "
-                + "«Los cambios de horario aplican desde una fecha» cuando todos los equipos tengan esta versión.";
+            // Ya no hay casilla en Ajustes (2026-10-31): con db/20, siempre desde una fecha.
+            return pasado + " Para que " + (quitar ? "se quiten" : "valga") + " solo desde una fecha, falta aplicar "
+                + "db/20_vigencia_franjas.sql en la base (pídeselo a quien administra el servidor).";
         }
 
         /// <summary>
@@ -7003,14 +8009,14 @@ namespace DigBit
 
             selector = new SelectorClase(clasesActivas, 506, null) { Location = new Point(24, 56) };
 
-            Label lblDia = EstiloHorarios.CrearEtiqueta("Día", new Point(24, 188));
-            cboDia = EstiloHorarios.CrearCombo(new Point(110, 184), 150);
+            Label lblDia = EstiloHorarios.CrearEtiqueta("Día", new Point(24, 202));
+            cboDia = EstiloHorarios.CrearCombo(new Point(110, 198), 150);
 
-            Label lblInicio = EstiloHorarios.CrearEtiqueta("Inicio", new Point(24, 232));
-            cboInicio = EstiloHorarios.CrearComboHoras(new Point(110, 228), null);
+            Label lblInicio = EstiloHorarios.CrearEtiqueta("Inicio", new Point(24, 246));
+            cboInicio = EstiloHorarios.CrearComboHoras(new Point(110, 242), null);
 
-            Label lblFin = EstiloHorarios.CrearEtiqueta("Fin", new Point(230, 232));
-            cboFin = EstiloHorarios.CrearComboHoras(new Point(280, 228), null);
+            Label lblFin = EstiloHorarios.CrearEtiqueta("Fin", new Point(230, 246));
+            cboFin = EstiloHorarios.CrearComboHoras(new Point(280, 242), null);
 
             Controls.Add(lblTitulo);
             Controls.Add(selector);
@@ -7023,7 +8029,7 @@ namespace DigBit
 
             // Debajo de las horas, lo que dependa de la historia de la franja (db/20):
             // desde cuando aplica el cambio, o desde cuando vale la nueva, y el aviso.
-            int y = 268;
+            int y = 284;
             if ((PartirDesde && !YaTermino) || hoyConFecha.HasValue)
             {
                 Label lblDesde = EstiloHorarios.CrearEtiqueta(existente == null ? "A partir del" : "Aplica desde", new Point(24, y + 4));
@@ -7076,17 +8082,22 @@ namespace DigBit
                 ForeColor = Color.Gray,
                 Location = new Point(24, y),
                 Size = new Size(510, 36),
-                Text = "No se guarda si se cruza con otras horas del mismo laboratorio, de la misma persona docente o del mismo grupo."
+                Text = NotaCruces
             };
-            y += 48;
+            lblNotaCruces = lblNota;
+            y += 52;
 
-            ClientSize = new Size(560, y + 60);
-            btnGuardar = EstiloHorarios.CrearBoton(existente == null ? "Poner la clase" : "Guardar", new Point(250, y), new Size(135, 40));
+            // 24 libres debajo de los botones, como en los demas dialogos.
+            ClientSize = new Size(560, y + 64);
+            // Relleno, la accion principal; si ya termino (apagado), con borde.
+            btnGuardar = YaTermino
+                ? EstiloHorarios.CrearBoton(existente == null ? "Poner la clase" : "Guardar", new Point(249, y), new Size(135, 40))
+                : EstiloAdmin.BotonPrincipal(existente == null ? "Poner la clase" : "Guardar", new Point(249, y), new Size(135, 40));
             btnGuardar.Click += (s, e) => Guardar();
             // Una que ya termino no tiene nada que cambiar (lo dice el aviso).
             btnGuardar.Enabled = !YaTermino;
 
-            btnCancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(395, y), new Size(135, 40));
+            btnCancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(396, y), new Size(140, 40));
             btnCancelar.Click += (s, e) => { DialogResult = DialogResult.Cancel; Close(); };
 
             AcceptButton = btnGuardar;
@@ -7186,6 +8197,18 @@ namespace DigBit
 
             try
             {
+                if (reemplazar)
+                {
+                    if (GuardarReemplazando(clase, dia.Id, inicio, fin))
+                    {
+                        ClaseGuardada = clase.Id;
+                        DialogResult = DialogResult.OK;
+                        Close();
+                    }
+
+                    return;
+                }
+
                 if (existente == null)
                 {
                     // Sin los cambios desde una fecha, sin desde: como siempre.
@@ -7205,17 +8228,56 @@ namespace DigBit
                     datos.ActualizarFranja(existente.Id, clase.Id, laboratorio.Id, dia.Id, inicio, fin);
                 }
 
+                ClaseGuardada = clase.Id;
                 DialogResult = DialogResult.OK;
                 Close();
             }
             catch (InvalidOperationException ex) when (EstiloHorarios.EsAvisoDeDigBit(ex))
             {
-                MessageBox.Show(ex.Message, "Choque de horario", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(ex.Message, TextosDelHorario.TituloDeCruce(ex.Message), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             catch (Exception ex)
             {
                 AvisoDeFalloAdmin.Mostrar(EstiloHorarios.Dueno(this), "DialogoFranja.Guardar", ex, "No se pudieron guardar las horas", Text);
             }
+        }
+
+        /// <summary>
+        /// Con db/25: lo que no deja guardarla (la misma persona docente o el
+        /// mismo grupo en otro laboratorio: un choque) se dice y no se guarda;
+        /// lo de otras clases de este laboratorio se confirma
+        /// («Reemplazar») y queda en «Falta asignar». False si no se guardo.
+        /// Lanza lo mismo que Guardar.
+        /// </summary>
+        private bool GuardarReemplazando(ClaseInfo clase, int dia, TimeSpan inicio, TimeSpan fin)
+        {
+            // La que se edita, desde la fecha elegida (o su primer dia posible), como CambiarFranjaDesde.
+            DateTime? desde = dtpDesde != null ? dtpDesde.Value.Date
+                : existente != null && historia != null ? historia.PrimerDiaPosible
+                : (DateTime?)null;
+            PlanReemplazo plan = datos.PlanDeReemplazo(existente == null ? (int?)null : existente.Id, clase.Id, laboratorio.Id, dia, inicio, fin, desde);
+            if (plan.Bloqueo != null)
+            {
+                MessageBox.Show(this, plan.Bloqueo, "Choque de horario", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            bool conFecha = existente == null ? hoyConFecha.HasValue : historia != null && historia.ConFecha;
+            if (plan.Quitadas.Count > 0 && !ConfirmarReemplazo.Preguntar(this, plan.Quitadas, conFecha ? desde : null))
+            {
+                return false;
+            }
+
+            if (existente == null)
+            {
+                datos.PonerClaseReemplazando(clase.Id, laboratorio.Id, dia, inicio, fin, desde);
+            }
+            else
+            {
+                datos.CambiarFranjaReemplazando(existente.Id, clase.Id, laboratorio.Id, dia, inicio, fin, desde ?? DateTime.Today);
+            }
+
+            return true;
         }
     }
 
@@ -7254,7 +8316,7 @@ namespace DigBit
 
         private void InicializarComponentes()
         {
-            EstiloHorarios.PrepararDialogo(this, "Dar una sesión extra", new Size(560, 396));
+            EstiloHorarios.PrepararDialogo(this, "Dar una sesión extra", new Size(560, 432));
 
             Label lblTitulo = new Label
             {
@@ -7268,14 +8330,14 @@ namespace DigBit
             // Solo clases vigentes en esa fecha: una extra de una clase fuera de periodo no entraria de todas formas.
             selector = new SelectorClase(clasesActivas.Where(c => c.VigenteEn(fecha)).ToList(), 506, null) { Location = new Point(24, 56) };
 
-            Label lblInicio = EstiloHorarios.CrearEtiqueta("Inicio", new Point(24, 188));
-            cboInicio = EstiloHorarios.CrearComboHoras(new Point(110, 184), null);
+            Label lblInicio = EstiloHorarios.CrearEtiqueta("Inicio", new Point(24, 202));
+            cboInicio = EstiloHorarios.CrearComboHoras(new Point(110, 198), null);
 
-            Label lblFin = EstiloHorarios.CrearEtiqueta("Fin", new Point(230, 188));
-            cboFin = EstiloHorarios.CrearComboHoras(new Point(280, 184), null);
+            Label lblFin = EstiloHorarios.CrearEtiqueta("Fin", new Point(230, 202));
+            cboFin = EstiloHorarios.CrearComboHoras(new Point(280, 198), null);
 
-            Label lblMotivo = EstiloHorarios.CrearEtiqueta("Motivo", new Point(24, 232));
-            txtMotivo = EstiloHorarios.CrearTexto(new Point(110, 228), 420);
+            Label lblMotivo = EstiloHorarios.CrearEtiqueta("Motivo", new Point(24, 246));
+            txtMotivo = EstiloHorarios.CrearTexto(new Point(110, 242), 420);
             txtMotivo.MaxLength = 200;
 
             Label lblNota = new Label
@@ -7283,16 +8345,17 @@ namespace DigBit
                 AutoSize = false,
                 Font = new DrawingFont("Century Gothic", 8.5F, FontStyle.Regular),
                 ForeColor = Color.Gray,
-                Location = new Point(24, 268),
-                Size = new Size(510, 50),
+                Location = new Point(24, 286),
+                // Tres lineas enteras (con 50 la tercera no salia).
+                Size = new Size(510, 58),
                 Text = "Solo ese día y a esas horas: con el código de su docente se podrá registrar en este laboratorio. "
                     + "No se guarda si se cruza con otra clase que se da ese día (no cancelada) o con otra sesión extra."
             };
 
-            btnGuardar = EstiloHorarios.CrearBoton("Dar la sesión extra", new Point(205, 334), new Size(180, 40));
+            btnGuardar = EstiloAdmin.BotonPrincipal("Dar la sesión extra", new Point(204, 368), new Size(180, 40));
             btnGuardar.Click += (s, e) => Guardar();
 
-            btnCancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(395, 334), new Size(135, 40));
+            btnCancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(396, 368), new Size(140, 40));
             btnCancelar.Click += (s, e) => { DialogResult = DialogResult.Cancel; Close(); };
 
             AcceptButton = btnGuardar;
@@ -7356,7 +8419,7 @@ namespace DigBit
             }
             catch (InvalidOperationException ex) when (EstiloHorarios.EsAvisoDeDigBit(ex))
             {
-                MessageBox.Show(ex.Message, "Choque de horario", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(ex.Message, TextosDelHorario.TituloDeCruce(ex.Message), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             catch (Exception ex)
             {
@@ -7398,63 +8461,54 @@ namespace DigBit
         /// <param name="enRojo">La accion quita algo (una clase de un dia): su boton en rojo, como "Terminar clase".</param>
         public DialogoMotivo(string titulo, string descripcion, string etiqueta, string aceptar, string volver, bool enRojo)
         {
-            EstiloHorarios.PrepararDialogo(this, titulo, new Size(520, 230));
-
-            Label lblTitulo = new Label
-            {
-                AutoSize = true,
-                Font = new DrawingFont("Century Gothic", 14F, FontStyle.Bold),
-                ForeColor = Color.DarkGreen,
-                Location = new Point(24, 16),
-                Text = titulo
-            };
-
+            // Como los demas dialogos (2026-10-31): TituloDialogo y BotonesDialogo (la
+            // accion rellena, en rojo si quita algo, y "Volver"/"Cancelar" a su derecha).
+            const int Ancho = 520;
             Label lblDescripcion = new Label
             {
                 AutoSize = false,
-                Font = new DrawingFont("Century Gothic", 9F, FontStyle.Regular),
+                Font = new DrawingFont("Century Gothic", 9.5F, FontStyle.Regular),
                 ForeColor = Color.FromArgb(50, 50, 50),
-                Location = new Point(24, 52),
-                Size = new Size(470, 50),
+                Location = new Point(24, 54),
+                Size = new Size(Ancho - 48, 20),
                 Text = descripcion
             };
 
             // Una descripcion larga (con el aviso de que la clase ya paso) no se corta: crece el dialogo.
-            int extra = Math.Max(0, TextRenderer.MeasureText(descripcion ?? "", lblDescripcion.Font, new Size(470, int.MaxValue),
-                TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl).Height + 4 - lblDescripcion.Height);
-            lblDescripcion.Height += extra;
-            ClientSize = new Size(ClientSize.Width, ClientSize.Height + extra);
+            lblDescripcion.Height = Math.Max(20, PiezasConfiguracion.AltoDe(descripcion ?? "", lblDescripcion.Font, lblDescripcion.Width) + 4);
 
-            Label lblEtiqueta = EstiloHorarios.CrearEtiqueta(etiqueta, new Point(24, 112 + extra));
-            txtMotivo = EstiloHorarios.CrearTexto(new Point(24, 136 + extra), 470);
+            Label lblEtiqueta = EstiloHorarios.CrearEtiqueta(etiqueta, new Point(24, lblDescripcion.Bottom + 12));
+            txtMotivo = EstiloHorarios.CrearTexto(new Point(24, lblDescripcion.Bottom + 36), Ancho - 48);
             txtMotivo.MaxLength = 200;
+            EstiloHorarios.PrepararDialogo(this, titulo, new Size(Ancho, txtMotivo.Bottom + 16 + 56));
 
-            // Cada boton a la medida de lo que dice (al menos 135), pegados a la derecha.
-            DrawingFont letraBoton = new DrawingFont("Century Gothic", 10F, FontStyle.Bold);
-            int anchoVolver = Math.Max(135, TextRenderer.MeasureText(volver, letraBoton).Width + 30);
-            int anchoAceptar = Math.Max(135, TextRenderer.MeasureText(aceptar, letraBoton).Width + 30);
-            letraBoton.Dispose();
-            Button btnCancelar = EstiloHorarios.CrearBoton(volver, new Point(490 - anchoVolver, 178 + extra), new Size(anchoVolver, 40));
-            btnCancelar.Click += (s, e) => { DialogResult = DialogResult.Cancel; Close(); };
-
-            Button btnAceptar = EstiloHorarios.CrearBoton(aceptar, new Point(btnCancelar.Left - 10 - anchoAceptar, 178 + extra), new Size(anchoAceptar, 40));
-            btnAceptar.Click += (s, e) => { DialogResult = DialogResult.OK; Close(); };
-            if (enRojo)
-            {
-                btnAceptar.BackColor = Color.FromArgb(170, 50, 30);
-                btnAceptar.ForeColor = Color.White;
-                btnAceptar.FlatAppearance.BorderColor = Color.FromArgb(170, 50, 30);
-            }
-
-            AcceptButton = btnAceptar;
-            CancelButton = btnCancelar;
-
-            Controls.Add(lblTitulo);
+            Controls.Add(EstiloAdmin.TituloDialogo(titulo, Ancho - 48));
             Controls.Add(lblDescripcion);
             Controls.Add(lblEtiqueta);
             Controls.Add(txtMotivo);
-            Controls.Add(btnAceptar);
-            Controls.Add(btnCancelar);
+
+            Button btnAceptar = EstiloAdmin.BotonesDialogo(this, aceptar, () => DialogResult = DialogResult.OK);
+            Button btnCancelar = (Button)CancelButton;
+            if (btnCancelar.Text != volver)
+            {
+                // "Volver" (o lo que se pida), a la medida de lo que dice: a la derecha, como Cancelar.
+                int derecha = btnCancelar.Right;
+                btnCancelar.Text = volver;
+                using (DrawingFont letra = new DrawingFont("Century Gothic", 10F, FontStyle.Bold))
+                {
+                    btnCancelar.Width = Math.Max(120, TextRenderer.MeasureText(volver, letra).Width + 30);
+                }
+
+                btnCancelar.Left = derecha - btnCancelar.Width;
+                btnAceptar.Left = btnCancelar.Left - 10 - btnAceptar.Width;
+            }
+
+            if (enRojo)
+            {
+                EstiloAdmin.Peligroso(btnAceptar);
+            }
+
+            ActiveControl = txtMotivo;
         }
     }
 
@@ -7514,11 +8568,10 @@ namespace DigBit
             dtpFecha.ValueChanged += (s, e) => lblError.Text = "";
             Controls.Add(lblError);
             // Los dos usos quitan algo (terminar una clase, quitar una franja): como
-            // las bajas (DialogoConfirmacion peligrosa), el boton en rojo y Enter
-            // cancela; la accion se pulsa a proposito.
-            Button hacer = EstiloAdmin.BotonesDialogo(this, accion, Aceptar);
-            hacer.BackColor = Color.FromArgb(170, 50, 30);
-            hacer.FlatAppearance.BorderColor = Color.FromArgb(170, 50, 30);
+            // las bajas (DialogoConfirmacion peligrosa), el boton en rojo (tambien al
+            // pasar el raton: antes se ponia verde) y Enter cancela; la accion se
+            // pulsa a proposito.
+            EstiloAdmin.Peligroso(EstiloAdmin.BotonesDialogo(this, accion, Aceptar));
             AcceptButton = CancelButton as Button;
             ActiveControl = dtpFecha;
         }
@@ -7564,7 +8617,7 @@ namespace DigBit
             int extra = hoyConFecha.HasValue ? 74 : 0;
             Text = TextosDelHorario.TituloPoner;
             BackColor = Color.White;
-            ClientSize = new Size(560, 340 + extra);
+            ClientSize = new Size(560, 360 + extra);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -7600,15 +8653,15 @@ namespace DigBit
             {
                 // Desde cuando valen: en una clase que ya empezo, si no, aparecerian
                 // tambien en las semanas pasadas y Faltas las pintaria de rojo.
-                Controls.Add(EstiloHorarios.CrearEtiqueta("A partir del", new Point(22, 240)));
-                dtpDesde = EstiloHorarios.CrearFechaConDia(this, new Point(140, 236));
+                Controls.Add(EstiloHorarios.CrearEtiqueta("A partir del", new Point(22, 252)));
+                dtpDesde = EstiloHorarios.CrearFechaConDia(this, new Point(140, 248));
                 dtpDesde.MinDate = hoyConFecha.Value;
                 Label lblNotaDesde = new Label
                 {
                     AutoSize = false,
                     Font = new DrawingFont("Century Gothic", 8.5F),
                     ForeColor = Color.FromArgb(80, 80, 80),
-                    Location = new Point(22, 270),
+                    Location = new Point(22, 282),
                     Size = new Size(516, 34)
                 };
                 Controls.Add(lblNotaDesde);
@@ -7629,13 +8682,13 @@ namespace DigBit
                 AutoSize = false,
                 Font = new DrawingFont("Century Gothic", 9F, FontStyle.Bold),
                 ForeColor = Color.FromArgb(170, 40, 40),
-                Location = new Point(22, 236 + extra),
+                Location = new Point(22, 248 + extra),
                 Size = new Size(516, 40),
                 Text = selector.HayClases ? "" : "No hay clases activas. Crea la primera con «Nueva clase...»."
             };
             selector.Cambio += () => lblError.Text = "";
 
-            Button btnAceptar = EstiloHorarios.CrearBoton("Poner la clase", new Point(271, 286 + extra), new Size(144, 38));
+            Button btnAceptar = EstiloAdmin.BotonPrincipal("Poner la clase", new Point(263, 296 + extra), new Size(150, 40));
             btnAceptar.Click += (s, e) =>
             {
                 ClaseInfo elegida = selector.ClaseElegida;
@@ -7650,7 +8703,7 @@ namespace DigBit
                 DialogResult = DialogResult.OK;
             };
 
-            Button btnCancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(423, 286 + extra), new Size(115, 38));
+            Button btnCancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(423, 296 + extra), new Size(115, 40));
             btnCancelar.Click += (s, e) => DialogResult = DialogResult.Cancel;
 
             AcceptButton = btnAceptar;
@@ -7663,6 +8716,19 @@ namespace DigBit
             Controls.Add(btnAceptar);
             Controls.Add(btnCancelar);
             ActiveControl = selector;
+        }
+
+        /// <summary>
+        /// Con una clase ya elegida (Horario semanal, la traida de "Falta asignar"
+        /// con «Ponerla...»): Enter la pone. No la usa la preparacion de Proximo ciclo.
+        /// </summary>
+        public void Preelegir(ClaseInfo clase)
+        {
+            if (clase != null)
+            {
+                selector.Seleccionar(clase);
+                ActiveControl = AcceptButton as Control;
+            }
         }
     }
 
@@ -7687,7 +8753,7 @@ namespace DigBit
         public SelectorClase(List<ClaseInfo> clases, int ancho, Func<IWin32Window, List<ClaseInfo>> crearClase)
         {
             this.crearClase = crearClase;
-            Size = new Size(ancho, 116);
+            Size = new Size(ancho, 122);
             BackColor = Color.White;
 
             Controls.Add(EstiloHorarios.CrearEtiqueta("Docente", new Point(0, 0)));
@@ -7705,15 +8771,16 @@ namespace DigBit
             };
             Controls.Add(lblOcultas);
             this.clases = Utiles(clases);
-            cboProfesor = EstiloHorarios.CrearCombo(new Point(0, 24), ancho);
+            // Cada etiqueta a 6 px de su lista, y aire entre las dos (2026-10-31).
+            cboProfesor = EstiloHorarios.CrearCombo(new Point(0, 26), ancho);
             cboProfesor.DrawMode = DrawMode.OwnerDrawFixed;
             cboProfesor.ItemHeight = 22;
             cboProfesor.MaxDropDownItems = 16;
             cboProfesor.DrawItem += DibujarProfesor;
             cboProfesor.SelectedIndexChanged += (s, e) => LlenarClases(null);
 
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Su clase (materia - grupo)", new Point(0, 60)));
-            cboClase = EstiloHorarios.CrearCombo(new Point(0, 84), ancho);
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Su clase (materia - grupo)", new Point(0, 66)));
+            cboClase = EstiloHorarios.CrearCombo(new Point(0, 92), ancho);
             cboClase.MaxDropDownItems = 16;
             cboClase.SelectedIndexChanged += (s, e) => AvisarCambio();
 
@@ -7726,7 +8793,7 @@ namespace DigBit
                     LinkColor = Color.DarkGreen,
                     Text = "Nueva clase..."
                 };
-                lnkNueva.Location = new Point(ancho - TextRenderer.MeasureText(lnkNueva.Text, lnkNueva.Font).Width - 4, 62);
+                lnkNueva.Location = new Point(ancho - TextRenderer.MeasureText(lnkNueva.Text, lnkNueva.Font).Width - 4, 68);
                 lnkNueva.LinkClicked += (s, e) => CrearClase();
                 Controls.Add(lnkNueva);
             }
@@ -7946,7 +9013,7 @@ namespace DigBit
 
             Text = "Cambio de un día";
             BackColor = Color.White;
-            ClientSize = new Size(640, 606);
+            ClientSize = new Size(640, 632);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -7998,30 +9065,30 @@ namespace DigBit
             selector = new SelectorClase(clasesActivas, 596, crearClase) { Location = new Point(22, 180) };
             selector.Cambio += () => Recalcular();
 
-            Label lblMotivo = EstiloHorarios.CrearEtiqueta("Motivo (opcional)", new Point(22, 304));
+            Label lblMotivo = EstiloHorarios.CrearEtiqueta("Motivo (opcional)", new Point(22, 318));
             txtMotivo = new TextBox
             {
                 Font = new DrawingFont("Century Gothic", 10F),
-                Location = new Point(22, 328),
+                Location = new Point(22, 344),
                 Size = new Size(596, 26),
                 MaxLength = 200
             };
 
-            Label lblResumen = EstiloHorarios.CrearEtiqueta("Qué se va a hacer", new Point(22, 366));
+            Label lblResumen = EstiloHorarios.CrearEtiqueta("Qué se va a hacer", new Point(22, 386));
             txtResumen = new TextBox
             {
                 Font = new DrawingFont("Century Gothic", 9F),
-                Location = new Point(22, 390),
-                Size = new Size(596, 156),
+                Location = new Point(22, 412),
+                Size = new Size(596, 148),
                 Multiline = true,
                 ReadOnly = true,
                 ScrollBars = ScrollBars.Vertical,
                 BackColor = Color.FromArgb(248, 248, 248)
             };
 
-            Button btnAplicar = EstiloHorarios.CrearBoton("Hacer el cambio", new Point(345, 556), new Size(150, 38));
+            Button btnAplicar = EstiloAdmin.BotonPrincipal("Hacer el cambio", new Point(331, 572), new Size(160, 40));
             btnAplicar.Click += (s, e) => Aceptar();
-            Button btnCancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(503, 556), new Size(115, 38));
+            Button btnCancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(503, 572), new Size(115, 40));
             btnCancelar.Click += (s, e) => DialogResult = DialogResult.Cancel;
 
             AcceptButton = btnAplicar;
@@ -8327,12 +9394,14 @@ namespace DigBit
     // =========================================================================
 
     /// <summary>
-    /// Dos horas del horario en uso que se cruzan una semana: el mismo dia, a
-    /// horas que se cruzan, y en el mismo laboratorio, con la misma persona
-    /// docente o con el mismo grupo. Es la regla de RevisionCiclo.Choques (la
-    /// revision de Proximo ciclo) y de HorariosDatos al crear horas; aqui, entre
-    /// las que valen en la fecha de su dia en esa semana (clase activa, dentro de
-    /// su vigencia). Cada par, una vez (A antes que B).
+    /// Dos horas del horario en uso que chocan una semana: el mismo dia, a horas
+    /// que se cruzan, en laboratorios DISTINTOS, con la misma persona docente o
+    /// con el mismo grupo (decision del 2026-10-31). Dos clases a la vez en el
+    /// mismo laboratorio no son un choque: al ponerla, una reemplaza a la otra
+    /// (db/25), y HorariosDatos.ValidarFranja no deja guardarlas encimadas. Es
+    /// la regla de RevisionCiclo.Choques (la revision de Proximo ciclo); aqui,
+    /// entre las que valen en la fecha de su dia en esa semana (clase activa,
+    /// dentro de su vigencia). Cada par, una vez (A antes que B).
     /// </summary>
     internal class ChoqueEnUso
     {
@@ -8340,7 +9409,6 @@ namespace DigBit
         public FranjaInfo B;
         /// <summary>El dia de la semana en que chocan (lunes a domingo).</summary>
         public DateTime Fecha;
-        public bool MismoLaboratorio;
         public bool MismoProfesor;
         public bool MismoGrupo;
 
@@ -8355,16 +9423,15 @@ namespace DigBit
             get { return A.Fin < B.Fin ? A.Fin : B.Fin; }
         }
 
-        /// <summary>"mismo laboratorio y mismo grupo", como ChoqueCiclo.Motivos.</summary>
+        /// <summary>"misma persona docente y mismo grupo", como ChoqueCiclo.Motivos.</summary>
         public string Motivos
         {
-            get { return Enumerar(MismoLaboratorio, MismoProfesor, MismoGrupo); }
+            get { return Enumerar(MismoProfesor, MismoGrupo); }
         }
 
-        private static string Enumerar(bool laboratorio, bool profesor, bool grupo)
+        private static string Enumerar(bool profesor, bool grupo)
         {
             List<string> motivos = new List<string>();
-            if (laboratorio) motivos.Add("mismo laboratorio");
             if (profesor) motivos.Add("misma persona docente");
             if (grupo) motivos.Add("mismo grupo");
             return RevisionCiclo.Enumerar(motivos);
@@ -8395,7 +9462,8 @@ namespace DigBit
                 for (int j = i + 1; j < valen.Count; j++)
                 {
                     FranjaInfo b = valen[j];
-                    if (a.DiaSemana != b.DiaSemana || !(a.Inicio < b.Fin && a.Fin > b.Inicio))
+                    // En el mismo laboratorio no es un choque (se reemplaza al ponerla).
+                    if (a.DiaSemana != b.DiaSemana || !(a.Inicio < b.Fin && a.Fin > b.Inicio) || a.LaboratorioId == b.LaboratorioId)
                     {
                         continue;
                     }
@@ -8405,11 +9473,10 @@ namespace DigBit
                         A = a,
                         B = b,
                         Fecha = primero.AddDays(a.DiaSemana - 1),
-                        MismoLaboratorio = a.LaboratorioId == b.LaboratorioId,
                         MismoProfesor = a.ProfesorId == b.ProfesorId,
                         MismoGrupo = a.GrupoId == b.GrupoId
                     };
-                    if (choque.MismoLaboratorio || choque.MismoProfesor || choque.MismoGrupo)
+                    if (choque.MismoProfesor || choque.MismoGrupo)
                     {
                         choques.Add(choque);
                     }
@@ -8428,13 +9495,12 @@ namespace DigBit
                 bool[] m;
                 if (!marcas.TryGetValue(f.Id, out m))
                 {
-                    m = new bool[3];
+                    m = new bool[2];
                     marcas[f.Id] = m;
                 }
 
-                m[0] |= c.MismoLaboratorio;
-                m[1] |= c.MismoProfesor;
-                m[2] |= c.MismoGrupo;
+                m[0] |= c.MismoProfesor;
+                m[1] |= c.MismoGrupo;
             };
             foreach (ChoqueEnUso choque in choques ?? new List<ChoqueEnUso>())
             {
@@ -8442,7 +9508,7 @@ namespace DigBit
                 anotar(choque.B, choque);
             }
 
-            return marcas.ToDictionary(m => m.Key, m => Enumerar(m.Value[0], m.Value[1], m.Value[2]));
+            return marcas.ToDictionary(m => m.Key, m => Enumerar(m.Value[0], m.Value[1]));
         }
 
         /// <summary>"Bases de Datos con ISC-5001 (Marta Velazco)".</summary>
@@ -8474,8 +9540,8 @@ namespace DigBit
             DateTime domingo = lunes.AddDays(6);
             Label titulo = EstiloAdmin.TituloDialogo("Choques del horario en uso", ancho - 48);
             string texto = "Semana del " + lunes.ToString("dd/MM") + " al " + domingo.ToString("dd/MM/yyyy") + " (de lunes a domingo), en todos los laboratorios: "
-                + choques.Count + (choques.Count == 1 ? " vez" : " veces") + " dos clases se cruzan el mismo día y a la misma hora, en el mismo laboratorio, "
-                + "con la misma persona docente o con el mismo grupo. Corrígelos con «Cambiar horas...» o «Quitar horas...» en el laboratorio de cada una; "
+                + choques.Count + (choques.Count == 1 ? " vez" : " veces") + " la misma persona docente o el mismo grupo tiene dos clases el mismo día y a la misma hora, "
+                + "en dos laboratorios distintos. Corrígelos con «Cambiar horas...» o «Quitar horas...» en el laboratorio de cada una; "
                 + "los de este laboratorio salen en rojo en la cuadrícula"
                 + (choques.Any(c => c.Fecha.DayOfWeek == DayOfWeek.Sunday) ? " (el domingo no sale en ella)." : ".");
             Label explicacion = PiezasConfiguracion.Texto(texto, new Point(24, 54), new Size(ancho - 48, 20), 9.5F, Color.FromArgb(50, 50, 50));
@@ -8483,8 +9549,10 @@ namespace DigBit
 
             int arribaLista = explicacion.Bottom + 8;
             dgvChoques = EstiloHorarios.CrearGrid(new Point(24, arribaLista), new Size(ancho - 48, alto - 56 - 12 - arribaLista));
-            // Los nombres enteros, en dos renglones si hace falta.
+            // Los nombres enteros, en dos renglones si hace falta, con aire arriba y abajo
+            // (con AllCells el renglon se quedaba pegado al texto).
             dgvChoques.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+            dgvChoques.DefaultCellStyle.Padding = new Padding(8, 6, 8, 6);
             dgvChoques.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
             dgvChoques.Columns.Add("Dia", "Día");
             dgvChoques.Columns.Add("Horas", "Horas");
@@ -8506,9 +9574,14 @@ namespace DigBit
                     c.Motivos);
                 dgvChoques.Rows[fila].Tag = c;
                 // Los de este laboratorio, en rojo claro: son los que se ven en la cuadricula.
+                // Elegidos siguen rojos (un poco mas oscuros, letra negra): en el verde
+                // de la seleccion un choque se veia como si estuviera bien.
                 if (c.A.LaboratorioId == laboratorioActual || c.B.LaboratorioId == laboratorioActual)
                 {
-                    dgvChoques.Rows[fila].DefaultCellStyle.BackColor = PiezasConfiguracion.FondoRojo;
+                    DataGridViewCellStyle rojo = dgvChoques.Rows[fila].DefaultCellStyle;
+                    rojo.BackColor = PiezasConfiguracion.FondoRojo;
+                    rojo.SelectionBackColor = EstiloHorarios.Oscurecer(PiezasConfiguracion.FondoRojo, 0.12f);
+                    rojo.SelectionForeColor = Color.Black;
                 }
             }
 

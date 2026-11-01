@@ -7,7 +7,8 @@
     Carga DigBit.exe por reflexion y recorre CicloPreliminarDatos.Aplicar.cs y
     RevisionAplicacion:
       - prepara (con la capa de configuraciones) una copia del horario de hoy
-        con algun cambio: se quitan las clases que chocan y se anade una clase
+        con algun cambio: se quitan las clases que chocan o se enciman en un
+        laboratorio y se anade una clase
         nueva, el dia de la semana de hoy, de una persona docente que hoy no
         tiene horas (si hay una sin codigo, esa: asi se prueba que lo recibe);
       - lo que no deja aplicar, llamando a Aplicar por reflexion (se revisa
@@ -15,7 +16,9 @@
         horario de ahora anterior a una sesion ya registrada, una clase sin
         docente, de una persona docente de baja, en un laboratorio
         desactivado, repetida, igual que una que ya esta en Clases en esas
-        fechas, con un choque con ella, y un nombre repetido en el registro;
+        fechas, con un choque con ella (la misma persona docente y grupo en
+        otro laboratorio), encimada con ella en el mismo laboratorio, y un
+        nombre repetido en el registro;
       - aplicar con el ultimo dia del de ahora en la vispera: se recortan las
         que valen ese dia (tambien una futura que empiece antes), las nuevas
         llevan el codigo de su docente y franjas sin fecha propia, un solo
@@ -342,13 +345,14 @@ try {
     $quitadas = 0
     for ($i = 0; $i -lt 200; $i++) {
         $rev = Revisar (Leer $b)
-        if ($rev.Choques.Count -eq 0) { break }
-        $choque = $rev.Choques[0]
+        if ($rev.Choques.Count -eq 0 -and $rev.Encimadas.Count -eq 0) { break }
+        $choque = $(if ($rev.Choques.Count -gt 0) { $rev.Choques[0] } else { $rev.Encimadas[0] })
         $carga = $(if ($choque.CargaB -ne $null) { $choque.CargaB } else { $choque.CargaA })
         $null = Llamar 'QuitarClases' @((Lista @($carga.Id)), $script:idAdmin)
         $quitadas++
     }
-    Ver "copia de $($r.Valor.Clases) clases; se quitaron $quitadas que chocaban" ((Revisar (Leer $b)).Choques.Count -eq 0)
+    $rev = Revisar (Leer $b)
+    Ver "copia de $($r.Valor.Clases) clases; se quitaron $quitadas que chocaban o se encimaban" ($rev.Choques.Count -eq 0 -and $rev.Encimadas.Count -eq 0)
 
     # La clase nueva: el dia de hoy, de una persona docente que hoy no tiene horas (asi su codigo hoy no abre nada).
     $dow = [int](Uno 'SELECT WEEKDAY(CURDATE()) + 1')
@@ -380,7 +384,7 @@ try {
     $cargaNueva = [int]$r.Valor
     $leido = Leer $b
     $rev = Revisar $leido
-    Ver "el horario queda sin choques, sin docente ni repetidas ($($leido.Cargas.Count) clases)" ($rev.Choques.Count -eq 0 -and $rev.SinProfesor -eq 0 -and $rev.Repetidas.Count -eq 0)
+    Ver "el horario queda sin choques, sin encimadas, sin docente ni repetidas ($($leido.Cargas.Count) clases)" ($rev.Choques.Count -eq 0 -and $rev.Encimadas.Count -eq 0 -and $rev.SinProfesor -eq 0 -and $rev.Repetidas.Count -eq 0)
 
     # Una clase futura que empieza antes del ultimo dia del de ahora: tambien se recorta.
     # Si la base no tiene una, la prueba pone una (y la quita al terminar).
@@ -405,7 +409,8 @@ try {
     $esperadas = [int](Uno "SELECT COUNT(*) FROM clases c WHERE c.vigente_desde <= '$(F $Fin)' AND c.vigente_hasta > '$(F $Fin)'")
     Ver "terminan $($d.Terminan) clases (las que valen el $(Dmy $Fin) y siguen despues)" ($d.Terminan -eq $esperadas) "en la base: $esperadas"
     Ver 'sin sesiones despues de ese dia' ($d.SesionPosterior -eq $null)
-    Ver "la casilla de Ajustes sale con su estado (encendida: $($d.ConFecha))" (@($renglones | Where-Object { $_.Texto -match 'Los cambios de horario aplican desde una fecha' -and $_.Texto -match $(if ($d.ConFecha) { 'encendida' } else { 'apagada .*Ajustes' }) }).Count -eq 1)
+    # Sin casilla en Ajustes desde 2026-10-31: siempre con db/20; sin ella, que falta.
+    Ver "los cambios a mitad del ciclo salen con su estado (desde una fecha: $($d.ConFecha))" (@($renglones | Where-Object { $_.Texto -match 'Los cambios a mitad del ciclo' -and $_.Texto -match $(if ($d.ConFecha) { 'aplican desde una fecha: lo que ya pas' } else { 'db/20' }) }).Count -eq 1)
     Ver "propone guardar el de ahora como '$($d.PropuestaGuardar)'" ("$($d.PropuestaGuardar)".Length -gt 0)
     if ($sinCodigoAntes) { Ver "dice quien recibe codigo: $($d.DocentesSinCodigo -join ', ')" ($d.DocentesSinCodigo.Count -ge 1) }
 
@@ -482,19 +487,23 @@ try {
     $null = Sql "DELETE FROM ciclo_cargas WHERE idcarga = $repetida"
 
     # Una clase que ya esta en Clases en esas fechas: la misma terna que una de la
-    # configuracion (R6) y con una hora que choca con otra de la configuracion.
+    # configuracion (R6) y con una hora que choca con ella (la misma persona
+    # docente y el mismo grupo en otro laboratorio); luego, encimada en el
+    # mismo laboratorio con otra de la configuracion.
     $conHoras = @($leido.Cargas | Where-Object { $_.Franjas.Count -gt 0 -and $_.Id -ne $cargaNueva -and $_.ProfesorId -ne $null })
     if ($conHoras.Count -ge 2) {
         $x = $conHoras[0]
         $y = @($conHoras | Where-Object { $_.ProfesorId -ne $x.ProfesorId -and $_.GrupoId -ne $x.GrupoId })[0]
         if ($y -eq $null) { $y = $conHoras[1] }
+        $fx = $x.Franjas[0]
         $fy = $y.Franjas[0]
+        $labOtro = [int](Uno "SELECT idlaboratorios FROM laboratorios WHERE idlaboratorios <> $($fx.LaboratorioId) ORDER BY idlaboratorios LIMIT 1")
         $codigoX = "$(Uno "SELECT codigo_clase FROM usuarios WHERE idusuarios = $($x.ProfesorId)")"
         $futura = Insertar ("INSERT INTO clases (usuarios_idusuarios, grupos_idgrupos, materias_id_materia, codigo, vigente_desde, vigente_hasta, activa, creada_por, creada_en) " +
             "VALUES ($($x.ProfesorId), $($x.GrupoId), $($x.MateriaId), '$codigoX', '$(F $Desde.AddDays(14))', '$(F $Hasta.AddDays(-14))', 1, NULL, NOW())")
         $script:clasesDePrueba.Add($futura)
         $null = Sql ("INSERT INTO horarios (clases_idclases, laboratorios_idlaboratorios, dia_semana, hora_inicio, hora_fin) VALUES " +
-            "($futura, $($fy.LaboratorioId), $($fy.DiaSemana), '$($fy.Inicio)', '$($fy.Fin)')")
+            "($futura, $labOtro, $($fx.DiaSemana), '$($fx.Inicio)', '$($fx.Fin)')")
         $dF = (Llamar 'LeerParaAplicar' @($b, $Desde, $Hasta, $Fin)).Valor
         $rF = Renglones $dF $Desde $Hasta $Fin 'PRUEBA P4 aplicado'
         Ver "la clase futura de Clases ($futura) sale como ya programada y como terna cruzada" ($dF.Leido.YaProgramadas.Count -ge 1 -and @($dF.TernasCruzadas | Where-Object { $_.ClaseId -eq $futura }).Count -eq 1)
@@ -502,6 +511,16 @@ try {
             @($rF | Where-Object { "$($_.Nivel)" -eq 'Rojo' -and $_.Texto -match 'ya est. en Clases del' }).Count -eq 1 -and
             @($rF | Where-Object { "$($_.Nivel)" -eq 'Gris' -and $_.Texto -match 'ya est.n? en Clases tambi.n val' }).Count -eq 1)
         NoAplica '... el choque con una clase ya programada no deja aplicar' $Desde $Hasta $Fin 'choque'
+        # Encimada: a la hora de la otra (y), en su mismo laboratorio. No es un choque, pero tampoco deja aplicar.
+        $null = Sql ("UPDATE horarios SET laboratorios_idlaboratorios = $($fy.LaboratorioId), dia_semana = $($fy.DiaSemana), hora_inicio = '$($fy.Inicio)', hora_fin = '$($fy.Fin)' " +
+            "WHERE clases_idclases = $futura")
+        $dE = (Llamar 'LeerParaAplicar' @($b, $Desde, $Hasta, $Fin)).Valor
+        $rE = Renglones $dE $Desde $Hasta $Fin 'PRUEBA P4 aplicado'
+        $enc = @($rE | Where-Object { "$($_.Nivel)" -eq 'Rojo' -and $_.Texto -match '^Se enciman en el mismo laboratorio' -and $_.Texto -match 'ya est. en Clases' })
+        Ver '... encimada en el mismo laboratorio: su renglon rojo propio, no como choque' ($enc.Count -eq 1 -and
+            @($dE.Revision.Encimadas | Where-Object { $_.Programada -ne $null -and $_.Programada.ClaseId -eq $futura -and $_.CargaA.Id -eq $y.Id }).Count -ge 1 -and
+            @($dE.Revision.Choques | Where-Object { $_.Programada -ne $null -and $_.Programada.ClaseId -eq $futura -and $_.CargaA.Id -eq $y.Id }).Count -eq 0) "$($enc | ForEach-Object { $_.Texto })"
+        NoAplica '... encimada con una clase ya programada no deja aplicar' $Desde $Hasta $Fin 'Se enciman en el mismo laboratorio'
         $null = Sql "DELETE FROM horarios WHERE clases_idclases = $futura"
         NoAplica '... ni la misma clase en esas fechas (R6, ExigirSinCruceDeTerna)' $Desde $Hasta $Fin 'ya est. en Clases del .*termina antes la otra'
         $null = Sql "DELETE FROM clases WHERE idclases = $futura"

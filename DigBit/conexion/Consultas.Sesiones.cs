@@ -293,32 +293,29 @@ namespace DigBit.conexion
         /// Guarda la bitacora en la cola local (ColaBitacoras), de donde la sube
         /// sola EnviadorBitacoras. Mismas comprobaciones que en linea: ventana
         /// vigente y una sola bitacora por alumno y sesion (contra la cola). Sin
-        /// mensaje de exito: lo dice la pantalla del alumno.
+        /// mensajes: si no se guarda, el porque queda en UltimoMotivo y lo dice la
+        /// pantalla del alumno, como el exito.
         /// </summary>
         /// <param name="identidadVerificada">True si el alumno entro con contrasena y se valido todo en linea (la red se cayo al guardar).</param>
-        private static ResultadoGuardado GuardarSinConexion(SesionLocal sesion, bool identidadVerificada, string matricula, string computadora,
+        private ResultadoGuardado GuardarSinConexion(SesionLocal sesion, bool identidadVerificada, string matricula, string computadora,
             string fallared, string comentariored, string fallahardware, string comentariohardware, string fallasoftware, string comentariosoftware,
             string equiposSinInternet)
         {
             VentanaCodigo ventana = Datos_User.VentanaActual;
             if (sesion == null || ventana == null)
             {
-                MessageBox.Show("No hay una sesión válida para guardar la bitácora. Vuelve a escribir el código o a elegir tu clase.", "Sin sesión", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return ResultadoGuardado.NoGuardada;
+                return NoGuardada(MotivoNoGuardada.NoExiste, "No hay una sesión válida para guardar tu bitácora: vuelve a escribir el código o a elegir tu clase.");
             }
 
             if (ventana.Restante <= TimeSpan.Zero)
             {
                 // Sin servidor, como ReglasCodigo: solo la hora.
-                MessageBox.Show(FueraDeHora(ventana, null, true), ventana.EsUsoLibre ? "Uso libre terminado" : "Clase terminada",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return ResultadoGuardado.NoGuardada;
+                return NoGuardada(MotivoNoGuardada.Terminada, FueraDeHora(ventana, null, true));
             }
 
             if (ColaBitacoras.YaRegistrada(sesion.Clave, matricula))
             {
-                MessageBox.Show("Ya registraste tu bitácora con este código.", "Registro duplicado", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return ResultadoGuardado.NoGuardada;
+                return NoGuardada(MotivoNoGuardada.Duplicada, "Ya registraste tu bitácora en esta clase.");
             }
 
             try
@@ -345,13 +342,29 @@ namespace DigBit.conexion
             {
                 // La cola es un archivo de este equipo: el fallo es de su disco, no de la red.
                 Log.Error("Guardar la bitacora en la cola local", ex);
-                MessageBox.Show("No se pudo guardar tu bitácora en este equipo: no se pudo escribir en su carpeta de datos." + Environment.NewLine + Environment.NewLine
-                    + "Inténtalo de nuevo; si sigue, " + MensajeDeFallo.AvisaAlLaboratorio + ".",
-                    "Bitácora no registrada", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return ResultadoGuardado.NoGuardada;
+                return NoGuardada(MotivoNoGuardada.SinCarpeta, "No se pudo guardar tu bitácora en este equipo (no se pudo escribir en su carpeta de datos). "
+                    + "Inténtalo de nuevo; si sigue, " + MensajeDeFallo.AvisaAlLaboratorio + ".");
             }
 
             return ResultadoGuardado.EnEsteEquipo;
+        }
+
+        /// <summary>
+        /// Con NoGuardada, por que no se guardo la ultima bitacora (GuardarBitacora).
+        /// Antes salia en una ventana de Windows y, al cerrarla, la pantalla del alumno
+        /// quedaba igual, con Registrar activo y sin camino; ahora la pantalla decide
+        /// que hacer con el (Alumno_Principal.Registrar).
+        /// </summary>
+        public MotivoNoGuardada UltimoMotivo { get; private set; }
+
+        /// <summary>Con NoGuardada, el texto para el alumno, ya redactado.</summary>
+        public string UltimoMensaje { get; private set; }
+
+        private ResultadoGuardado NoGuardada(MotivoNoGuardada motivo, string mensaje)
+        {
+            UltimoMotivo = motivo;
+            UltimoMensaje = mensaje;
+            return ResultadoGuardado.NoGuardada;
         }
 
         /// <summary>
@@ -373,7 +386,9 @@ namespace DigBit.conexion
             string fin = ventana.Fin.ToString("HH:mm");
             if (ventana.EsUsoLibre)
             {
-                return "El uso libre terminó a las " + fin + ". Pulsa «Volver a elegir» para registrar tu bitácora en lo que toca ahora.";
+                // La pantalla del alumno vuelve al paso 1 con este texto (Alumno_Principal.SoltarClase).
+                return "El uso libre terminó a las " + fin + ": tu bitácora va en lo que toca ahora, elígelo abajo si no se elige solo. "
+                    + "Lo que marcaste se conserva.";
             }
 
             if (sinServidor)
@@ -423,6 +438,16 @@ namespace DigBit.conexion
                 }
 
                 LlenarSesiones(conexion, tabla, idProfesor, avisos);
+
+                // Lo que reporto el docente desde su panel (db/15): en Bitacoras cuenta
+                // como falla de la sesion, junto con las de sus estudiantes.
+                Dictionary<int, int> reportes = ReportesProfesorDatos.ContarTodas(conexion);
+                tabla.Columns.Add("reportes_docente", typeof(int));
+                foreach (DataRow fila in tabla.Rows)
+                {
+                    int cuantos;
+                    fila["reportes_docente"] = reportes.TryGetValue(Convert.ToInt32(fila["idcodigos_accesos"]), out cuantos) ? cuantos : 0;
+                }
             }
 
             return tabla;
@@ -992,6 +1017,50 @@ namespace DigBit.conexion
         }
 
         /// <summary>
+        /// Como se lee en pantalla una falla de la lista (OpcionesDeFalla): las tres
+        /// de red se distinguen de un vistazo ("Sin cable de red" y "Desconectado de
+        /// cable de red" casi no se distinguian). Un solo sitio para las pantallas que
+        /// la ofrecen: la del estudiante, "Reportar una falla" del docente y
+        /// "Corregir registro". Lo que se guarda (y DescribirFallas, el PDF y los
+        /// reportes) sigue siendo el valor de siempre; lo que no es de la lista, tal cual.
+        /// </summary>
+        public static string EtiquetaDeFalla(string valor)
+        {
+            switch (valor)
+            {
+                case "Sin cable de red":
+                    return "No tiene cable de red";
+                case "Desconectado de cable de red":
+                    return "El cable está suelto o desconectado";
+                case "Con cable de red sin internet":
+                    return "Tiene cable pero no hay internet";
+                default:
+                    return valor ?? "";
+            }
+        }
+
+        /// <summary>
+        /// Al reves que EtiquetaDeFalla: lo que se guarda de lo que se lee en una caja
+        /// donde tambien se puede escribir (Corregir registro). Lo escrito a mano, tal cual.
+        /// </summary>
+        public static string ValorDeFalla(string texto)
+        {
+            string limpio = (texto ?? "").Trim();
+            foreach (string area in AreasDeFalla)
+            {
+                foreach (string valor in OpcionesDeFalla(area))
+                {
+                    if (string.Equals(EtiquetaDeFalla(valor), limpio, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return valor;
+                    }
+                }
+            }
+
+            return limpio;
+        }
+
+        /// <summary>
         /// El id de un usuario por su matricula; 0 si no existe. Sin avisos: un
         /// error de conexion sube, para que la pantalla del alumno pase a la copia
         /// sin conexion (idusuario lo tapaba con un mensaje y lo dejaba atascado).
@@ -1117,6 +1186,9 @@ namespace DigBit.conexion
         public ResultadoGuardado GuardarBitacora(int idSesion, string matricula, string computadora, string fallared, string comentariored,
             string fallahardware, string comentariohardware, string fallasotware, string comentariosoftware, string equiposSinInternet)
         {
+            UltimoMotivo = MotivoNoGuardada.Ninguno;
+            UltimoMensaje = "";
+
             // Fase 4: sin servidor la bitacora se guarda en la cola local del equipo.
             if (SinConexion.Activo || (idSesion == 0 && Datos_User.SesionSinConexion != null))
             {
@@ -1129,8 +1201,7 @@ namespace DigBit.conexion
                 VentanaCodigo ventana = ObtenerVentanaSesion(idSesion);
                 if (ventana == null)
                 {
-                    MessageBox.Show("La sesión de esta clase ya no existe. Vuelve a escribir el código o a elegir tu clase.", "Código no válido", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return ResultadoGuardado.NoGuardada;
+                    return NoGuardada(MotivoNoGuardada.NoExiste, "La sesión de esta clase ya no existe: vuelve a escribir el código o a elegir tu clase.");
                 }
 
                 if (ventana.Estado != EstadoCodigo.Vigente)
@@ -1149,9 +1220,7 @@ namespace DigBit.conexion
                         Log.Aviso("Bitacora de " + matricula + " fuera de hora: no se pudo leer el modo del laboratorio: " + ex.Message);
                     }
 
-                    MessageBox.Show(FueraDeHora(ventana, modo), ventana.EsUsoLibre ? "Uso libre terminado" : "Clase terminada",
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return ResultadoGuardado.NoGuardada;
+                    return NoGuardada(MotivoNoGuardada.Terminada, FueraDeHora(ventana, modo));
                 }
 
                 using (MySqlConnection conexion = mconexion.GetConexion())
@@ -1225,8 +1294,7 @@ namespace DigBit.conexion
                         {
                             // Ya tenia una: la primera se queda como estaba, con su hora.
                             Log.Info("Bitacora de " + matricula + " no guardada: ya tenia una en la sesion " + idSesion + ".");
-                            MessageBox.Show("Ya registraste tu bitácora con este código.", "Registro duplicado", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                            return ResultadoGuardado.NoGuardada;
+                            return NoGuardada(MotivoNoGuardada.Duplicada, "Ya registraste tu bitácora en esta clase.");
                         }
 
                         if (filas != 1)
@@ -1242,17 +1310,14 @@ namespace DigBit.conexion
             }
             catch (MySqlException ex) when (ex.Number == 1062)
             {
-                MessageBox.Show("Ya registraste tu bitácora con este código.", "Registro duplicado", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return ResultadoGuardado.NoGuardada;
+                return NoGuardada(MotivoNoGuardada.Duplicada, "Ya registraste tu bitácora en esta clase.");
             }
             catch (BitacoraImposibleException ex)
             {
                 // Su matricula ya no esta en la base (se borro su cuenta despues de
                 // entrar): el texto de la excepcion es para el log.
                 Log.Error("Guardar la bitacora en la sesion " + idSesion, ex);
-                MessageBox.Show("Tu matrícula no está registrada en el servidor. Avisa a la persona responsable del laboratorio.", "Bitácora no registrada",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return ResultadoGuardado.NoGuardada;
+                return NoGuardada(MotivoNoGuardada.SinMatricula, "Tu matrícula no está registrada en el servidor. Avisa a la persona responsable del laboratorio.");
             }
             catch (Exception ex) when (ColaBitacoras.Clasificar(ex) != ClaseDeFallo.DeLaBitacora)
             {
@@ -1265,9 +1330,7 @@ namespace DigBit.conexion
                 VentanaCodigo validada = Datos_User.VentanaActual;
                 if (validada == null || validada.IdCodigo != idSesion)
                 {
-                    MessageBox.Show("No se pudo guardar tu bitácora: no hubo conexión con el servidor." + Environment.NewLine + Environment.NewLine
-                        + "Vuelve a escribir el código o a elegir tu clase.", "Sin conexión", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return ResultadoGuardado.NoGuardada;
+                    return NoGuardada(MotivoNoGuardada.SinConexion, "No se pudo guardar tu bitácora: no hubo conexión con el servidor. Inténtalo de nuevo en un momento.");
                 }
 
                 ResultadoGuardado guardado = GuardarSinConexion(SesionLocal.DesdeVentana(validada), true, matricula, computadora, fallared, comentariored,
@@ -1288,11 +1351,8 @@ namespace DigBit.conexion
                 // Aqui solo llega lo que es de la bitacora (Clasificar): un dato que la base
                 // rechaza, como un comentario demasiado largo o con simbolos que no admite.
                 Log.Error("Guardar la bitacora en la sesion " + idSesion, ex);
-                MessageBox.Show("No se pudo guardar tu bitácora: el servidor rechazó alguno de sus datos "
-                    + "(un comentario muy largo o con símbolos que no admite, por ejemplo)." + Environment.NewLine + Environment.NewLine
-                    + "Acorta o revisa lo que escribiste en «Otro» e inténtalo de nuevo; si sigue, " + MensajeDeFallo.AvisaAlLaboratorio + ".",
-                    "Bitácora no registrada", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return ResultadoGuardado.NoGuardada;
+                return NoGuardada(MotivoNoGuardada.DatoRechazado, "El servidor no aceptó tu bitácora (un comentario muy largo o con símbolos que no admite, por ejemplo). "
+                    + "Acorta o revisa lo que escribiste en «Otro» e inténtalo de nuevo; si sigue, " + MensajeDeFallo.AvisaAlLaboratorio + ".");
             }
         }
     }
@@ -1304,6 +1364,26 @@ namespace DigBit.conexion
         EnServidor,
         /// <summary>En la cola de este equipo: se envia sola (EnviadorBitacoras).</summary>
         EnEsteEquipo
+    }
+
+    /// <summary>Por que no se guardo una bitacora (Consultas.UltimoMotivo).</summary>
+    internal enum MotivoNoGuardada
+    {
+        Ninguno,
+        /// <summary>Ya tenia una en esa sesion (en el servidor o en la cola de este equipo): solo cuenta la primera.</summary>
+        Duplicada,
+        /// <summary>La clase (o el uso libre) ya termino, o aun no empieza.</summary>
+        Terminada,
+        /// <summary>La sesion ya no existe, o no hay una valida para guardar.</summary>
+        NoExiste,
+        /// <summary>Su matricula ya no esta en la base.</summary>
+        SinMatricula,
+        /// <summary>Sin servidor, no se pudo escribir en la carpeta de datos de este equipo.</summary>
+        SinCarpeta,
+        /// <summary>El servidor rechazo un dato (un comentario demasiado largo, por ejemplo).</summary>
+        DatoRechazado,
+        /// <summary>Se cayo la red al guardar y no se pudo dejar en este equipo.</summary>
+        SinConexion
     }
 
     /// <summary>Lo que va arriba en el PDF de una sesion (Consultas.ConsultarDatosPdfSesion), ya en texto.</summary>
