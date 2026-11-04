@@ -59,6 +59,9 @@ Cuatro roles, los cuatro en la tabla `usuarios`:
 
 ## Puesta en marcha
 
+Esta sección es para desarrollar. Para instalar DigBit en los equipos de una
+escuela, ver `INSTALAR.md` y la sección 7.
+
 ### 1. Base de datos
 
 El nombre de la base **tiene que ser `teschi_otru`**: seis consultas de
@@ -167,8 +170,8 @@ equipo configurado como `Laboratorio de Computo 1`:
 |---|---|---|
 | `AB12c` | Bases de Datos, ISC-5001, EMP001 | Lunes y miércoles 08:00 a 10:00 en el Lab 1. Además, el seed le deja una sesión extra en el Lab 1 desde la hora en que se carga y durante cuatro horas, para probar el registro de bitácoras sin esperar a su franja (recarga el seed cuando venza) |
 | `QW7pz` | Redes, ISC-5002, EMP002 | Lab 2: desde el Lab 1 responde "es de otro laboratorio" |
-| `EXP01` | POO, ISC-7001, EMP001 | Vigencia terminada hace un mes (en gris en la cuadrícula) |
-| `FUT01` | Redes, ISC-5001, EMP001 | Vigencia empieza dentro de un mes (en gris) |
+| `EXP01` | POO, ISC-7001, EMP001 | Vigencia terminada hace un mes: en la cuadrícula ya no sale; en Clases, en gris |
+| `FUT01` | Redes, ISC-5001, EMP001 | Vigencia empieza dentro de un mes: en la cuadrícula sale desde esa semana; en Clases, «Por empezar» |
 | `NOHOY` | Taller de Titulación, ISC-7001, EMP005 | Sin franjas: "hoy no hay clase"; tiene una sesión extra mañana en el Lab 3 |
 
 También deja una cancelación de ejemplo (AB12c del próximo miércoles, "Junta
@@ -214,7 +217,7 @@ policy*; puedes llamar a cualquiera de los dos.
 3. Ejecuta `nuget restore` → llena `packages\`.
 4. Cierra instancias abiertas de DigBit (bloquean el `.exe` al enlazar).
 5. Crea `connections.config` desde la plantilla si falta.
-6. Compila `DigBit.sln`: DigBit y el servicio `DigBit.Vigilante`.
+6. Compila `DigBit.sln`: DigBit, el servicio `DigBit.Vigilante`, `DigBit.Configurador` y `DigBit.Instalador`.
 7. Lanza `DigBit\bin\<Configuration>\DigBit.exe`.
 
 ### 4. Modo kiosco y registro de errores
@@ -266,8 +269,11 @@ el horario (diseño completo en `docs/fase6-horarios.md`).
 - Una **clase** es docente + grupo + materia con un **código fijo** (5
   caracteres, único en toda la base) y una vigencia (el semestre).
 - El **horario** de cada laboratorio son franjas semanales (día, hora de inicio,
-  hora de fin) de esas clases. Al guardar una franja se rechaza cualquier
-  solape: mismo laboratorio, misma persona docente o mismo grupo a la misma hora.
+  hora de fin) de esas clases. Al guardar una franja se rechaza que la misma
+  persona docente o el mismo grupo estén a la misma hora en otro laboratorio. Si
+  se cruza con otra clase del mismo laboratorio, con db/25 pregunta si la
+  reemplaza, y lo que le quita queda en «Falta asignar», las horas que faltan por
+  poner; sin la 25, se rechaza.
 - Las **excepciones** son por día: cancelar una franja, o programar una **sesión
   extra** (el código de una clase en un laboratorio y horario temporales).
 - Cada equipo sabe **en qué laboratorio está** (`appSettings` → `Laboratorio`,
@@ -333,6 +339,89 @@ y solo entonces encender la casilla en Ajustes. Un DigBit anterior no conoce
 estas columnas y vería a la vez la franja terminada y la nueva (dos clases a la
 misma hora, o la vieja en vez de la nueva).
 
+#### Próximo ciclo: preparar y aplicar otro horario (db/16 y db/23)
+
+La pestaña **Próximo ciclo** de Horarios prepara otro horario sin tocar el que se
+usa, en tres pasos: **1. Plantillas** (las guardadas y los horarios ya aplicados),
+**2. Preparación** (se usa como Horario semanal, también con «Falta asignar»,
+«Imprimir PDF» y «Ver en el horario») y **3. Aplicar con fechas**
+(`PestanaAplicacion`). Una plantilla es un horario guardado con nombre; en db/16,
+db/23 y el código se llama «configuración de horario» o «ciclo preliminar».
+«Antes de aplicar» revisa el horario con esas fechas: lo rojo no deja aplicar y lo
+ámbar avisa. Aplicar vuelve a pedir la contraseña de la administración.
+
+El horario nuevo empieza de una de dos formas:
+
+- **«Ahora mismo»**: empieza hoy, al aplicarlo, y el de antes termina ayer. En las
+  listas de asistencia, lo ya registrado hoy cuenta una sola vez: en la clase nueva
+  si la misma clase (docente, grupo y materia) sigue, o en la de antes si no. En
+  Faltas cuenta en la clase nueva si se cruza con sus horas y aún no termina; si
+  no, sale como «sesión fuera del horario». Las clases de hoy del horario nuevo que
+  ya terminaron se cancelan con la marca de «No tomar en cuenta» (de Faltas): ahí
+  salen canceladas, no en rojo, no salen en Alertas, y «Volver a contar...» las
+  devuelve.
+- **«Otro día»**: empieza en una fecha posterior a hoy, y se elige también el último
+  día del horario de antes.
+
+Aplicar agrega clases y franjas y adelanta la fecha de fin de las de antes. Según el
+caso, también da código al docente que no lo tenía, pasa lo que falta asignar,
+agrega las cancelaciones de «Ahora mismo» y guarda una plantilla con el horario de
+ahora, si se deja marcada su casilla. No borra ni desactiva nada, y anota un solo
+renglón en el historial (`conexion\CicloPreliminarDatos.Aplicar.cs`). «Deshacer la
+aplicación...» funciona mientras el horario no haya empezado ni tenga sesiones y no
+haya otro en preparación; lo que empieza hoy ya no se deshace.
+
+**Todas las clases de antes terminan en ese último día**, también las que siguen:
+esas se crean otra vez como clases nuevas, con el mismo código de su docente. Solo
+se quedan las que empiezan después de ese día, junto al horario nuevo.
+
+**Lo que no viene en el horario nuevo**, sea una clase que se quitó de la plantilla
+o un laboratorio entero, simplemente no se vuelve a crear:
+
+- En Horario semanal sale en gris el resto de la semana de su último día, si nada
+  vigente ocupa esas horas, y desde la semana siguiente ya no sale. Sus semanas
+  pasadas siguen igual, y su historia queda en Faltas.
+- Desde el día siguiente a su último día ya no se registra en ella con código ni
+  cuenta faltas; el código de su docente sigue valiendo para sus otras clases. Un
+  equipo sin red la acepta hasta renovar su copia local, y esas bitácoras se envían
+  al volver la red.
+- Un laboratorio que se queda así no queda deshabilitado: sigue en uso, sin clases,
+  hasta que se le pongan o se aplique un horario que lo incluya.
+
+#### Deshabilitar un laboratorio (sin migración nueva)
+
+En **Laboratorios → «Habilitar o deshabilitar...»** se dejan marcados los
+laboratorios donde ya se usa DigBit; los que se desmarcan no corren por ahora, por
+ejemplo para instalar DigBit en uno solo sin armar otra plantilla. Un laboratorio
+deshabilitado (`laboratorios.activo = 0`, db/08):
+
+- conserva su horario y su historial;
+- no recibe registros nuevos: sus equipos rechazan códigos, listas y uso libre y lo
+  dicen en pantalla. Sin conexión hacen lo mismo si su copia local ya lo sabía (se
+  renueva cada 10 minutos). Quien ya tenía el código aceptado termina su bitácora, y
+  lo que un equipo tenía en cola se sube igual;
+- sus docentes no ven esas clases en el panel ni en Mi horario, ni un código para
+  ellas; en Mis grupos siguen saliendo, con su horario y su lista, sin código;
+- las clases que se cruzan con el tiempo en que estuvo deshabilitado no cuentan como
+  faltas, tampoco en Estadísticas;
+- no avisa de clases sin bitácoras ni de fallas mientras está deshabilitado. Sí salen
+  los cambios de horario que haga otra persona y los docentes por enlazar. Si se
+  habilita a media clase, esa clase puede avisar «en curso sin nadie», aunque no
+  cuente como falta.
+
+Los periodos se guardan en `configuracion` (db/13; clave
+`laboratorios_deshabilitados`, `conexion\LaboratoriosDeshabilitados.cs`), así que al
+volver a habilitarlo siguen sin contar; sin la 13 se deshabilita igual, pero ese
+tiempo cuenta. Al habilitarlo, los equipos con conexión vuelven a aceptar registros
+sin tocarlos, en cerca de un minuto como mucho; uno sin conexión, cuando la recupere.
+Aplicar un horario no se detiene por un laboratorio deshabilitado: lo avisa en ámbar.
+
+Límite conocido: mientras está deshabilitado, la administración no ve su horario en
+Horario semanal, y en Laboratorios se apagan «Ver su horario» y «Códigos...». Sus
+horas se consultan en la ficha de cada docente. Al elegirlo, «Quitar» pasa a
+«Habilitar», que lo habilita de un clic. «Quitar» también deshabilita uno con
+historial y sin clases vigentes.
+
 #### Historial de cambios y alertas de cambios de horario (db/21)
 
 Con la 21, cada cambio queda en `historial_cambios` con quién lo hizo, cuándo
@@ -347,8 +436,10 @@ queda, su renglón también. Se anotan:
   pone o recorta una excepción sobre un tramo y las de «Marcar como no dada»;
 - correcciones de bitácoras (Bitácoras → «Corregir registro»), con solo los
   campos que cambiaron;
-- laboratorios (alta, nombre, borrar, desactivar y reactivar) y su forma de
-  entrar, también la de toda la escuela.
+- laboratorios (alta, nombre, borrar, deshabilitar y habilitar) y su forma de
+  entrar, también la de toda la escuela;
+- aplicar o deshacer un horario de Próximo ciclo, en un solo renglón, no uno por
+  clase.
 
 Nunca se escribe el código de una clase (la persona responsable de laboratorio también
 lee el historial): solo que cambió. Los renglones no se cambian ni se borran.
@@ -452,7 +543,8 @@ quién lo confirmó o falló, nunca la contraseña.
   (`LaboratoriosDatos.CambiarModo`).
 - Las versiones **anteriores a la 1.1** no saben de los modos y seguirían
   pidiendo el código de cada docente: actualiza los equipos antes de cambiarlo
-  (`deploy\diagnostico_equipo.ps1` dice la versión).
+  (`deploy\diagnostico_equipo.ps1` dice la versión; si se instaló con el asistente,
+  Agregar o quitar programas).
 - En los laboratorios sin código único, Horarios y "Mi horario" no pintan el
   código de su docente. Con generación de códigos, el Horario de la
   administración pinta en cada clase su código de ese día (solo de las semanas
@@ -535,7 +627,7 @@ migración.
 
 - **Filtros**: el periodo («Este ciclo», que empieza el día en que empezó la
   clase vigente más antigua, con el nombre de la plantilla si se aplicó en
-  Horarios > Aplicación; un renglón por cada ciclo que ya terminó, como
+  Horarios → Próximo ciclo; un renglón por cada ciclo que ya terminó, como
   «Ciclo abril-septiembre 2026», que se calcula solo con sus clases y con el
   derecho a evaluación; «Este mes»; «Esta semana»; «Últimos 30 días»; o
   «Elegir fechas...», cualquier día desde el 01/01/2000 hasta hoy, con 400
@@ -693,7 +785,7 @@ personas responsables no pueden entrar, y al intentarlo DigBit les dice que falt
 de solo consulta. El orden: la 18, actualizar DigBit en los equipos donde
 entrarán, y solo entonces darlos de alta. Un DigBit anterior no conoce el tipo
 4: avisa «Tipo de usuario no manejado» y se queda sin ventana (en el kiosco,
-`Ctrl+Alt+Supr` → Cerrar sesión), aunque no le da ningún permiso. Desde esta
+hay que reiniciar el equipo), aunque no le da ningún permiso. Desde esta
 versión, un tipo de cuenta que no conoce deja el login a la vista con un aviso.
 
 ### 6. Equipo liberado y cierre de sesión a la hora de salida
@@ -711,6 +803,10 @@ Bitácora guardada
    └─ fin: cierre de sesión de Windows (kiosco) / vuelta al login (escritorio)
 ```
 
+Si el kiosco usa la cuenta que el equipo ya tenía (sección 7), justo antes de
+lanzar `explorer.exe` DigBit quita del registro de esa cuenta tres límites:
+Administrador de tareas, `Win+R` y Panel de control.
+
 **Excepción: quien trajo su propia computadora.** Si marcó *equipo
 propio*, el equipo del laboratorio **no se libera**: esa persona no lo va a usar,
 y dejarlo con el escritorio abierto y sin nadie delante hasta el final de la
@@ -726,7 +822,8 @@ Si nadie pulsa nada en 30 segundos vuelve sola al login. La pantalla no se
 puede cerrar con Alt+F4 ni con "Finalizar tarea".
 
 El cierre lo **garantiza** `DigBit.Vigilante`, un servicio de Windows que corre
-como SYSTEM (quien usa el equipo no puede matarlo): lee el traspaso cada 10 segundos y a
+como SYSTEM (con una cuenta estándar, quien usa el equipo no puede matarlo; con una
+administradora, sí: ver sección 7): lee el traspaso cada 10 segundos y a
 la hora de salida cierra esa sesión de Windows con `WTSLogoffSession`.
 Si DigBit ya no está para avisar, el servicio manda el aviso él mismo. DigBit
 hace lo mismo desde dentro de la sesión como respaldo.
@@ -741,7 +838,7 @@ Reglas del traspaso, iguales en los dos procesos (`Infraestructura\SesionActiva.
   acortarse**: reescribir el archivo con una hora posterior, con otro código o
   borrarlo no sirve. El vigilante olvida la sesión cuando Windows le notifica
   un cierre o inicio de sesión real, que es como llega la siguiente persona.
-- Si Shell Launcher relanza DigBit con un traspaso vigente de este mismo
+- Si Winlogon relanza DigBit (`AutoRestartShell`) con un traspaso vigente de este mismo
   arranque y sesión, DigBit **reanuda** el estado "equipo liberado" sin pedir
   login y sin necesitar la base de datos.
 
@@ -844,6 +941,73 @@ app se comporta como antes: pantalla "Sin conexión" con reintento.
 
 ### 7. Equipos del laboratorio: DigBit como shell de Windows
 
+La forma de instalar es **`DigBit-Setup.exe`**: un asistente normal de Windows, sin
+PowerShell en el equipo, que también actualiza y desinstala (esas dos, sin confirmar
+todavía: ver «Estado del proyecto»). Sirve para los tres tipos de equipo
+(administración, docente y laboratorio) y siempre instala en `C:\DigBit`. No prepara
+el servidor de base de datos. La guía completa está en `INSTALAR.md`, «El instalador:
+`DigBit-Setup.exe`».
+
+Se genera con `crear_setup.ps1` (Inno Setup 7 e `instalador\DigBit.iss`), que lo deja
+fuera del repositorio: el de `instalador\DigBit-Setup.exe` es una copia del armado con
+este código. Lo que el asistente no puede hacer solo lo hace `DigBit.Configurador.exe`,
+en C#. Las contraseñas le llegan en variables de entorno, y la de la base no va dentro
+del instalador: se escribe al instalar y se comprueba contra la base; si no hay
+conexión, pregunta si instalar igual. El usuario de la base precargado es uno solo, y
+el asistente no lo cambia según el tipo de equipo: en su página pon el que toca
+(`digbit_admin` solo en el de la administración; `digbit_equipo` en los demás; sección
+10).
+
+En un equipo de laboratorio, el asistente pregunta con qué cuenta de Windows entra
+el kiosco:
+
+| | La que ya tiene el equipo (por omisión) | Una cuenta nueva |
+|---|---|---|
+| Cuál es | La cuenta con la que se abre el instalador; sale en su página | La que se escriba; por omisión, `laboratorio` |
+| La cuenta | No se crea; conserva su contraseña y sus grupos, aunque sea administradora. Cambian su shell, sus directivas y su inicio automático | Se crea sin permisos de administrador. Si el nombre ya existe y no es administradora, se usa esa y se le cambia la contraseña sin preguntar |
+| Contraseña | La actual; Windows la comprueba antes de instalar (vacía si no tiene) | La que se invente |
+| Tras la bitácora | Su escritorio, sin los límites de Administrador de tareas, `Win+R` y Panel de control | El escritorio con todos los límites |
+| Al desinstalar | Se le quitan el shell, las directivas, el permiso y el inicio automático, aunque ya entrara sola antes; conserva su contraseña y nunca se ofrece borrarla | Se le quita lo mismo, y pregunta si borrarla |
+
+**Para llegar a un escritorio sin bitácora**, en las dos: la memoria de emergencia (en
+el asistente, «llave de emergencia»), una USB autorizada al instalar. En el kiosco,
+**Acceso de emergencia** abre el escritorio de esa cuenta sin bitácora hasta reiniciar
+(ver `INSTALAR.md`). O `Ctrl+Alt+Supr` → **Cambiar de usuario**, a otra cuenta y con
+su contraseña. La memoria es opcional, pero sin ella y sin otra cuenta no hay camino.
+
+Como el asistente pide permisos de administrador, lo normal es que la cuenta que ya
+tiene el equipo sea administradora. Entonces, quien registre su bitácora puede instalar
+programas o desactivar el kiosco, y todos comparten sus archivos. Se aceptó el
+2026-11-04 porque los equipos del laboratorio se reinstalan cada semestre. También
+puede leer `connections.config`, con la contraseña de la base: por eso los
+laboratorios deben entrar con `digbit_equipo` (sección 10). Si la cuenta con la que se
+instala es de Microsoft, esta opción la rechaza.
+
+Cómo funciona el kiosco en la cuenta que ya tiene el equipo:
+
+- **Los límites:** con `LiberarDirectivas=true` en `DigBit.exe.config`,
+  `Infraestructura\DirectivasKiosco.cs` pone `DisableTaskMgr`, `NoRun` y
+  `NoControlPanel` al arrancar y los quita justo antes de lanzar el escritorio. Los
+  demás se quedan (bloquear el equipo, cambiar la contraseña, cerrar sesión, protector
+  de pantalla y atajos de accesibilidad): bloquear o cambiar la contraseña impedirían
+  que vuelva a entrar sola.
+- **El permiso:** Windows no deja a una cuenta escribir sus propias directivas sin
+  elevar, aunque sea administradora. El instalador le permite escribir valores solo
+  en `Policies\System` y `Policies\Explorer`, y lo quita al desinstalar.
+- **La marca:** `CuentaOriginal=1` en `HKLM\SOFTWARE\DigBit` hace que el desinstalador
+  no ofrezca borrarla.
+- **Actualizar o desinstalar desde la sesión de esa cuenta** (abierta con la memoria
+  de emergencia): DigBit es su shell y Windows lo reabriría al cerrarlo, con su archivo
+  en uso. Por eso `AutoRestartShell` se apaga antes de cerrarlo y se devuelve al
+  terminar. Si una actualización no termina, lo vuelve a encender el vigilante al
+  arrancar.
+
+El resto de esta sección describe el guion anterior, `deploy\configurar_equipo.ps1`,
+que sigue disponible. Las tres protecciones de más abajo (carpeta en sólo lectura,
+clave `Shell` protegida y `ForceAutoLogon`) también las aplica el instalador, aunque
+con una cuenta administradora no frenan a quien ya tiene su escritorio. El instalador
+excluye de Defender solo los `.exe`, no la carpeta.
+
 En cada equipo, como administrador y con DigBit compilado en Release:
 
 ```powershell
@@ -858,11 +1022,12 @@ escribe el laboratorio del equipo en la copia desplegada, crea la cuenta local
 estándar `laboratorio` si no existe y la deja así:
 
 - DigBit es su **shell**: al entrar no hay escritorio ni barra de tareas, sólo
-  el login de DigBit. Las cuentas de administrador no se tocan: siguen entrando
-  con explorer.exe.
-- Sin Administrador de tareas, sin `Win+R`, sin bloquear el equipo, sin cambiar
-  contraseña, sin cerrar sesión desde Inicio ni desde `Ctrl+Alt+Supr`, sin
-  protector de pantalla con contraseña.
+  el login de DigBit. Las demás cuentas, también las de administrador, no se tocan:
+  siguen entrando con explorer.exe. El guion no admite una cuenta administradora
+  para el kiosco.
+- Sin Administrador de tareas, sin `Win+R`, sin Panel de control ni Configuración,
+  sin bloquear el equipo, sin cambiar contraseña, sin cerrar sesión desde Inicio ni
+  desde `Ctrl+Alt+Supr`, sin protector de pantalla con contraseña.
 - Inicio de sesión automático con esa cuenta y sin pedir contraseña al
   despertar.
 - Servicio `DigBit.Vigilante` instalado y arrancado.
@@ -916,13 +1081,15 @@ que el diagnóstico comprueba una a una:
   esto el equipo se quedaría pidiendo una contraseña que la siguiente persona no
   tiene. Rompe el escritorio remoto, cosa que en estos equipos no se usa.
 
-Las cinco directivas de la cuenta (`DisableTaskMgr`, `NoRun`, …) **no** hace
+Las directivas de la cuenta (`DisableTaskMgr`, `NoRun`, …) **no** hace
 falta protegerlas: Windows ya deja `HKCU\...\Policies` con la herencia rota y en
-sólo lectura para el usuario.
+sólo lectura para el usuario. La excepción es el permiso del kiosco en la cuenta que
+el equipo ya tenía, descrito arriba.
 
 La contraseña del inicio automático queda en el registro en texto claro
 (`Winlogon\DefaultPassword`), como en cualquier inicio automático de Windows:
-usa una contraseña exclusiva de esa cuenta.
+usa una contraseña exclusiva de esa cuenta. Con la cuenta que el equipo ya tenía, la
+que queda ahí es la suya de siempre: no la uses en otro sitio.
 
 ### 8. Contraseñas
 
@@ -1033,7 +1200,8 @@ personas responsables de laboratorio siguen con su contraseña de DigBit.
   crea sola con su nombre del SIIA y su carrera (si el área del SIIA casa con
   una sola carrera de DigBit, sin mayúsculas ni acentos y perdonando una o dos
   letras: «Ingeneria en Sistemas Computacionales» casa con «INGENIERÍA EN
-  SISTEMAS COMPUTACIONALES»); el kiosco ya no ofrece «Crear cuenta».
+  SISTEMAS COMPUTACIONALES»); el inicio de sesión ya no ofrece «Crear cuenta»,
+  tampoco en el kiosco.
 - **Volver a cargar el horario** con `deploy\importar_horarios.ps1` después de
   enlazar: el docente que en el CSV sigue con su número provisional se encuentra
   por ese número de antes (lo guarda el enlace) y no se duplica.
@@ -1088,6 +1256,13 @@ congelar**. Configurar un equipo congelado termina en verde y no deja nada.
 El procedimiento completo, el reinicio de cada semestre y cómo comprobar que un
 disco conserva lo que se escribe, en `docs/fase8-deepfreeze.md`.
 
+`DigBit-Setup.exe` no detecta Deep Freeze ni pide la carpeta de datos: hay que
+descongelar antes de instalar o actualizar, porque con el disco congelado termina bien
+y no queda nada. Sin esa carpeta, las bitácoras sin enviar se pierden al reiniciar. Se
+aceptó el 2026-11-01: si la bitácora de alguien no llega, su docente le da la
+asistencia (db/22). Para conservarlas, usa el guion de arriba con `-CarpetaDatos`. Al
+actualizar, el instalador conserva la carpeta que ya tenga configurada.
+
 ### 10. Dos usuarios de MySQL, no uno
 
 Cada equipo del laboratorio lleva su `connections.config`, y **quien usa el equipo
@@ -1136,7 +1311,7 @@ una cuenta de la administración. Como esa columna no está en la lista, MySQL l
 error 1143.
 
 **El equipo sólo puede crear cuentas de estudiante.** "Crear cuenta" (el login, también en
-el kiosco) necesita `INSERT` en `usuarios`, y con él a secas cualquiera se
+el kiosco, mientras los estudiantes no entren con el SIIA) necesita `INSERT` en `usuarios`, y con él a secas cualquiera se
 crearía una cuenta de tipo 3. Por eso también es por columna y **sin**
 `fk_tipo_usuario`: la cuenta nueva toma el valor por defecto de esa columna,
 1 = estudiante, que pone `db/10_red_y_autoregistro.sql`. Un `INSERT` que nombre el
@@ -1216,8 +1391,13 @@ un paquete nuevo, comprueba que su DLL aparece en `bin\`.
 ## Estructura del repositorio
 
 ```
-DigBit.sln                     DigBit + DigBit.Vigilante
+DigBit.sln                     DigBit, DigBit.Vigilante, DigBit.Configurador y DigBit.Instalador
 build.cmd / build.ps1          Compilación y arranque con un comando
+crear_setup.ps1                Arma DigBit-Setup.exe con Inno Setup 7; no lo arma si dentro aparece la contraseña de su connections.config o de api\config.php
+crear_instalador.ps1           Arma el instalador anterior, DigBit-Instalador.exe
+instalador/
+  DigBit.iss                   El asistente: sus páginas, sus comprobaciones y las llamadas a DigBit.Configurador
+  DigBit-Setup.exe             Copia del instalador armado con este código, con el servidor, la base y el usuario de la escuela, sin contraseña
 db/
   01_schema.sql                Esquema de las 14 tablas (reconstruido desde el código)
   02_seed.sql                  Datos de prueba
@@ -1277,6 +1457,8 @@ DigBit/
   Infraestructura/
     AppContexto.cs             Ciclo de vida: reanudar, comprobar entorno, login, cerrar sesión, salir
     Kiosco.cs                  Modo kiosco (pantalla completa, sin Alt+F4)
+    DirectivasKiosco.cs        Kiosco en la cuenta que el equipo ya tenía: pone tres límites al arrancar y los quita al entregar el escritorio
+    Emergencia.cs              La memoria de emergencia: si la USB conectada es la autorizada
     CarpetaDatos.cs            Carpeta que sobrevive a Deep Freeze (compartida con el vigilante)
     LaboratorioEquipo.cs       Laboratorio en el que está este equipo (appSettings / variable)
     SinConexion.cs             Estado del modo sin conexión: activar con la copia, sincronizar al volver
@@ -1299,8 +1481,11 @@ DigBit/
     UsuariosDatos.cs           Lo común a las cuentas de estudiantes, docentes y responsables: alta, edición, contraseña, baja
     EncargadosDatos.cs         Las personas responsables de laboratorio (tipo 4) para su sección
     CuentaDeConsulta.cs        La cuenta de MySQL de solo lectura con que trabaja la sesión de una persona responsable (db/18)
+    LaboratoriosDeshabilitados.cs   Laboratorios deshabilitados: sus periodos en configuracion y qué no corre en ellos
+    CicloPreliminarDatos.cs, CicloPreliminarDatos.Aplicar.cs   Próximo ciclo: las plantillas, y aplicar y deshacer un horario
+    RevisionCiclo.cs, RevisionAplicacion.cs   Lo que se revisa antes de aplicar: en rojo no deja, en ámbar avisa
     CatalogosDatos.cs          Carreras, semestres y grupos para los diálogos
-    Esquema.cs                 Qué migraciones tiene la base (08 a 22), para no fallar si faltan
+    Esquema.cs                 Qué migraciones tiene la base (08 a 25), para no fallar si faltan
     HistorialCambios.cs        Quién cambió qué y cuándo (db/21): lo anota cada cambio en su transacción y lo leen Alertas y el historial
     AsistenciasDadas.cs        Las asistencias que da el docente (db/22): motivos, textos y lo que leen la Bitácora de la clase, el historial y Faltas
     SesionDeHoy.cs             El bloque de hoy en curso de una clase y su sesión (la lee o la crea) para dar una asistencia o reportar una falla
@@ -1340,6 +1525,7 @@ DigBit/
   AdministrarEncargados.cs     Responsables de laboratorio, desde Docentes: alta, edición, contraseña y baja
   GestionBitacorasAdministrador.cs   Bitácoras: sesiones con filtros, quién registró y PDF (también «Mis bitácoras» del panel docente)
   AdministrarHorarios.cs       Administración: Horarios por laboratorio (pestañas Horario semanal, Clases, Cambios de un día, Faltas y Próximo ciclo; choques de la semana)
+  PestanaProximoCiclo.cs, PestanaAplicacion.cs   Horarios → Próximo ciclo: plantillas, preparación y aplicar con fechas
   ColoresProfesor.cs           Un color por docente (el elegido o uno automático), el mismo en Horarios, Docentes y el panel
   SelectorColorProfesor.cs     El selector de color del diálogo de docente: muestra, automático, paleta y "Otro..."
   Profesor_Principal.cs, TarjetasProfesor.cs   Docente: su código con las bitácoras de la clase, sus clases de ayer, hoy y mañana, y sus secciones
@@ -1358,6 +1544,15 @@ DigBit.Vigilante/              Servicio de Windows (LocalSystem): cierra la sesi
   Program.cs                   Servicio, o --consola [--simular] [--segundos N] para probar
   Vigilante.cs                 El bucle: lee el traspaso cada 10 s, avisa, cierra la sesión
   VigilanteService.cs          Envoltorio ServiceBase; recibe los cambios de sesión de Windows
+DigBit.Configurador/           Lo que DigBit-Setup.exe no puede hacer solo, sin ventana y en C#
+  Program.cs                   Las órdenes: probar, estado, memorias, validar-cuenta, preparar, configurar, diagnostico y revertir (y prueba-*, solo de desarrollo)
+  Pasos.cs                     Lo instalado y las memorias; preparar, configurar y revertir, en orden
+  Cuenta.cs, Kiosco.cs         La cuenta del kiosco, su shell, sus directivas y el inicio automático
+  Servicio.cs, Defender.cs     El vigilante y la exclusión de Microsoft Defender
+  Archivos.cs, BaseDatos.cs    Los .config, la carpeta en sólo lectura, la conexión y la lista de laboratorios
+  Diagnostico.cs               Cómo quedó el equipo, para la última página del asistente
+  Sistema.cs, Salida.cs        Los comandos (sin la variable DIGBIT_SETUP=1, que pone el Setup, solo simula) y lo que le cuenta al Setup
+DigBit.Instalador/             El instalador anterior, que envuelve los guiones de deploy/
 ```
 
 Tablas de la base de datos:
@@ -1371,7 +1566,7 @@ Tablas de la base de datos:
 | `codigos_accesos` | Una fila por sesión (una clase en una fecha) con el código con que se abrió, según el modo del laboratorio: el de su docente (`usuarios.codigo_clase`), el generado de esa clase y día, o uno al azar (sin códigos) |
 | `registros_bitacoras` | Bitácora que llena cada estudiante con un código |
 | `recuperacion_contrasena` | Códigos de recuperación por correo (su HMAC, no el código); los usa solo la API |
-| `configuracion` | Ajustes de toda la escuela, como la dirección de la API de recuperación, el secreto de los códigos generados y la contraseña de `digbit_consulta` (los equipos solo la leen) |
+| `configuracion` | Ajustes de toda la escuela, como la dirección de la API de recuperación, el secreto de los códigos generados, los periodos de los laboratorios deshabilitados y la contraseña de `digbit_consulta` (los equipos solo la leen) |
 | `personalizacion_clases` | Lo que cada docente elige para sus clases, por materia (en todos sus grupos) o por grupo: imagen, color y nombre corto. Solo lo ven sus pantallas (db/19) |
 | `historial_cambios` | Quién cambió el horario, las clases, los laboratorios o una bitácora, cuándo, y qué decía antes y qué dice ahora. Solo se añade (db/21) |
 | `asistencias_dadas` | La asistencia que da el docente, durante su clase, a quien no pudo registrar su bitácora: quién, cuándo, por qué y desde qué equipo. Anularla no la borra (db/22) |
@@ -1418,11 +1613,12 @@ que falta, en orden de prioridad:
 - [x] Modo sin conexión (fase 4): copia local del horario, estudiantes entran con
       su matrícula, bitácoras en cola que se suben solas, marca `[sin conexion]`
       en los informes. Probado apagando y encendiendo un MySQL local.
-- [ ] Modo kiosco completo (fase 5): `deploy\configurar_equipo.ps1` deja DigBit
-      como shell de la cuenta de laboratorio, con directivas de bloqueo, inicio
-      de sesión automático y el servicio instalado. El guion está escrito y
-      validado en modo `-SoloMostrar`; falta ejecutarlo en los equipos del
-      laboratorio.
+- [ ] Modo kiosco completo (fase 5): `DigBit-Setup.exe` deja DigBit como shell de
+      la cuenta elegida, con inicio de sesión automático y el servicio instalado.
+      Probado en una máquina virtual, con un armado anterior al de `instalador\`,
+      hasta entrar con el SIIA. Falta confirmar el escritorio sin límites, el cierre
+      de sesión al vencer, la memoria de emergencia, actualizar y desinstalar, y
+      ejecutarlo en los equipos del laboratorio.
 
 Hay archivos `.cs` en el árbol que **no forman parte de la compilación**
 (no están en `DigBit.csproj`) y están pendientes de borrar: `conexion.cs`,
