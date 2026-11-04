@@ -2604,7 +2604,7 @@ namespace DigBit
                 // que llegaron antes), sin juzgar lo que alli no cuenta y, con
                 // asistencias que dio el profesor (db/22), sin rojo: la clase se dio.
                 return s.BitacorasDeLaClase > 0 ? Estado.ConBitacoras : s.NoContaba ? Estado.NoCuenta
-                    : s.SesionId.HasValue && s.AsistenciasDadas > 0 ? Estado.SinBitacorasConAsistencia : Estado.SinBitacoras;
+                    : (s.SesionId.HasValue || s.EnLaDeAntes) && s.AsistenciasDadas > 0 ? Estado.SinBitacorasConAsistencia : Estado.SinBitacoras;
             }
 
             if (fecha == hoy && s.Inicio <= hora)
@@ -3282,7 +3282,8 @@ namespace DigBit
                     if (s.Alumnos == 0 && s.EnOtra != null)
                     {
                         // Sus bitacoras quedaron en otra sesion: se dice cual (al pulsarla se abre esa).
-                        return s.EsResto ? "Registraron antes del recorte" : "Llegaron antes: quedaron en la de las " + HorariosDatos.Hora(s.EnOtra.Inicio);
+                        return s.EnLaDeAntes ? "Registraron con el horario de antes"
+                            : s.EsResto ? "Registraron antes del recorte" : "Llegaron antes: quedaron en la de las " + HorariosDatos.Hora(s.EnOtra.Inicio);
                     }
 
                     color = Naranja;
@@ -3320,7 +3321,8 @@ namespace DigBit
             string bitacoras = cuantas == 1 ? "1 bitácora" : cuantas + " bitácoras";
             string fallas = s.ConFallas > 0 ? ", " + s.ConFallas + " con fallas" : "";
             string donde = s.Alumnos == 0 && s.EnOtra != null
-                ? (s.EsResto ? " (registraron antes del recorte)" : " (llegaron antes y quedaron en tu clase de las " + HorariosDatos.Hora(s.EnOtra.Inicio) + ")")
+                ? (s.EnLaDeAntes ? " (registraron con el horario de antes)"
+                    : s.EsResto ? " (registraron antes del recorte)" : " (llegaron antes y quedaron en tu clase de las " + HorariosDatos.Hora(s.EnOtra.Inicio) + ")")
                 : "";
             string como;
             switch (estado)

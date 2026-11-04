@@ -177,6 +177,29 @@ namespace DigBit.conexion
         public string Grupo = "";
         /// <summary>"Nombre Apellidos" del docente (solo el lote; vacio en DeLaClase).</summary>
         public string Docente = "";
+        /// <summary>
+        /// Ninguna otra clase activa de su misma persona docente, grupo y materia
+        /// vale el dia siguiente a su ultimo: lo de ese dia en su terna es suyo y
+        /// su lista lo cuenta (AsistenciaDatos.HastaDeLaLista). Solo pasa con
+        /// "Ahora mismo": lo registrado hoy antes de aplicar, en la clase que
+        /// termino ayer y no sigue. Lo ponen DeLaClase y LeerClasesEnLote; sin el,
+        /// la lista acaba en su ultimo dia.
+        /// </summary>
+        public bool CuentaElDiaSiguiente;
+        /// <summary>
+        /// La clase activa de su misma terna que termino la vispera de su primer
+        /// dia, o null: las asistencias que dio su docente ese primer dia ("Ahora
+        /// mismo", antes de aplicar) cuentan en esta, con las bitacoras de ese dia
+        /// (AsistenciaDatos.DadasQueCuentan). Lo ponen DeLaClase y LeerClasesEnLote.
+        /// </summary>
+        public int? Anterior;
+        /// <summary>
+        /// CuentaElDiaSiguiente y ese dia tiene de verdad algo que cuenta (una
+        /// bitacora o una asistencia dada): lo elige Estadisticas (DelPeriodo). Sin
+        /// esto, cualquier clase ya terminada entraria en un periodo que empieza el
+        /// dia despues de su ultimo. Solo lo pone LeerClasesEnLote.
+        /// </summary>
+        public bool ConRegistroElDiaSiguiente;
     }
 
     /// <summary>
@@ -344,6 +367,13 @@ namespace DigBit.conexion
     /// profesor, materia y grupo en su periodo: las de sus franjas, sus sesiones
     /// extra y las que se quedaron sin enlace al cambiar el horario.
     ///
+    /// "Ahora mismo" (CicloPreliminarDatos.AplicarAhora) termina ayer clases que
+    /// hoy ya tienen algo registrado. Eso cuenta una sola vez: si la misma terna
+    /// sigue en el horario nuevo, en la clase nueva (sus sesiones por la terna,
+    /// y las asistencias dadas de su primer dia en la de antes, Anterior); si no,
+    /// en la de antes, que cuenta tambien el dia siguiente a su ultimo
+    /// (CuentaElDiaSiguiente, HastaDeLaLista), sin estar ya en curso.
+    ///
     /// Con el codigo fijo, quien llega en los 15 minutos antes de una clase
     /// seguida del mismo profesor en el mismo laboratorio entra en la sesion de
     /// la que va terminando (ReglasCodigo). Como en Faltas (ContarLlegadasAnticipadas),
@@ -407,10 +437,18 @@ namespace DigBit.conexion
                 lectura.ConDadas = Esquema.AsistenciaDada(conexion);
 
                 // Por su id, aunque ya no este activa (Mis grupos ensena tambien las terminadas).
+                // Con las otras de su terna (como LeerClasesEnLote con E1): si alguna activa
+                // vale el dia siguiente a su ultimo y cual termino la vispera de su primero.
                 ClaseLeida clase;
+                const string MismaTerna = "o.usuarios_idusuarios = c.usuarios_idusuarios AND o.materias_id_materia = c.materias_id_materia "
+                    + "AND o.grupos_idgrupos = c.grupos_idgrupos AND o.idclases <> c.idclases AND o.activa = 1";
                 using (MySqlCommand comando = new MySqlCommand(@"
                     SELECT c.usuarios_idusuarios, c.materias_id_materia, c.grupos_idgrupos, c.vigente_desde, c.vigente_hasta,
-                           m.nombre_materia, g.nombre_grupo
+                           m.nombre_materia, g.nombre_grupo,
+                           (SELECT COUNT(*) FROM clases o WHERE " + MismaTerna + @"
+                               AND DATE_ADD(c.vigente_hasta, INTERVAL 1 DAY) BETWEEN o.vigente_desde AND o.vigente_hasta) AS siguen,
+                           (SELECT MAX(o.idclases) FROM clases o WHERE " + MismaTerna + @" AND c.activa = 1
+                               AND o.vigente_hasta = DATE_SUB(c.vigente_desde, INTERVAL 1 DAY)) AS anterior
                     FROM clases c
                     INNER JOIN materias m ON m.id_materia = c.materias_id_materia
                     INNER JOIN grupos g   ON g.idgrupos = c.grupos_idgrupos
@@ -434,7 +472,9 @@ namespace DigBit.conexion
                             VigenteDesde = Convert.ToDateTime(reader[3], CultureInfo.InvariantCulture).Date,
                             VigenteHasta = Convert.ToDateTime(reader[4], CultureInfo.InvariantCulture).Date,
                             Materia = reader.GetString(5),
-                            Grupo = reader.GetString(6)
+                            Grupo = reader.GetString(6),
+                            CuentaElDiaSiguiente = Convert.ToInt32(reader[7]) == 0,
+                            Anterior = reader.IsDBNull(8) ? (int?)null : Convert.ToInt32(reader[8])
                         };
                     }
                 }
@@ -508,12 +548,19 @@ namespace DigBit.conexion
                 List<int> registraron = bitacoras.Select(b => b.AlumnoId).Distinct().ToList();
                 lectura.Grupos = LeerGrupos(conexion, registraron);
 
-                // Las que dio el profesor (db/22), de la clase y de su periodo.
+                // Las que dio el profesor (db/22), de la clase y de su periodo, y las de su
+                // primer dia en la de antes de su terna (DadasQueCuentan).
                 List<AsistenciaDada> dadas = new List<AsistenciaDada>();
                 if (lectura.ConDadas)
                 {
                     dadas = LeerDadas(conexion, idClase, clase.VigenteDesde, hastaHoy);
                     lectura.DadasPorClase[idClase] = dadas;
+                    if (clase.Anterior.HasValue && clase.VigenteDesde <= hastaHoy)
+                    {
+                        List<AsistenciaDada> deLaAnterior = LeerDadas(conexion, clase.Anterior.Value, clase.VigenteDesde, clase.VigenteDesde);
+                        lectura.DadasPorClase[clase.Anterior.Value] = deLaAnterior;
+                        dadas = dadas.Concat(deLaAnterior).ToList();
+                    }
                 }
 
                 // Solo alumnos (no la cuenta de un profesor o del administrador que probo).
@@ -527,7 +574,7 @@ namespace DigBit.conexion
         /// lectura de su DeLaClase da lo mismo que DeLaClase; con la del lote
         /// (LeerClasesEnLote y LeerElRestoEnLote), lo mismo que daria DeLaClase de esa clase leida en ese
         /// momento. Toma de la lectura lo que DeLaClase lee: las sesiones del
-        /// profesor en [vigente_desde, min(vigente_hasta, hoy)], sus franjas activas y
+        /// profesor en [vigente_desde, HastaDeLaLista], sus franjas activas y
         /// sus excepciones de esos dias (para sus bloques sin sesion), las bitacoras
         /// de las sesiones de la clase y de sus clases seguidas, y las asistencias
         /// dadas de la clase en esos dias.
@@ -643,12 +690,9 @@ namespace DigBit.conexion
 
             // Las que dio el profesor (db/22): por clase y dia, sin reparto. Solo las de
             // su periodo (el lote las lee de todas las clases y de todo lo leido).
-            List<AsistenciaDada> dadasDeLaClase;
-            if (resultado.ConDadas && lectura.DadasPorClase.TryGetValue(clase.Id, out dadasDeLaClase))
+            if (resultado.ConDadas)
             {
-                AplicarDadas(alumnos, dadasDeLaClase
-                    .Where(d => d.Fecha.Date >= clase.VigenteDesde && d.Fecha.Date <= hastaHoy)
-                    .OrderBy(d => d.Fecha).ThenBy(d => d.AlumnoId).ThenBy(d => d.Id));
+                AplicarDadas(alumnos, DadasQueCuentan(clase, lectura));
             }
 
             // Si ese dia tiene otra bitacora que cuenta (o una asistencia dada), ese dia asistio.
@@ -680,7 +724,9 @@ namespace DigBit.conexion
             TimeSpan horaAhora = resultado.AhoraServidor.TimeOfDay;
             foreach (IGrouping<DateTime, Sesion> dia in sesiones.Where(s => s.DeLaClase).GroupBy(s => s.Fecha))
             {
-                bool enCurso = dia.Key == hoy && dia.Any(s => s.Id > 0 && horaAhora < s.Fin);
+                // El dia siguiente a su ultimo (CuentaElDiaSiguiente) ya no esta en curso:
+                // ese dia, desde que se aplico, se registra con el horario nuevo.
+                bool enCurso = dia.Key == hoy && dia.Key <= hasta && dia.Any(s => s.Id > 0 && horaAhora < s.Fin);
                 if (conAlguien.Contains(dia.Key) || enCurso)
                 {
                     DiaDeAsistencia nuevo = new DiaDeAsistencia { Fecha = dia.Key, Inicio = dia.Min(s => s.Inicio), EnCurso = enCurso };
@@ -712,7 +758,7 @@ namespace DigBit.conexion
             {
                 resultado.Dias.Add(new DiaDeAsistencia { Fecha = hoy, Inicio = hoyInicio.Value, EnCurso = true });
             }
-            else if (hoyFin.HasValue && horaAhora < hoyFin.Value)
+            else if (hoyFin.HasValue && horaAhora < hoyFin.Value && hoy <= hasta)
             {
                 DiaDeAsistencia deHoy = resultado.Dias.FirstOrDefault(d => d.Fecha == hoy);
                 if (deHoy != null)
@@ -726,11 +772,55 @@ namespace DigBit.conexion
             return resultado;
         }
 
-        /// <summary>Hasta cuando se cuenta la clase: su ultimo dia, o hoy si aun no termina.</summary>
+        /// <summary>Hasta cuando se cuenta la clase con el hoy de la lectura (HastaDeLaLista).</summary>
         private static DateTime HastaHoy(ClaseLeida clase, LecturaDeAsistencia lectura)
         {
-            DateTime hoy = lectura.AhoraServidor.Date;
-            return clase.VigenteHasta < hoy ? clase.VigenteHasta : hoy;
+            return HastaDeLaLista(clase, lectura.AhoraServidor.Date);
+        }
+
+        /// <summary>
+        /// Hasta cuando se cuenta la clase: hoy si aun no termina; si ya termino, su
+        /// ultimo dia o, con CuentaElDiaSiguiente, el dia siguiente. Ese dia de mas
+        /// solo tiene algo con "Ahora mismo" (lo registrado hoy antes de aplicar, en
+        /// una clase que termino ayer y cuya terna no sigue): sin el, salia de todas
+        /// las listas. Si la terna sigue, lo cuenta la clase nueva, que vale ese dia.
+        /// </summary>
+        internal static DateTime HastaDeLaLista(ClaseLeida clase, DateTime hoy)
+        {
+            hoy = hoy.Date;
+            if (clase.VigenteHasta >= hoy)
+            {
+                return hoy;
+            }
+
+            return clase.CuentaElDiaSiguiente ? clase.VigenteHasta.AddDays(1) : clase.VigenteHasta;
+        }
+
+        /// <summary>
+        /// Las asistencias dadas (db/22) que cuentan en la lista de la clase, en el
+        /// orden de AplicarDadas: las suyas de su periodo (HastaDeLaLista) y las que
+        /// se dieron el primer dia de esta en la de antes de su terna (Anterior: con
+        /// "Ahora mismo", antes de aplicar), que esa ya no cuenta porque la terna
+        /// sigue en esta. Asi cada una cuenta una sola vez. Sin consultas: tambien
+        /// la usa Estadisticas (la tabla de asistencias dadas).
+        /// </summary>
+        internal static List<AsistenciaDada> DadasQueCuentan(ClaseLeida clase, LecturaDeAsistencia lectura)
+        {
+            DateTime hastaHoy = HastaHoy(clase, lectura);
+            List<AsistenciaDada> dadas = new List<AsistenciaDada>();
+            List<AsistenciaDada> suyas;
+            if (lectura.DadasPorClase.TryGetValue(clase.Id, out suyas))
+            {
+                dadas.AddRange(suyas.Where(d => d.Fecha.Date >= clase.VigenteDesde && d.Fecha.Date <= hastaHoy));
+            }
+
+            List<AsistenciaDada> deLaAnterior;
+            if (clase.Anterior.HasValue && clase.VigenteDesde <= hastaHoy && lectura.DadasPorClase.TryGetValue(clase.Anterior.Value, out deLaAnterior))
+            {
+                dadas.AddRange(deLaAnterior.Where(d => d.Fecha.Date == clase.VigenteDesde));
+            }
+
+            return dadas.OrderBy(d => d.Fecha).ThenBy(d => d.AlumnoId).ThenBy(d => d.Id).ToList();
         }
 
         /// <summary>
@@ -869,6 +959,16 @@ namespace DigBit.conexion
         internal const string CondicionEquipoPropio = "TRIM(COALESCE(rb.falla_red, '')) = 'EP'";
 
         /// <summary>
+        /// El ultimo dia que tiene algo de una clase para Estadisticas: el de su
+        /// vigencia o, si termino ayer con "Ahora mismo" y no sigue, el dia siguiente
+        /// (HastaDeLaLista), si ese dia hay algo registrado.
+        /// </summary>
+        internal static DateTime UltimoDiaConRegistros(ClaseLeida clase)
+        {
+            return clase.ConRegistroElDiaSiguiente ? clase.VigenteHasta.AddDays(1) : clase.VigenteHasta;
+        }
+
+        /// <summary>
         /// La clase es del periodo [desde, hasta]: su vigencia lo toca y, con un ciclo
         /// ("Este ciclo" o un ciclo pasado), ademas es del ciclo (R2 de Estadisticas): la
         /// de un ciclo pasado, si es una de soloEstas (sus clases, EstadisticasDatos.ArmarCiclos);
@@ -877,7 +977,7 @@ namespace DigBit.conexion
         /// <param name="soloEstas">Las clases de un ciclo pasado, o null.</param>
         internal static bool DelPeriodo(ClaseLeida clase, DateTime desde, DateTime hasta, bool esCiclo, ISet<int> soloEstas)
         {
-            if (clase.VigenteDesde > hasta.Date || clase.VigenteHasta < desde.Date)
+            if (clase.VigenteDesde > hasta.Date || UltimoDiaConRegistros(clase) < desde.Date)
             {
                 return false;
             }
@@ -911,7 +1011,7 @@ namespace DigBit.conexion
 
         /// <summary>
         /// Hasta cuando hay que leer: el mayor entre el ultimo dia del periodo (sin pasar de
-        /// hoy) y el ultimo dia de cada clase del periodo (o hoy, si aun no termina), para que
+        /// hoy) y el ultimo dia de la lista de cada clase del periodo (HastaDeLaLista), para que
         /// la lista de cada clase salga entera, como en Mis grupos; con los periodos que llegan
         /// a hoy, hoy. Nunca antes de min(hasta, hoy).
         /// </summary>
@@ -926,7 +1026,7 @@ namespace DigBit.conexion
                     continue;
                 }
 
-                DateTime fin = clase.VigenteHasta < hoy ? clase.VigenteHasta : hoy;
+                DateTime fin = HastaDeLaLista(clase, hoy);
                 if (fin > resultado)
                 {
                     resultado = fin;
@@ -991,6 +1091,9 @@ namespace DigBit.conexion
                 }
             }
 
+            MarcarTernas(lectura.Clases, lectura.AhoraServidor.Date);
+            MarcarDiaSiguiente(conexion, lectura);
+
             // E3, por profesor: no depende de las fechas (SinSesion las cruza con su vigencia).
             foreach (FranjaLeida franja in LeerFranjas(conexion, null))
             {
@@ -998,6 +1101,84 @@ namespace DigBit.conexion
             }
 
             return lectura;
+        }
+
+        /// <summary>
+        /// Lo que DeLaClase lee de las otras clases de su terna, con E1 (las activas
+        /// que ya empezaron): CuentaElDiaSiguiente (ninguna otra vale el dia
+        /// siguiente al ultimo de esta, si ya paso) y Anterior (la que termino la
+        /// vispera de su primer dia). Las que empiezan despues de hoy no estan en E1,
+        /// pero no cambian nada: ese dia aun no llega.
+        /// </summary>
+        private static void MarcarTernas(List<ClaseLeida> clases, DateTime hoy)
+        {
+            foreach (IGrouping<string, ClaseLeida> terna in clases.GroupBy(c => c.ProfesorId + "|" + c.MateriaId + "|" + c.GrupoId))
+            {
+                List<ClaseLeida> mismas = terna.ToList();
+                foreach (ClaseLeida clase in mismas)
+                {
+                    clase.CuentaElDiaSiguiente = false;
+                    clase.Anterior = null;
+                    if (clase.VigenteHasta < hoy.Date)
+                    {
+                        DateTime siguiente = clase.VigenteHasta.AddDays(1);
+                        clase.CuentaElDiaSiguiente = !mismas.Any(o => o != clase && o.VigenteDesde <= siguiente && o.VigenteHasta >= siguiente);
+                    }
+
+                    if (mismas.Count > 1 && clase.VigenteDesde > DateTime.MinValue.Date)
+                    {
+                        DateTime vispera = clase.VigenteDesde.AddDays(-1);
+                        ClaseLeida anterior = mismas.Where(o => o != clase && o.VigenteHasta == vispera).OrderByDescending(o => o.Id).FirstOrDefault();
+                        clase.Anterior = anterior == null ? (int?)null : anterior.Id;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// ClaseLeida.ConRegistroElDiaSiguiente de las que ya terminaron y no siguen:
+        /// si el dia siguiente a su ultimo su terna tiene una bitacora o la clase una
+        /// asistencia dada. Con los datos de siempre no hay ninguna.
+        /// </summary>
+        private static void MarcarDiaSiguiente(MySqlConnection conexion, LecturaDeAsistencia lectura)
+        {
+            List<ClaseLeida> candidatas = lectura.Clases.Where(c => c.CuentaElDiaSiguiente).ToList();
+            if (candidatas.Count == 0)
+            {
+                return;
+            }
+
+            HashSet<int> conRegistro = new HashSet<int>();
+            using (MySqlCommand comando = new MySqlCommand(@"
+                SELECT DISTINCT c.idclases
+                FROM clases c
+                INNER JOIN codigos_accesos s
+                        ON s.usuarios_idusuarios = c.usuarios_idusuarios AND s.materias_id_materia = c.materias_id_materia
+                       AND s.grupos_idgrupos = c.grupos_idgrupos
+                WHERE c.activa = 1 AND c.vigente_hasta < CURDATE()
+                  AND " + VigenciaFranjas.DiaDeSesion("s") + @" = DATE_ADD(c.vigente_hasta, INTERVAL 1 DAY)
+                  AND EXISTS (SELECT 1 FROM registros_bitacoras rb WHERE rb.fk_codigo_accesos = s.idcodigos_accesos)"
+                + (lectura.ConDadas ? @"
+                UNION
+                SELECT c.idclases
+                FROM clases c
+                INNER JOIN asistencias_dadas d ON d.fk_clase = c.idclases AND d.activa = 1 AND d.fecha = DATE_ADD(c.vigente_hasta, INTERVAL 1 DAY)
+                WHERE c.activa = 1 AND c.vigente_hasta < CURDATE()" : ""), conexion))
+            {
+                comando.CommandTimeout = 60;
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        conRegistro.Add(reader.GetInt32(0));
+                    }
+                }
+            }
+
+            foreach (ClaseLeida clase in candidatas)
+            {
+                clase.ConRegistroElDiaSiguiente = conRegistro.Contains(clase.Id);
+            }
         }
 
         /// <summary>
@@ -1432,6 +1613,18 @@ namespace DigBit.conexion
         private const string CambiarFueraDeClase = "La clase no está en curso: la asistencia solo se puede cambiar mientras dura.";
 
         /// <summary>
+        /// SQL: la asistencia dada es de la clase @Clase o, si esta empezo hoy, de la
+        /// de antes de su terna, que termino ayer: con "Ahora mismo" se dio antes de
+        /// aplicar y cuenta en esta (DadasQueCuentan). Asi la lista, el dialogo de dar
+        /// y quitarla hablan de la misma. Para las consultas de la asistencia de hoy.
+        /// </summary>
+        private const string DeEstaClaseODeLaDeAntes = @"(fk_clase = @Clase OR fk_clase IN (
+                SELECT o.idclases FROM clases o INNER JOIN clases c ON c.idclases = @Clase
+                 WHERE o.usuarios_idusuarios = c.usuarios_idusuarios AND o.materias_id_materia = c.materias_id_materia
+                   AND o.grupos_idgrupos = c.grupos_idgrupos AND o.idclases <> c.idclases AND o.activa = 1 AND c.activa = 1
+                   AND c.vigente_desde = CURDATE() AND o.vigente_hasta = DATE_SUB(c.vigente_desde, INTERVAL 1 DAY)))";
+
+        /// <summary>
         /// Quita (o devuelve) la asistencia de hoy de un alumno que registro su
         /// bitacora pero no esta en el salon: sus bitacoras de hoy que cuentan para
         /// esta clase (las de AlumnoDeAsistencia.BitacorasDelDia) dejan de contar
@@ -1501,7 +1694,7 @@ namespace DigBit.conexion
                         using (MySqlCommand comando = new MySqlCommand(@"
                             UPDATE asistencias_dadas
                                SET activa = NULL, anulada_en = NOW(), anulada_por = @Profesor
-                             WHERE fk_clase = @Clase AND fk_alumno = @Alumno AND fecha = CURDATE() AND activa = 1", conexion, transaccion))
+                             WHERE " + DeEstaClaseODeLaDeAntes + @" AND fk_alumno = @Alumno AND fecha = CURDATE() AND activa = 1", conexion, transaccion))
                         {
                             comando.Parameters.AddWithValue("@Profesor", idProfesor);
                             comando.Parameters.AddWithValue("@Clase", idClase);
@@ -1627,7 +1820,7 @@ namespace DigBit.conexion
                                AND s.grupos_idgrupos = c.grupos_idgrupos) AS bitacoras_hoy,
                            " + (conDadas
                                 ? @"(SELECT COUNT(*) FROM asistencias_dadas d
-                             WHERE d.fk_clase = @Clase AND d.fecha = CURDATE() AND d.fk_alumno = u.idusuarios AND d.activa = 1)"
+                             WHERE " + DeEstaClaseODeLaDeAntes + @" AND d.fecha = CURDATE() AND d.fk_alumno = u.idusuarios AND d.activa = 1)"
                                 : "0") + @" AS dada_hoy
                     FROM usuarios u
                     WHERE u.numero_identificador = @Matricula
@@ -1710,6 +1903,19 @@ namespace DigBit.conexion
                 if (!sesion.HasValue)
                 {
                     return DarFueraDeClase;
+                }
+
+                // El UNIQUE solo ve esta clase: con "Ahora mismo" pudo darsela hoy en la de
+                // antes de su terna, y esa ya cuenta en esta (DadasQueCuentan).
+                using (MySqlCommand comando = new MySqlCommand(
+                    "SELECT COUNT(*) FROM asistencias_dadas WHERE " + DeEstaClaseODeLaDeAntes + " AND fk_alumno = @Alumno AND fecha = CURDATE() AND activa = 1", conexion))
+                {
+                    comando.Parameters.AddWithValue("@Clase", idClase);
+                    comando.Parameters.AddWithValue("@Alumno", idAlumno);
+                    if (Convert.ToInt32(comando.ExecuteScalar()) > 0)
+                    {
+                        return "Ya le diste la asistencia hoy en esta clase.";
+                    }
                 }
 
                 bool conBajas = Esquema.TieneBajas(conexion);
@@ -1856,7 +2062,7 @@ namespace DigBit.conexion
                 using (MySqlCommand comando = new MySqlCommand(@"
                     UPDATE asistencias_dadas
                        SET activa = NULL, anulada_en = NOW(), anulada_por = @Profesor
-                     WHERE fk_clase = @Clase AND fk_alumno = @Alumno AND fecha = CURDATE() AND activa = 1
+                     WHERE " + DeEstaClaseODeLaDeAntes + @" AND fk_alumno = @Alumno AND fecha = CURDATE() AND activa = 1
                        AND fk_profesor = @Profesor
                        AND TIME_TO_SEC(CURTIME()) >= @Inicio AND TIME_TO_SEC(CURTIME()) < @Fin", conexion))
                 {
@@ -1869,7 +2075,7 @@ namespace DigBit.conexion
                     {
                         // Si aun la tiene, es que la clase termino entre las dos sentencias.
                         using (MySqlCommand sigue = new MySqlCommand(
-                            "SELECT COUNT(*) FROM asistencias_dadas WHERE fk_clase = @Clase AND fk_alumno = @Alumno AND fecha = CURDATE() AND activa = 1 AND fk_profesor = @Profesor",
+                            "SELECT COUNT(*) FROM asistencias_dadas WHERE " + DeEstaClaseODeLaDeAntes + " AND fk_alumno = @Alumno AND fecha = CURDATE() AND activa = 1 AND fk_profesor = @Profesor",
                             conexion))
                         {
                             sigue.Parameters.AddWithValue("@Profesor", idProfesor);

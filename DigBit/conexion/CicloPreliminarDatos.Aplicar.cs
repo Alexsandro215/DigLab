@@ -80,6 +80,50 @@ namespace DigBit.conexion
         public DatosDeFechas Fechas;
         /// <summary>Hoy segun el servidor.</summary>
         public DateTime Hoy;
+        /// <summary>NOW() del servidor al leer (la conexion fija -06:00): con el se cuentan las clases de hoy que ya terminaron.</summary>
+        public DateTime Ahora;
+        /// <summary>Stopwatch.GetTimestamp() al leer Ahora (0: sin marca): AhoraEstimado avanza con el, no con el reloj del equipo.</summary>
+        public long LeidoEnMarca;
+
+        /// <summary>
+        /// La hora del servidor en este momento, estimada con lo que paso desde
+        /// la lectura (con un cronometro: el reloj del equipo se puede cambiar).
+        /// Con ella la pagina tiene al dia "ya terminaron" sin volver a leer;
+        /// dentro de la transaccion de Aplicar es casi NOW().
+        /// </summary>
+        public DateTime AhoraEstimado
+        {
+            get
+            {
+                if (LeidoEnMarca == 0)
+                {
+                    return Ahora;
+                }
+
+                long transcurrido = Math.Max(0, System.Diagnostics.Stopwatch.GetTimestamp() - LeidoEnMarca);
+                return Ahora + TimeSpan.FromSeconds(transcurrido / (double)System.Diagnostics.Stopwatch.Frequency);
+            }
+        }
+
+        /// <summary>Con "Ahora mismo": las sesiones de hoy de las clases que se recortan (se quedan como estan, con sus bitacoras).</summary>
+        public int SesionesDeHoy;
+        /// <summary>Con "Ahora mismo": los estudiantes que registraron hoy en esas sesiones.</summary>
+        public int BitacorasDeHoy;
+        /// <summary>Con "Ahora mismo" y db/22: las asistencias que dieron hoy sus docentes (las que cuentan).</summary>
+        public int DadasDeHoy;
+        /// <summary>
+        /// De lo de hoy (SesionesDeHoy, BitacorasDeHoy y DadasDeHoy), lo de las
+        /// clases cuya misma persona docente, grupo y materia sigue en el horario
+        /// nuevo: cuenta en la lista de su clase nueva. Lo de las demas cuenta en
+        /// la de su clase de antes (AsistenciaDatos: el dia siguiente a su ultimo).
+        /// </summary>
+        public int SesionesDeHoySiguen;
+        public int BitacorasDeHoySiguen;
+        public int DadasDeHoySiguen;
+        /// <summary>La base tiene "Falta asignar" en Horario semanal (db/25): lo que le falte a la plantilla pasa alli al aplicar.</summary>
+        public bool ConHorasPorAsignar;
+        /// <summary>Con "Ahora mismo": los laboratorios del horario nuevo con generacion de codigos (sus clases nuevas tienen otros codigos).</summary>
+        public List<string> LaboratoriosConGeneracion = new List<string>();
 
         /// <summary>Las clases que valen el ultimo dia del horario de ahora y siguen despues: se recortan (tambien las desactivadas).</summary>
         public int Terminan;
@@ -142,6 +186,18 @@ namespace DigBit.conexion
         public bool SinClasesQueGuardar;
         /// <summary>Las personas docentes que recibieron su codigo al aplicar.</summary>
         public List<string> RecibieronCodigo = new List<string>();
+        /// <summary>Empezo al aplicarlo ("Ahora mismo"): Desde es hoy y Fin ayer. Ya no se puede deshacer.</summary>
+        public bool EmpezoAhora;
+        /// <summary>Con "Ahora mismo": NOW() del servidor al aplicar, con el que se vio que clases de hoy ya habian terminado.</summary>
+        public DateTime EmpezoA;
+        /// <summary>
+        /// Con "Ahora mismo": las clases (franjas) de hoy del horario nuevo que ya
+        /// habian terminado, canceladas ese dia como "No tomar en cuenta" (en
+        /// Faltas se pueden volver a contar).
+        /// </summary>
+        public int SinContarHoy;
+        /// <summary>Los minutos de "Falta asignar" de la plantilla que pasaron a Horario semanal (db/25).</summary>
+        public int MinutosPorAsignar;
     }
 
     /// <summary>Lo que hizo Deshacer.</summary>
@@ -180,6 +236,14 @@ namespace DigBit.conexion
     /// que creo, si no tienen sesiones ni asistencias dadas, y devuelve su fecha
     /// de fin a las que recorto, si nadie la cambio despues. Todo en una
     /// transaccion; solo la administracion escribe (Permisos.Exigir).
+    /// Con "Ahora mismo" (AplicarAhora) el horario nuevo empieza hoy y el de
+    /// ahora termina ayer: lo ya registrado hoy en las que se recortan se queda
+    /// y cuenta una vez en las listas de asistencia (AsistenciaDatos: en la clase
+    /// nueva de la misma terna o, si no sigue, en la de antes, ese dia de mas),
+    /// y las clases de hoy del horario nuevo que ya terminaron se cancelan ese
+    /// dia como "No tomar en cuenta" (horario_excepciones, sin tabla nueva), asi
+    /// no salen en Faltas ni en Alertas y "Volver a contar" las devuelve. Lo que
+    /// empieza hoy ya no se deshace.
     /// </summary>
     internal partial class CicloPreliminarDatos
     {
@@ -207,6 +271,38 @@ namespace DigBit.conexion
         }
 
         /// <summary>
+        /// Como LeerParaAplicar, para "Ahora mismo": el primer dia es hoy y el
+        /// ultimo del horario de ahora ayer, los dos del servidor (nunca del reloj
+        /// de este equipo). Ademas cuenta lo ya registrado hoy en las que se
+        /// recortan (SesionesDeHoy, BitacorasDeHoy, DadasDeHoy).
+        /// </summary>
+        public DatosDeAplicacion LeerParaAplicarAhora(int idCiclo, DateTime hasta)
+        {
+            using (MySqlConnection conexion = mconexion.GetConexion())
+            {
+                return LeerParaAplicar(conexion, null, idCiclo, FechasDeAhora(Hoy(conexion, null), hasta));
+            }
+        }
+
+        /// <summary>Las fechas de "Ahora mismo" para ese hoy (del servidor): desde hoy, y el horario de ahora hasta ayer.</summary>
+        private static DatosDeFechas FechasDeAhora(DateTime hoy, DateTime hasta)
+        {
+            return new DatosDeFechas { Desde = hoy.Date, Hasta = hasta.Date, Fin = hoy.Date.AddDays(-1), EmpiezaAhora = true };
+        }
+
+        /// <summary>
+        /// El motivo de las cancelaciones de las clases de hoy que ya terminaron al
+        /// aplicar con "Ahora mismo": "Antes de aplicar el horario <<nombre>> (12:40)"
+        /// con la marca de "No tomar en cuenta" (Faltas las reconoce y las puede
+        /// volver a contar).
+        /// </summary>
+        internal static string MotivoAntesDeAplicar(string nombre, DateTime momento)
+        {
+            return "Antes de aplicar el horario «" + nombre + "» (" + momento.ToString("HH:mm", CultureInfo.InvariantCulture) + ")"
+                + HorariosDatos.MarcaNoTomarEnCuenta;
+        }
+
+        /// <summary>
         /// La fecha de fin mas comun de las clases activas que valen hoy (para
         /// proponer el primer dia del horario nuevo: el dia siguiente), o null.
         /// </summary>
@@ -228,9 +324,16 @@ namespace DigBit.conexion
             DatosDeAplicacion datos = new DatosDeAplicacion { Fechas = fechas };
             datos.Leido = Leer(conexion, transaccion, idCiclo, fechas);
             datos.Hoy = datos.Leido.Hoy;
+            using (MySqlCommand comando = new MySqlCommand("SELECT NOW()", conexion, transaccion))
+            {
+                datos.Ahora = Convert.ToDateTime(comando.ExecuteScalar(), CultureInfo.InvariantCulture);
+                datos.LeidoEnMarca = System.Diagnostics.Stopwatch.GetTimestamp();
+            }
+
             datos.Revision = RevisionCiclo.Revisar(datos.Leido);
             datos.ConVigencia = Esquema.VigenciaDeFranjas(conexion, transaccion);
             datos.ConFecha = VigenciaFranjas.ConFecha(conexion, transaccion);
+            datos.ConHorasPorAsignar = Esquema.HorasPorAsignar(conexion, transaccion);
             bool conDadas = Esquema.AsistenciaDada(conexion, transaccion);
             Action<MySqlCommand> conFechas = c =>
             {
@@ -238,6 +341,10 @@ namespace DigBit.conexion
                 c.Parameters.AddWithValue("@Desde", fechas.Desde.Date);
                 c.Parameters.AddWithValue("@Hasta", fechas.Hasta.Date);
                 c.Parameters.AddWithValue("@Fin", fechas.Fin.Date);
+                // Lo que impide aplicar es lo registrado despues de este dia: el
+                // ultimo del horario de ahora o, con "Ahora mismo", hoy (lo de hoy
+                // paso antes de aplicar y se queda como esta).
+                c.Parameters.AddWithValue("@Limite", fechas.EmpiezaAhora ? fechas.Desde.Date : fechas.Fin.Date);
             };
 
             // 1) Las que terminan: todas las que valen ese dia y siguen despues
@@ -270,8 +377,14 @@ namespace DigBit.conexion
                 datos.FinMasComun = valor == null || valor == DBNull.Value ? (DateTime?)null : Convert.ToDateTime(valor).Date;
             }
 
-            // 2) La ultima sesion posterior al ultimo dia de las que se recortan.
+            // 2) La ultima sesion posterior al ultimo dia de las que se recortan
+            //    (con "Ahora mismo", posterior a hoy) y, con "Ahora mismo", lo de hoy.
             datos.SesionPosterior = UltimaSesionDespues(conexion, transaccion, conFechas, conDadas);
+            if (fechas.EmpiezaAhora)
+            {
+                LeerRegistradoHoy(conexion, transaccion, conFechas, conDadas, datos);
+                LeerLaboratoriosConGeneracion(conexion, transaccion, idCiclo, datos);
+            }
 
             // 3) R6: la misma terna ya esta en Clases en esas fechas. Las que se
             //    recortan no hace falta mirarlas: terminan en @Fin, antes de @Desde.
@@ -391,7 +504,8 @@ namespace DigBit.conexion
 
         /// <summary>
         /// La ultima sesion (con db/22, tambien una asistencia dada) despues de
-        /// @Fin de las clases que se recortan, o null. Son las de
+        /// @Limite (@Fin o, con "Ahora mismo", hoy) de las clases que se
+        /// recortan, o null. Son las de
         /// VigenciaFranjas.SesionDeLaClase y DiaDeSesion, pero por partes que
         /// usan los indices (enlazadas a una de sus franjas, a una de sus extras,
         /// o sin enlace de su terna dentro de su vigencia), como
@@ -409,13 +523,13 @@ namespace DigBit.conexion
                 (SELECT " + dia + @" AS dia, 0 AS dada, m.nombre_materia, g.nombre_grupo
                    FROM clases c
                    INNER JOIN horarios hh       ON hh.clases_idclases = c.idclases
-                   INNER JOIN codigos_accesos s ON s.horarios_idhorarios = hh.idhorarios" + nombres + " AND " + dia + @" > @Fin
+                   INNER JOIN codigos_accesos s ON s.horarios_idhorarios = hh.idhorarios" + nombres + " AND " + dia + @" > @Limite
                   ORDER BY 1 DESC LIMIT 1)
                 UNION ALL
                 (SELECT " + dia + @", 0, m.nombre_materia, g.nombre_grupo
                    FROM clases c
                    INNER JOIN horario_excepciones xx ON xx.clases_idclases = c.idclases
-                   INNER JOIN codigos_accesos s      ON s.horario_excepciones_id = xx.idhorario_excepciones" + nombres + " AND " + dia + @" > @Fin
+                   INNER JOIN codigos_accesos s      ON s.horario_excepciones_id = xx.idhorario_excepciones" + nombres + " AND " + dia + @" > @Limite
                   ORDER BY 1 DESC LIMIT 1)
                 UNION ALL
                 (SELECT " + dia + @", 0, m.nombre_materia, g.nombre_grupo
@@ -423,13 +537,13 @@ namespace DigBit.conexion
                    INNER JOIN codigos_accesos s
                            ON s.horarios_idhorarios IS NULL AND s.horario_excepciones_id IS NULL
                           AND s.usuarios_idusuarios = c.usuarios_idusuarios AND s.materias_id_materia = c.materias_id_materia
-                          AND s.grupos_idgrupos = c.grupos_idgrupos AND " + dia + " BETWEEN c.vigente_desde AND c.vigente_hasta" + nombres + " AND " + dia + @" > @Fin
+                          AND s.grupos_idgrupos = c.grupos_idgrupos AND " + dia + " BETWEEN c.vigente_desde AND c.vigente_hasta" + nombres + " AND " + dia + @" > @Limite
                   ORDER BY 1 DESC LIMIT 1)"
                 + (conDadas ? @"
                 UNION ALL
                 (SELECT ad.fecha, 1, m.nombre_materia, g.nombre_grupo
                    FROM clases c
-                   INNER JOIN asistencias_dadas ad ON ad.fk_clase = c.idclases" + nombres + @" AND ad.fecha > @Fin
+                   INNER JOIN asistencias_dadas ad ON ad.fk_clase = c.idclases" + nombres + @" AND ad.fecha > @Limite
                   ORDER BY 1 DESC LIMIT 1)" : "");
             SesionPosterior ultima = null;
             using (MySqlCommand comando = new MySqlCommand(sql, conexion, transaccion))
@@ -460,6 +574,111 @@ namespace DigBit.conexion
             }
 
             return ultima;
+        }
+
+        /// <summary>
+        /// Con "Ahora mismo": lo ya registrado hoy (@Desde) en las clases que se
+        /// recortan, que se queda como esta: sus sesiones (por las mismas partes
+        /// que UltimaSesionDespues), los estudiantes que registraron en ellas y,
+        /// con db/22, las asistencias que dieron sus docentes (las que cuentan).
+        /// Aparte, cuanto de eso es de una clase cuya misma persona docente, grupo
+        /// y materia esta en el horario nuevo (cuenta en la lista de la clase
+        /// nueva; lo demas, en la de la clase de antes). Solo lee.
+        /// </summary>
+        private static void LeerRegistradoHoy(MySqlConnection conexion, MySqlTransaction transaccion, Action<MySqlCommand> conFechas, bool conDadas,
+            DatosDeAplicacion datos)
+        {
+            string dia = VigenciaFranjas.DiaDeSesion("s");
+            string alumnos = "(SELECT COUNT(DISTINCT rb.fk_usuario) FROM registros_bitacoras rb WHERE rb.fk_codigo_accesos = s.idcodigos_accesos)";
+            // 1 si la terna de la clase (alias c) sigue en el horario nuevo.
+            string sigue = @"IF((SELECT COUNT(*) FROM ciclo_cargas k
+                                  WHERE k.idciclo = @C AND k.quitada = 0 AND k.profesor = c.usuarios_idusuarios
+                                    AND k.grupo = c.grupos_idgrupos AND k.materia = c.materias_id_materia) > 0, 1, 0)";
+            string deHoy = " WHERE " + SeRecorta + " AND " + dia + " = @Desde";
+            // UNION (sin ALL): una sesion que saliera por dos partes cuenta una vez.
+            string sql = @"
+                SELECT COUNT(*), COALESCE(SUM(t.alumnos), 0), COALESCE(SUM(t.sigue), 0), COALESCE(SUM(t.sigue * t.alumnos), 0) FROM (
+                    SELECT s.idcodigos_accesos AS id, " + alumnos + @" AS alumnos, " + sigue + @" AS sigue
+                      FROM clases c
+                      INNER JOIN horarios hh       ON hh.clases_idclases = c.idclases
+                      INNER JOIN codigos_accesos s ON s.horarios_idhorarios = hh.idhorarios" + deHoy + @"
+                    UNION
+                    SELECT s.idcodigos_accesos, " + alumnos + @", " + sigue + @"
+                      FROM clases c
+                      INNER JOIN horario_excepciones xx ON xx.clases_idclases = c.idclases
+                      INNER JOIN codigos_accesos s      ON s.horario_excepciones_id = xx.idhorario_excepciones" + deHoy + @"
+                    UNION
+                    SELECT s.idcodigos_accesos, " + alumnos + @", " + sigue + @"
+                      FROM clases c
+                      INNER JOIN codigos_accesos s
+                              ON s.horarios_idhorarios IS NULL AND s.horario_excepciones_id IS NULL
+                             AND s.usuarios_idusuarios = c.usuarios_idusuarios AND s.materias_id_materia = c.materias_id_materia
+                             AND s.grupos_idgrupos = c.grupos_idgrupos AND " + dia + " BETWEEN c.vigente_desde AND c.vigente_hasta" + deHoy + @"
+                ) t";
+            using (MySqlCommand comando = new MySqlCommand(sql, conexion, transaccion))
+            {
+                conFechas(comando);
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        datos.SesionesDeHoy = Convert.ToInt32(reader.GetValue(0));
+                        datos.BitacorasDeHoy = Convert.ToInt32(reader.GetValue(1));
+                        datos.SesionesDeHoySiguen = Convert.ToInt32(reader.GetValue(2));
+                        datos.BitacorasDeHoySiguen = Convert.ToInt32(reader.GetValue(3));
+                    }
+                }
+            }
+
+            if (conDadas)
+            {
+                using (MySqlCommand comando = new MySqlCommand(@"
+                    SELECT COUNT(*), COALESCE(SUM(" + sigue + @"), 0) FROM asistencias_dadas ad
+                    INNER JOIN clases c ON c.idclases = ad.fk_clase
+                    WHERE " + SeRecorta + " AND ad.fecha = @Desde AND ad.activa = 1", conexion, transaccion))
+                {
+                    conFechas(comando);
+                    using (MySqlDataReader reader = comando.ExecuteReader())
+                    {
+                        if (reader.Read())
+                        {
+                            datos.DadasDeHoy = Convert.ToInt32(reader.GetValue(0));
+                            datos.DadasDeHoySiguen = Convert.ToInt32(reader.GetValue(1));
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Con "Ahora mismo": los laboratorios del horario nuevo con generacion de
+        /// codigos. Los codigos generados dependen de la franja y estas son nuevas:
+        /// los ya dictados dejan de valer (RevisionAplicacion lo avisa). Solo lee.
+        /// </summary>
+        private static void LeerLaboratoriosConGeneracion(MySqlConnection conexion, MySqlTransaction transaccion, int idCiclo, DatosDeAplicacion datos)
+        {
+            if (!Esquema.ModoDeAcceso(conexion, transaccion))
+            {
+                return;
+            }
+
+            using (MySqlCommand comando = new MySqlCommand(@"
+                SELECT DISTINCT l.nombre_laboratorio
+                FROM ciclo_franjas f
+                INNER JOIN ciclo_cargas cc ON cc.idcarga = f.idcarga
+                INNER JOIN laboratorios l  ON l.idlaboratorios = f.laboratorio
+                WHERE cc.idciclo = @C AND cc.quitada = 0 AND l.modo_codigo = 'renovable'
+                ORDER BY l.nombre_laboratorio", conexion, transaccion))
+            {
+                comando.Parameters.AddWithValue("@C", idCiclo);
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        datos.LaboratoriosConGeneracion.Add(reader.GetString(0));
+                    }
+                }
+            }
         }
 
         /// <summary>Las personas docentes de la configuracion sin codigo (usuarios.codigo_clase vacio), por id, con su nombre corto. Necesita db/09.</summary>
@@ -498,12 +717,34 @@ namespace DigBit.conexion
         /// Con guardarAhoraComo (null = no), antes guarda el horario de ese dia
         /// como quedo. Se revisa otra vez todo dentro de la transaccion
         /// (RevisionAplicacion): con algo en rojo, ErrorDeDatos con su texto y no
-        /// cambia nada. Un solo renglon en el historial.
+        /// cambia nada. Un solo renglon en el historial. El primer dia tiene que
+        /// ser despues de hoy: para que empiece hoy, AplicarAhora.
         /// </summary>
         public ResultadoAplicar Aplicar(int idCiclo, string nombre, DateTime desde, DateTime hasta, DateTime fin, string guardarAhoraComo, int idAdministrador)
         {
+            return AplicarConFechas(idCiclo, nombre, new DatosDeFechas { Desde = desde.Date, Hasta = hasta.Date, Fin = fin.Date },
+                guardarAhoraComo, idAdministrador);
+        }
+
+        /// <summary>
+        /// "Ahora mismo": aplica como Aplicar, pero empieza en este momento. El
+        /// primer dia es hoy y el horario de ahora termina ayer (los dos del
+        /// servidor); hoy es el dia con que se reviso: si en el servidor ya es
+        /// otro, no aplica. Lo registrado hoy en las clases que se recortan se
+        /// queda, y en la misma transaccion cada clase de hoy del horario nuevo
+        /// que ya termino (hora_fin hasta la hora de NOW()) se cancela ese dia
+        /// como "No tomar en cuenta", todas con el mismo creada_en: no salen en
+        /// Faltas ni en Alertas y "Volver a contar" las devuelve. La que esta en
+        /// curso y las que faltan cuentan con el horario nuevo. Ya no se deshace.
+        /// </summary>
+        public ResultadoAplicar AplicarAhora(int idCiclo, string nombre, DateTime hoy, DateTime hasta, string guardarAhoraComo, int idAdministrador)
+        {
+            return AplicarConFechas(idCiclo, nombre, FechasDeAhora(hoy, hasta), guardarAhoraComo, idAdministrador);
+        }
+
+        private ResultadoAplicar AplicarConFechas(int idCiclo, string nombre, DatosDeFechas fechas, string guardarAhoraComo, int idAdministrador)
+        {
             Permisos.Exigir("Aplicar un horario");
-            DatosDeFechas fechas = new DatosDeFechas { Desde = desde.Date, Hasta = hasta.Date, Fin = fin.Date };
             string guardar = string.IsNullOrWhiteSpace(guardarAhoraComo) ? null : guardarAhoraComo.Trim();
             if (guardar != null && guardar.Length > LargoNombre)
             {
@@ -525,6 +766,18 @@ namespace DigBit.conexion
                 }
 
                 nombre = ValidarNombre(conexion, transaccion, nombre, EstadoConfiguracion.Aplicada, idCiclo);
+
+                // "Ahora mismo" se reviso con un hoy: si el servidor ya esta en otro dia
+                // (paso la medianoche mientras se confirmaba), no se aplica.
+                if (fechas.EmpiezaAhora)
+                {
+                    DateTime hoyServidor = Hoy(conexion, transaccion);
+                    if (hoyServidor != fechas.Desde.Date)
+                    {
+                        throw new ErrorDeDatos("En el servidor ya es " + HistorialCambios.DiaYFecha(hoyServidor)
+                            + ": vuelve a revisar «Antes de aplicar» y aplica otra vez.");
+                    }
+                }
 
                 // Las clases que se recortan, bloqueadas antes de leer: nadie las
                 // cambia entre la revision y el recorte.
@@ -647,6 +900,21 @@ namespace DigBit.conexion
                     WHERE cc.idciclo = @C AND cc.quitada = 0
                     ORDER BY cc.idcarga, f.idfranja", parametros);
 
+                // g1) Lo que falta asignar en la plantilla pasa a "Falta asignar" de Horario
+                //     semanal, a la clase que se acaba de crear (sin db/25, solo lo avisa
+                //     la revision). Sus renglones se quedan en la plantilla: Deshacer la
+                //     devuelve como estaba.
+                PasarLoQueFaltaAsignar(conexion, transaccion, resultado, idCiclo, fechas.Desde, idAdministrador);
+
+                // g2) "Ahora mismo": las clases de hoy del horario nuevo que ya
+                //     terminaron (hora_fin hasta la hora del servidor) no cuentan hoy.
+                //     Se cancelan ese dia como "No tomar en cuenta" (HorariosDatos),
+                //     todas con el mismo creada_en: "Volver a contar" las devuelve.
+                if (fechas.EmpiezaAhora)
+                {
+                    CancelarLasYaTerminadas(conexion, transaccion, resultado, fechas, nombre, idAdministrador, parametros);
+                }
+
                 // h) Queda aplicada, con su vigencia y el ultimo dia del horario de antes.
                 int aplicada = CambiarEnLaBase(conexion, transaccion, @"
                     UPDATE ciclos_preliminares
@@ -662,7 +930,14 @@ namespace DigBit.conexion
                     throw new ErrorDeDatos("Esta plantilla ya se aplicó, se guardó o se borró: vuelve a entrar a la pestaña.");
                 }
 
-                // i) Un solo renglon para todo el horario (no uno por clase).
+                // i) Un solo renglon para todo el horario (no uno por clase). Con
+                //    "Ahora mismo", a que hora empezo y cuantas de hoy no cuentan.
+                string hora = resultado.EmpezoA.ToString("HH:mm", CultureInfo.InvariantCulture);
+                string empezo = !resultado.EmpezoAhora ? ""
+                    : "; empezó hoy a las " + hora
+                      + (resultado.SinContarHoy == 0 ? ""
+                          : resultado.SinContarHoy == 1 ? " y 1 clase de hoy que ya había terminado no cuenta"
+                          : " y " + resultado.SinContarHoy + " clases de hoy que ya habían terminado no cuentan");
                 HistorialCambios.Anotar(conexion, transaccion, new CambioPorAnotar
                 {
                     Tipo = TipoDeCambio.Horario,
@@ -671,16 +946,22 @@ namespace DigBit.conexion
                     RegistroId = idCiclo,
                     Fecha = fechas.Desde,
                     Descripcion = "Horario «" + nombre + "» aplicado: " + RevisionCiclo.TextoClases(resultado.Clases) + " "
-                        + HistorialCambios.Vigencia(fechas.Desde, fechas.Hasta) + "; "
+                        + HistorialCambios.Vigencia(fechas.Desde, fechas.Hasta) + empezo + "; "
                         + (resultado.Terminan == 0
                             ? "ninguna clase de antes se recorta."
                             : (resultado.Terminan == 1 ? "la de antes termina" : "las " + resultado.Terminan + " de antes terminan")
-                              + " el " + HistorialCambios.Fecha(fechas.Fin) + "."),
+                              + " el " + HistorialCambios.Fecha(fechas.Fin) + (resultado.EmpezoAhora ? " (ayer)." : ".")),
                     Antes = null,
                     Despues = HistorialCambios.Datos(
                         "Vigencia", HistorialCambios.Vigencia(fechas.Desde, fechas.Hasta),
+                        "Empezó", resultado.EmpezoAhora ? "hoy, " + HistorialCambios.DiaYFecha(fechas.Desde) + ", a las " + hora + " (al aplicarlo)" : null,
                         "Clases nuevas", resultado.Clases.ToString(CultureInfo.InvariantCulture),
                         "Horarios", resultado.Horarios.ToString(CultureInfo.InvariantCulture),
+                        "Falta asignar", resultado.MinutosPorAsignar > 0 ? HorariosDatos.Duracion(resultado.MinutosPorAsignar) : null,
+                        "No cuentan hoy", resultado.EmpezoAhora && resultado.SinContarHoy > 0
+                            ? RevisionCiclo.TextoClases(resultado.SinContarHoy) + " que ya había" + (resultado.SinContarHoy == 1 ? "" : "n")
+                              + " terminado (canceladas ese día como «no tomar en cuenta»; en Faltas se pueden volver a contar)"
+                            : null,
                         "Terminan", RevisionCiclo.TextoClases(resultado.Terminan) + " el " + HistorialCambios.Fecha(fechas.Fin))
                 });
 
@@ -689,10 +970,110 @@ namespace DigBit.conexion
                     + " al " + fechas.Hasta.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ": " + resultado.Clases + " clases con "
                     + resultado.Horarios + " horarios; " + resultado.Terminan + " clases de antes terminan el "
                     + fechas.Fin.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+                    + (resultado.EmpezoAhora ? "; ahora mismo, a las " + resultado.EmpezoA.ToString("HH:mm:ss", CultureInfo.InvariantCulture)
+                        + ", con " + resultado.SinContarHoy + " clases de hoy ya terminadas sin contar" : "")
                     + (resultado.GuardadaId.HasValue ? "; guardado como quedo en " + resultado.GuardadaId.Value : "")
                     + (resultado.RecibieronCodigo.Count > 0 ? "; " + resultado.RecibieronCodigo.Count + " docentes recibieron codigo" : "") + ".");
                 return resultado;
             }
+        }
+
+        /// <summary>
+        /// Dentro de la transaccion de Aplicar y despues de crear las clases: cada
+        /// renglon de "Falta asignar" de la plantilla (QuitadaPorAsignar) queda
+        /// tambien en horas_por_asignar de la clase nueva que le toca. Sin db/25, o si
+        /// esa clase no se creo, nada: la revision ya lo aviso.
+        /// </summary>
+        private static void PasarLoQueFaltaAsignar(MySqlConnection conexion, MySqlTransaction transaccion, ResultadoAplicar resultado, int idCiclo, DateTime desde,
+            int idAdministrador)
+        {
+            if (!Esquema.HorasPorAsignar(conexion, transaccion))
+            {
+                return;
+            }
+
+            List<PorAsignarCiclo> pendientes = LeerPorAsignar(conexion, transaccion, idCiclo, "", null, true);
+            if (pendientes.Count == 0)
+            {
+                return;
+            }
+
+            Dictionary<int, int> claseDeCarga = new Dictionary<int, int>();
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT idcarga, clase_publicada FROM ciclo_cargas WHERE idciclo = @C AND quitada = 0 AND clase_publicada IS NOT NULL", conexion, transaccion))
+            {
+                comando.Parameters.AddWithValue("@C", idCiclo);
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        claseDeCarga[reader.GetInt32(0)] = reader.GetInt32(1);
+                    }
+                }
+            }
+
+            foreach (PorAsignarCiclo p in pendientes)
+            {
+                int clase;
+                if (claseDeCarga.TryGetValue(p.CargaId, out clase))
+                {
+                    HorariosDatos.InsertarPendienteDePlantilla(conexion, transaccion, clase, p.Minutos, Math.Max(p.Minutos, p.MinutosOriginales), p.LaboratorioId, p.DiaSemana,
+                        p.Inicio, p.Fin, desde, p.Motivo, idAdministrador);
+                    resultado.MinutosPorAsignar += p.Minutos;
+                }
+            }
+        }
+
+        /// <summary>
+        /// "Ahora mismo", dentro de la transaccion de Aplicar y despues de crear
+        /// las franjas: cada franja de hoy de las clases nuevas que ya termino a la
+        /// hora del servidor (hora_fin hasta la de NOW()) se cancela hoy, como
+        /// "No tomar en cuenta" de Faltas (HorariosDatos.InsertarCancelada con el
+        /// motivo MotivoAntesDeAplicar y un mismo creada_en, MomentoDelLote). La
+        /// que esta en curso y las que faltan no se tocan: cuentan con el horario
+        /// nuevo. Si en el servidor ya es otro dia, ErrorDeDatos (no cambia nada).
+        /// </summary>
+        private static void CancelarLasYaTerminadas(MySqlConnection conexion, MySqlTransaction transaccion, ResultadoAplicar resultado,
+            DatosDeFechas fechas, string nombre, int idAdministrador, Action<MySqlCommand> parametros)
+        {
+            resultado.EmpezoAhora = true;
+            resultado.EmpezoA = Convert.ToDateTime(ValorEnLaBase(conexion, transaccion, "SELECT NOW()", null), CultureInfo.InvariantCulture);
+            if (resultado.EmpezoA.Date != fechas.Desde.Date)
+            {
+                throw new ErrorDeDatos("En el servidor ya es " + HistorialCambios.DiaYFecha(resultado.EmpezoA.Date)
+                    + ": vuelve a revisar «Antes de aplicar» y aplica otra vez.");
+            }
+
+            TimeSpan hora = new TimeSpan(resultado.EmpezoA.Hour, resultado.EmpezoA.Minute, resultado.EmpezoA.Second);
+            List<int> terminadas = new List<int>();
+            using (MySqlCommand comando = new MySqlCommand(@"
+                SELECT h.idhorarios FROM horarios h
+                INNER JOIN ciclo_cargas cc ON cc.clase_publicada = h.clases_idclases
+                WHERE cc.idciclo = @C AND cc.quitada = 0 AND h.dia_semana = WEEKDAY(@Desde) + 1 AND h.hora_fin <= @Hora
+                ORDER BY h.hora_inicio, h.laboratorios_idlaboratorios, h.idhorarios", conexion, transaccion))
+            {
+                parametros(comando);
+                comando.Parameters.AddWithValue("@Hora", hora);
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        terminadas.Add(reader.GetInt32(0));
+                    }
+                }
+            }
+
+            if (terminadas.Count > 0)
+            {
+                string motivo = MotivoAntesDeAplicar(nombre, resultado.EmpezoA);
+                DateTime creadaEn = HorariosDatos.MomentoDelLote(conexion, transaccion, motivo, idAdministrador);
+                foreach (int franja in terminadas)
+                {
+                    HorariosDatos.InsertarCancelada(conexion, transaccion, franja, fechas.Desde, motivo, idAdministrador, creadaEn);
+                }
+            }
+
+            resultado.SinContarHoy = terminadas.Count;
         }
 
         /// <summary>Sin db/16, db/23 o db/09 no se aplica (las pestanas ya lo explican).</summary>
@@ -802,6 +1183,17 @@ namespace DigBit.conexion
 
                 resultado.PorOtraIgual = sinCambios.Count(id => conOtraIgual.Contains(id));
                 resultado.NoDevueltas = recortadas.Count - sinCambios.Count;
+
+                // Lo que Aplicar paso a "Falta asignar" de esas clases: horas_por_asignar no
+                // tiene claves foraneas y se quedaria sin clase. La plantilla conserva lo suyo.
+                if (aplicada.Clases.Count > 0 && Esquema.HorasPorAsignar(conexion, transaccion))
+                {
+                    using (MySqlCommand comando = new MySqlCommand("", conexion, transaccion))
+                    {
+                        comando.CommandText = "DELETE FROM horas_por_asignar WHERE clases_idclases IN (" + Lista(comando, "p", aplicada.Clases) + ")";
+                        comando.ExecuteNonQuery();
+                    }
+                }
 
                 // Las clases que creo, por lista (no multitabla: la clave SET NULL de
                 // ciclo_cargas). Sus franjas y excepciones se van con ellas.

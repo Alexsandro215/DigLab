@@ -540,7 +540,7 @@ namespace DigBit.conexion
             List<SesionAgenda> agenda = hoy.Agenda;
             List<SesionAgenda> alertas = new List<SesionAgenda>();
             foreach (SesionAgenda s in agenda.Where(s => conDigBit.ContainsKey(s.LaboratorioId) && !s.Cancelada && s.Utilizable
-                && s.Inicio + espera <= hora && hora < s.Fin && s.Alumnos == 0))
+                && s.Inicio + espera <= hora && hora < s.Fin && s.BitacorasDeLaClase == 0))
             {
                 if (s.EsExtra && agenda.Any(f => !f.EsExtra && f.Cancelada && f.ClaseId == s.ClaseId && f.LaboratorioId == s.LaboratorioId
                     && f.Inicio <= s.Inicio && f.Fin >= s.Fin && f.Alumnos > 0))

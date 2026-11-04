@@ -400,11 +400,13 @@ try {
     $texto = "$(Invocar (Estatico $tConfirma 'Texto') $null @($planL, $sinHorasL))"
     $cargaA = $leido.Carga($a)
     $esperado = "Esto quita a $($cargaA.Materia), $($cargaA.Grupo) ($($cargaA.ProfesorCorto)) del domingo 09:00" + [char]0x2013 + "10:00 (1 h) de este horario en preparaci" + [char]0xF3 + "n."
-    Ver 'texto de la confirmacion, como el de Horario semanal y sin "Falta asignar"' ($texto.StartsWith($esperado) -and $texto -notmatch 'Falta asignar' -and $texto -match 'Lo que se usa hoy no cambia\.$') $texto
+    Ver 'texto de la confirmacion, como el de Horario semanal, con "Falta asignar"' ($texto.StartsWith($esperado) -and $texto -match 'Quedar. en .Falta asignar.' -and $texto -match 'Lo que se usa hoy no cambia\.$') $texto
 
     Bien 'PonerHoras a B encima de A (09:00-10:00)' (Llamar 'PonerHoras' @($bb, $nuevas, $idAdmin)) | Out-Null
     Ver 'reemplazo parcial: A queda en 08:00-09:00 y 10:00-12:00 (se parte en dos)' ((FranjasDe $a) -eq "${lab1}:7 08:00-09:00; ${lab1}:7 10:00-12:00") (FranjasDe $a)
     Ver '... y B tiene 09:00-10:00' ((FranjasDe $bb) -eq "${lab1}:7 09:00-10:00") (FranjasDe $bb)
+    $falta = @((Leer $b).PorAsignar)
+    Ver '... y lo que se le quito a A queda en "Falta asignar" (1 h)' ($falta.Count -eq 1 -and $falta[0].CargaId -eq $a -and $falta[0].Minutos -eq 60 -and $falta[0].Motivo -eq 'desplazada') "$($falta.Count)"
     $rev = Revisar (Leer $b)
     Ver '... sin choques ni encimadas' ($rev.Choques.Count -eq 0 -and $rev.Encimadas.Count -eq 0)
 

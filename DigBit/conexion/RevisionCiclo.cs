@@ -683,10 +683,11 @@ namespace DigBit.conexion
         /// <summary>
         /// En la preparacion, lo que haria poner esas horas a esa clase: a que
         /// franjas de OTRAS clases del mismo laboratorio se les quitaria lo que se
-        /// cruza (como Horario semanal con db/25, pero aqui no hay "Falta
-        /// asignar"). Sin las franjas de "sinFranjas" (la que se mueve con
-        /// "Cambiar horas"). Lo de la misma persona docente o el mismo grupo en
-        /// otro laboratorio no se reemplaza: es un choque (ChoquesSi).
+        /// cruza (como Horario semanal con db/25: lo que se les quita queda en su
+        /// "Falta asignar", CicloPreliminarDatos.RecortarEncimadas). Sin las
+        /// franjas de "sinFranjas" (la que se mueve con "Cambiar horas"). Lo de la
+        /// misma persona docente o el mismo grupo en otro laboratorio no se
+        /// reemplaza: es un choque (ChoquesSi).
         /// </summary>
         public static List<FranjaReemplazada> Reemplazos(CicloLeido leido, int idCarga, IList<FranjaCiclo> nuevas, ICollection<int> sinFranjas = null)
         {

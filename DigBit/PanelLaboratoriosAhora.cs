@@ -812,7 +812,9 @@ namespace DigBit
                 }
             }
 
-            if (sesion.Alumnos == 0 && sesion.AsistenciasDadas > 0)
+            // Con lo que se registro en la clase de antes de su terna ("Ahora mismo"), como en Faltas.
+            int bitacoras = sesion.BitacorasDeLaClase;
+            if (bitacoras == 0 && sesion.AsistenciasDadas > 0)
             {
                 // Nadie registro, pero su docente dio la asistencia a quien no pudo
                 // (db/22; quiza sin internet): la clase se dio, no es de revisar. En
@@ -842,14 +844,14 @@ namespace DigBit
                 yield break;
             }
 
-            if (sesion.Alumnos == 0)
+            if (bitacoras == 0)
             {
                 // En curso puede ser que aun no lleguen; si ya termino, es de revisar.
                 yield return Tuple.Create(enCurso ? "Aún sin bitácoras" : "Nadie registró bitácora", enCurso ? TextoSecundario : Naranja);
                 yield break;
             }
 
-            string registro = sesion.Alumnos + (sesion.Alumnos == 1 ? " bitácora" : " bitácoras");
+            string registro = bitacoras + (bitacoras == 1 ? " bitácora" : " bitácoras");
             if (sesion.ConFallas == 0)
             {
                 yield return Tuple.Create(registro + ", sin fallas", Verde);

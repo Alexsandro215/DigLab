@@ -113,6 +113,10 @@ namespace DigBit
         // Ya se aplico el modo leido una vez (del servidor o de la copia): hasta
         // entonces, el Fijo de arriba es solo el valor de partida.
         private bool modoLeido;
+        // "Los docentes no ven los codigos" (CodigosSoloResponsables), lo ultimo
+        // leido con la generacion de codigos: el codigo de la clase lo da la
+        // persona responsable del laboratorio, no le aparece a su docente.
+        private bool codigosSoloResponsables;
         private FlowLayoutPanel pnlClases;
         private Label lblProxima;
         private string clavesClases = "";
@@ -225,6 +229,11 @@ namespace DigBit
             public Dictionary<int, LecturaPersonal> Personal;
             /// <summary>Las imagenes de sus clases de hoy que aun no estaban en memoria, por SHA1.</summary>
             public Dictionary<string, byte[]> Imagenes;
+            /// <summary>
+            /// Con la generacion de codigos, "Los docentes no ven los codigos"
+            /// (CodigosSoloResponsables); null si no se leyo (otro modo o la copia local).
+            /// </summary>
+            public bool? CodigosSoloResponsables;
         }
 
         /// <summary>
@@ -733,9 +742,9 @@ namespace DigBit
                     ? "Paso 1. Escribe el código de esta clase"
                     : "Paso 1. Escribe el código que te dicta tu docente";
                 // Con un ejemplo de este modo: quien ve la caja por primera vez no lo sabia.
-                lblPaso1Ayuda.Text = modo == ModoCodigo.Renovable
-                    ? "Cambia en cada clase: tu docente lo ve al entrar a DigBit. " + EjemploCodigoDeClase
-                    : EjemploCodigoFijo;
+                lblPaso1Ayuda.Text = modo != ModoCodigo.Renovable ? EjemploCodigoFijo
+                    : codigosSoloResponsables ? "Cambia en cada clase: lo da la persona responsable del laboratorio. " + EjemploCodigoDeClase
+                    : "Cambia en cada clase: tu docente lo ve al entrar a DigBit. " + EjemploCodigoDeClase;
                 if (codigoAceptado == null)
                 {
                     AcceptButton = btnContinuar;
@@ -2162,7 +2171,8 @@ namespace DigBit
                 lblPaso1.Text = "Paso 1 listo ✓";
                 lblCodigoOk.Text = "Uso libre del laboratorio (sin clase), " + HastaLas(aceptada.Fin.TimeOfDay) + ".";
                 lnkOtroCodigo.Text = "Volver a elegir";
-                MostrarClase("Uso libre: ahora no hay clase. Puedes usar el equipo " + HastaLas(aceptada.Fin.TimeOfDay) + ".", true);
+                // "Ahora en ...", no "Tu clase en ...": no hay clase.
+                MostrarClase("Uso libre: ahora no hay clase. Puedes usar el equipo " + HastaLas(aceptada.Fin.TimeOfDay) + ".", false);
             }
             else
             {
@@ -2576,7 +2586,7 @@ namespace DigBit
             {
                 if (libre)
                 {
-                    MostrarClase("Uso libre del laboratorio (sin clase), " + HastaLas(registrada.Fin.TimeOfDay) + ".", true);
+                    MostrarClase("Uso libre del laboratorio (sin clase), " + HastaLas(registrada.Fin.TimeOfDay) + ".", false);
                 }
                 else
                 {
@@ -2841,6 +2851,8 @@ namespace DigBit
                     // sus sesiones y si se pregunta el paso 3, con que equipos.
                     SituacionLaboratorio situacion = new HorariosDatos().SituacionDelLaboratorio(LaboratorioEquipo.Id);
                     datos.Modo = situacion.Modo;
+                    // Lo acaba de leer SituacionDelLaboratorio (solo con la generacion de codigos).
+                    datos.CodigosSoloResponsables = situacion.Modo == ModoCodigo.Renovable ? CodigosSoloResponsables.Activa : (bool?)null;
                     datos.Ahora = situacion.AhoraServidor;
                     datos.Agenda = situacion.Agenda;
                     datos.ConAvisosDeRed = situacion.ConAvisosDeRed;
@@ -2988,6 +3000,10 @@ namespace DigBit
             modo = datos.Modo;
             modoSinConexion = SinConexion.Activo;
             modoLeido = true;
+            if (datos.CodigosSoloResponsables.HasValue)
+            {
+                codigosSoloResponsables = datos.CodigosSoloResponsables.Value;
+            }
             datosTimer.Interval = (modo == ModoCodigo.Fijo ? SegundosEntreActualizaciones : SegundosEntreActualizaciones / 2) * 1000;
             TextosPaso1();
 
@@ -3051,9 +3067,7 @@ namespace DigBit
             {
                 // Con codigos generados, nunca se ensena el codigo: se dice si el
                 // profesor ya abrio la clase (entro a DigBit durante ella).
-                detalle = Describir(clase) + (modo == ModoCodigo.Renovable && !clase.SesionId.HasValue
-                    ? " Tu docente todavía no entra a DigBit para esta clase: el código le aparece al entrar."
-                    : "");
+                detalle = Describir(clase) + (modo == ModoCodigo.Renovable && !clase.SesionId.HasValue ? " " + SinAbrir : "");
             }
 
             // Con una clase de la que hablar (la unica abierta sin codigos, o la
@@ -3061,9 +3075,8 @@ namespace DigBit
             if (clase != null && tramoLibre == null && (PideCodigo || abiertas.Count == 1))
             {
                 string nota = !PideCodigo ? "Elígela abajo."
-                    : modo == ModoCodigo.Renovable && !clase.SesionId.HasValue
-                        ? "Tu docente todavía no entra a DigBit para esta clase: el código le aparece al entrar."
-                        : null;
+                    : modo == ModoCodigo.Renovable && !clase.SesionId.HasValue ? SinAbrir
+                    : null;
                 MostrarFicha(clase.Materia, clase.Grupo, clase.Profesor, clase.Inicio, clase.Fin, false, clase.EsExtra, nota,
                     AspectoDe(clase.ProfesorId, clase.MateriaId, clase.GrupoId));
             }
@@ -3094,6 +3107,21 @@ namespace DigBit
             else if (!PideCodigo)
             {
                 Colocar();
+            }
+        }
+
+        /// <summary>
+        /// Con la generacion de codigos, de la clase que nadie ha abierto: que su
+        /// docente aun no entra (el codigo le aparece al entrar) o, si los docentes
+        /// no ven los codigos, quien lo da (como el panel del docente).
+        /// </summary>
+        private string SinAbrir
+        {
+            get
+            {
+                return codigosSoloResponsables
+                    ? "El código de esta clase lo da la persona responsable del laboratorio."
+                    : "Tu docente todavía no entra a DigBit para esta clase: el código le aparece al entrar.";
             }
         }
 

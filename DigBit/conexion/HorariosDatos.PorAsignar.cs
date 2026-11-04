@@ -54,7 +54,8 @@ namespace DigBit.conexion
         /// <summary>
         /// Lo que no deja ponerlas aunque se reemplace (la misma persona docente o
         /// el mismo grupo a esa hora en otro laboratorio, o unas horas que no
-        /// valen), como lo dice ValidarFranja; null si nada.
+        /// valen), como lo dice ValidarFranja, o lo que no deja quitarle esas horas
+        /// a una de las Quitadas (lo que le quedaria choca, un recorte...); null si nada.
         /// </summary>
         public string Bloqueo;
     }
@@ -226,8 +227,10 @@ namespace DigBit.conexion
         /// Lo que pasaria al poner (franjaQueCambia null) o cambiar (su id) unas
         /// horas de una clase encima de otras del mismo laboratorio: a que
         /// franjas de OTRAS clases se les quitaria lo que se cruza, y si aun asi
-        /// algo no deja guardarlas (Bloqueo). No escribe nada. desde: con los
-        /// cambios desde una fecha, desde cuando valdria (como en CrearFranja y
+        /// algo no deja guardarlas (Bloqueo): tambien lo que le quedaria a una de
+        /// ellas (ProblemaAlRecortar), para no pedir confirmacion de algo que
+        /// luego no se puede hacer. No escribe nada. desde: con los cambios desde
+        /// una fecha, desde cuando valdria (como en CrearFranja y
         /// CambiarFranjaDesde); sin ellos, null.
         /// </summary>
         public PlanReemplazo PlanDeReemplazo(int? franjaQueCambia, int idClase, int idLaboratorio, int diaSemana, TimeSpan inicio, TimeSpan fin, DateTime? desde)
@@ -244,7 +247,8 @@ namespace DigBit.conexion
 
                 plan.Quitadas = QueSeReemplaza(conexion, null, franjaQueCambia, ventana, idLaboratorio, diaSemana, inicio, fin);
                 plan.Bloqueo = ValidarFranjaEn(conexion, null, franjaQueCambia, idClase, idLaboratorio, diaSemana, inicio, fin,
-                    ventana.PropiaDesde, ventana.PropiaHasta, plan.Quitadas.Select(q => q.FranjaId));
+                    ventana.PropiaDesde, ventana.PropiaHasta, plan.Quitadas.Select(q => q.FranjaId))
+                    ?? ProblemaAlRecortar(conexion, null, plan.Quitadas, ventana, idLaboratorio, inicio, fin);
                 return plan;
             }
         }
@@ -640,13 +644,154 @@ namespace DigBit.conexion
         }
 
         /// <summary>
+        /// Lo que no deja quitarle a alguna de las quitadas lo que se cruza
+        /// (Recortar), sin escribir nada, con lo que Recortar comprueba y en su
+        /// orden: el primer dia en que puede aplicar (desde una fecha), sus
+        /// recortes que ya no caben y lo que le quedaria (uno o dos trozos), que
+        /// se valida como en ValidarFranja: un choque que ese trozo ya tenia
+        /// tambien impide partirla, porque se guarda como franja. Null si se
+        /// puede. La vista previa (PlanDeReemplazo) lo dice antes de pedir
+        /// confirmacion, y Recortar con el mismo texto antes de escribir.
+        /// </summary>
+        private static string ProblemaAlRecortar(MySqlConnection conexion, MySqlTransaction transaccion, List<FranjaReemplazada> quitadas, VentanaDeReemplazo v,
+            int idLaboratorio, TimeSpan inicio, TimeSpan fin)
+        {
+            foreach (FranjaReemplazada q in quitadas)
+            {
+                FranjaGuardada franja = LeerFranjaGuardada(conexion, transaccion, q.FranjaId);
+                if (franja == null)
+                {
+                    continue;
+                }
+
+                DateTime hoy;
+                HistoriaFranja historia = LeerHistoria(conexion, transaccion, franja, out hoy);
+                bool enSuSitio = EnSuSitio(historia, franja, hoy, v.Corte);
+                List<TramoHorario> restos = Restos(q.Inicio, q.Fin, inicio, fin);
+                string cual = (restos.Count == 0 ? "No se puede reemplazar " : "No se puede reemplazar solo una parte de ") + q.Materia + " - " + q.Grupo + ": ";
+                string problema = enSuSitio ? null : ProblemaDePrimerDia(historia, hoy, v.Corte, restos.Count == 0 ? "se puede quitar" : "el cambio puede aplicar");
+                if (problema != null)
+                {
+                    return cual + Minuscula(problema);
+                }
+
+                if (restos.Count == 0)
+                {
+                    // Entera (QuitarFranjaDesdeEn): desde una fecha, un resto de sus
+                    // recortes con registros no deja; en su sitio, ese se queda.
+                    if (!enSuSitio)
+                    {
+                        List<CanceladaDeFranja> suyas = CanceladasDesde(conexion, transaccion, q.FranjaId, v.Corte);
+                        problema = ProblemaDeRestosUsados(suyas, suyas.ToDictionary(x => x.Id, x => LeerRestos(conexion, transaccion, x.Id)), v.Corte);
+                    }
+
+                    if (problema != null)
+                    {
+                        return cual + Minuscula(problema);
+                    }
+
+                    continue;
+                }
+
+                // Partida (CambiarFranjaDesdeEn con el primer trozo): sus recortes le
+                // tienen que caber al trozo de antes, que se queda con sus cancelaciones.
+                List<DateTime> recortes = RecortesQueNoCaben(conexion, transaccion, CanceladasDesde(conexion, transaccion, q.FranjaId, enSuSitio ? hoy : v.Corte),
+                    franja, q.ClaseId, idLaboratorio, q.DiaSemana, restos[0].Inicio, restos[0].Fin, !enSuSitio);
+                if (recortes.Count > 0)
+                {
+                    return cual + Minuscula(TextoDeRecortesQueNoCaben(recortes, !enSuSitio));
+                }
+
+                // Cada trozo, con la vigencia que tendria (como la nueva de
+                // CambiarFranjaDesdeEn) y sin la franja de ahora, que ya no estara.
+                DateTime? suDesde = enSuSitio ? franja.FranjaDesde
+                    : franja.FranjaDesde.HasValue && franja.FranjaDesde.Value > v.Corte ? franja.FranjaDesde : v.Corte;
+                foreach (TramoHorario trozo in restos)
+                {
+                    string choque = ValidarFranjaEn(conexion, transaccion, q.FranjaId, q.ClaseId, idLaboratorio, q.DiaSemana, trozo.Inicio, trozo.Fin,
+                        suDesde, franja.FranjaHasta);
+                    if (choque != null)
+                    {
+                        return TextoDeTrozo(q, trozo, choque);
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// "No se puede reemplazar solo una parte de Redes - 5A: lo que le
+        /// quedaría (13:00–14:00) se solapa con ... Elige sus horas completas
+        /// (12:00–14:00) para reemplazarla entera, o resuelve antes ese choque."
+        /// </summary>
+        private static string TextoDeTrozo(FranjaReemplazada q, TramoHorario trozo, string choque)
+        {
+            return "No se puede reemplazar solo una parte de " + q.Materia + " - " + q.Grupo + ": lo que le quedaría ("
+                + Hora(trozo.Inicio) + "–" + Hora(trozo.Fin) + ") " + Minuscula(choque)
+                + (choque.StartsWith("Se solapa con", StringComparison.Ordinal)
+                    ? " Elige sus horas completas (" + Hora(q.Inicio) + "–" + Hora(q.Fin) + ") para reemplazarla entera, o resuelve antes ese choque."
+                    : "");
+        }
+
+        /// <summary>El texto con su primera letra en minuscula, para seguir una frase ("...: se solapa con...").</summary>
+        private static string Minuscula(string texto)
+        {
+            return string.IsNullOrEmpty(texto) ? "" : char.ToLowerInvariant(texto[0]) + texto.Substring(1);
+        }
+
+        /// <summary>
+        /// Al partir una franja en dos (Recortar), las cancelaciones del trozo de
+        /// antes de desde en adelante (las de la franja, que CambiarFranjaDesdeEn
+        /// le dejo o le paso) valen tambien para el de despues: ese dia no se da
+        /// ninguna de las dos partes. Si no, la de despues saldria ese dia como
+        /// clase (y en Faltas en rojo). Con el mismo motivo, quien y cuando, como
+        /// el segundo trozo de una extra que se parte; un "No tomar en cuenta" sigue
+        /// siendo un solo lote. Sus restos caben en el de antes (ProblemaAlRecortar)
+        /// y se quedan con el. Devuelve sus fechas.
+        /// </summary>
+        private static List<DateTime> CopiarCanceladas(MySqlConnection conexion, MySqlTransaction transaccion, int deFranja, int aFranja, DateTime desde)
+        {
+            List<DateTime> fechas = CanceladasDesde(conexion, transaccion, deFranja, desde).Select(x => x.Fecha).ToList();
+            if (fechas.Count == 0)
+            {
+                return fechas;
+            }
+
+            using (MySqlCommand comando = new MySqlCommand(@"
+                INSERT INTO horario_excepciones (tipo, fecha, horarios_idhorarios, motivo, creada_por, creada_en)
+                SELECT 'cancelada', x.fecha, @A, x.motivo, x.creada_por, x.creada_en
+                FROM horario_excepciones x
+                WHERE x.tipo = 'cancelada' AND x.horarios_idhorarios = @De AND x.fecha >= @Desde", conexion, transaccion))
+            {
+                comando.Parameters.AddWithValue("@A", aFranja);
+                comando.Parameters.AddWithValue("@De", deFranja);
+                comando.Parameters.AddWithValue("@Desde", desde.Date);
+                comando.ExecuteNonQuery();
+            }
+
+            Log.Info("Franja " + aFranja + " (lo que le queda a la " + deFranja + "): con sus " + fechas.Count + " cancelaciones de "
+                + desde.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + " en adelante.");
+            return fechas;
+        }
+
+        /// <summary>
         /// A cada una le quita lo que se cruza desde el corte (QuitarFranjaDesdeEn
         /// o CambiarFranjaDesdeEn: con ConFecha y historia, sin reescribir lo
         /// pasado; si no, en su sitio), y eso queda por asignar ('desplazada').
+        /// Antes de escribir nada, lo que no lo dejaria (ProblemaAlRecortar, lo
+        /// mismo que dijo la vista previa). Si se parte en dos, el trozo de despues
+        /// se lleva tambien las cancelaciones del de antes (CopiarCanceladas).
         /// </summary>
         private static void Recortar(MySqlConnection conexion, MySqlTransaction transaccion, List<FranjaReemplazada> quitadas, VentanaDeReemplazo v,
             int idLaboratorio, TimeSpan inicio, TimeSpan fin, string quienEntra, int? quien)
         {
+            string problema = ProblemaAlRecortar(conexion, transaccion, quitadas, v, idLaboratorio, inicio, fin);
+            if (problema != null)
+            {
+                throw new InvalidOperationException(problema);
+            }
+
             foreach (FranjaReemplazada q in quitadas)
             {
                 string porque = "La reemplaza " + quienEntra + " de " + HistorialCambios.Horas(inicio, fin) + "; "
@@ -662,22 +807,28 @@ namespace DigBit.conexion
                         v.Corte, porque);
                     if (restos.Count > 1)
                     {
-                        // El trozo de despues, con la misma vigencia que el de antes.
+                        // El trozo de despues, con la misma vigencia que el de antes y,
+                        // los dias en que el de antes esta cancelado, cancelado tambien.
                         FranjaGuardada antes = LeerFranjaGuardada(conexion, transaccion, primera);
                         DateTime? suDesde = antes == null ? (DateTime?)null : antes.FranjaDesde;
                         DateTime? suHasta = antes == null ? (DateTime?)null : antes.FranjaHasta;
-                        string conflicto = ValidarFranjaEn(conexion, transaccion, null, q.ClaseId, idLaboratorio, q.DiaSemana, restos[1].Inicio, restos[1].Fin, suDesde, suHasta);
+                        string conflicto = ValidarFranjaEn(conexion, transaccion, null, q.ClaseId, idLaboratorio, q.DiaSemana, restos[1].Inicio, restos[1].Fin, suDesde, suHasta,
+                            null, primera);
                         if (conflicto != null)
                         {
-                            throw new InvalidOperationException("No se puede partir " + q.Materia + " - " + q.Grupo + ": " + conflicto);
+                            throw new InvalidOperationException(TextoDeTrozo(q, restos[1], conflicto));
                         }
 
                         int segunda = InsertarFranja(conexion, transaccion, q.ClaseId, idLaboratorio, q.DiaSemana, restos[1].Inicio, restos[1].Fin, suDesde, suHasta);
+                        List<DateTime> canceladas = CopiarCanceladas(conexion, transaccion, primera, segunda, v.Corte);
                         if (HistorialCambios.Activo(conexion, transaccion))
                         {
                             FotoFranja foto = FotoDeFranja(conexion, transaccion, segunda);
                             AnotarFranja(conexion, transaccion, AccionDeCambio.Alta, segunda, null, foto, suDesde, foto == null ? null
-                                : foto.Clase + ": " + foto.Donde + " (lo que le queda después de lo que se le quitó). " + porque);
+                                : foto.Clase + ": " + foto.Donde + " (lo que le queda después de lo que se le quitó"
+                                  + (canceladas.Count == 1 ? "; también con su cancelación del " + ListaDeFechas(canceladas)
+                                     : canceladas.Count > 1 ? "; también con sus " + canceladas.Count + " cancelaciones de esa fecha en adelante" : "")
+                                  + "). " + porque);
                         }
                     }
                 }
@@ -754,6 +905,35 @@ namespace DigBit.conexion
                     "Desde", HistorialCambios.Fecha(desde),
                     "Motivo", motivo == MotivoQuitada ? "Se quitaron para darlas en otro horario" : "Otra clase se puso en su lugar")
             });
+        }
+
+        /// <summary>
+        /// Lo que le faltaba a una clase de una plantilla pasa, al aplicarla, a
+        /// "Falta asignar" de la clase que se creo (CicloPreliminarDatos.Aplicar).
+        /// Sin un renglon por cada una en el historial: Aplicar deja uno solo con
+        /// todo el horario. Quien llama sabe que hay db/25.
+        /// </summary>
+        internal static void InsertarPendienteDePlantilla(MySqlConnection conexion, MySqlTransaction transaccion, int idClase, int minutos, int minutosOriginales,
+            int idLaboratorio, int diaSemana, TimeSpan inicio, TimeSpan fin, DateTime desde, string motivo, int quien)
+        {
+            using (MySqlCommand comando = new MySqlCommand(@"
+                INSERT INTO horas_por_asignar (clases_idclases, minutos, minutos_originales, laboratorio_id, dia_semana, hora_inicio, hora_fin, desde,
+                                               motivo, creada_en, creada_por, estado)
+                VALUES (@Clase, @Minutos, @Originales, @Lab, @Dia, @Inicio, @Fin, @Desde, @Motivo, NOW(), @Quien, @Pendiente)", conexion, transaccion))
+            {
+                comando.Parameters.AddWithValue("@Clase", idClase);
+                comando.Parameters.AddWithValue("@Minutos", minutos);
+                comando.Parameters.AddWithValue("@Originales", minutosOriginales);
+                comando.Parameters.AddWithValue("@Lab", idLaboratorio);
+                comando.Parameters.AddWithValue("@Dia", diaSemana);
+                comando.Parameters.AddWithValue("@Inicio", inicio);
+                comando.Parameters.AddWithValue("@Fin", fin);
+                comando.Parameters.AddWithValue("@Desde", desde.Date);
+                comando.Parameters.AddWithValue("@Motivo", motivo);
+                comando.Parameters.AddWithValue("@Quien", quien > 0 ? (object)quien : DBNull.Value);
+                comando.Parameters.AddWithValue("@Pendiente", EstadoPendiente);
+                comando.ExecuteNonQuery();
+            }
         }
 
         /// <summary>Un renglon pendiente (para resolverlo, con lo que dice el historial).</summary>

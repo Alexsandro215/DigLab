@@ -209,8 +209,12 @@ namespace DigBit
     {
         private const int AnchoFlecha = 30;
         private const int Separacion = 4;
-        private static readonly ToolTip Ayuda = new ToolTip();
         private static readonly Color Verde = Color.FromArgb(0, 100, 0);
+        // Una ayuda por selector, que se libera con el (2026-11-03): la de antes era
+        // de todos (estatica) y nunca soltaba las flechas ni el nombre, asi que cada
+        // ventana de Horarios, Estadisticas o Proximo ciclo cerrada se quedaba
+        // entera en memoria (de la flecha a su Click, a esta, a la lista y a la ventana).
+        private readonly ToolTip ayuda = new ToolTip();
         private readonly ComboBox lista;
         private readonly string queCambia;
         private readonly Panel selector = new Panel { BackColor = Color.White, TabStop = false };
@@ -260,6 +264,7 @@ namespace DigBit
             selector.Controls.Add(nombre);
             selector.Controls.Add(siguiente);
             selector.Resize += (s, e) => Colocar();
+            selector.Disposed += (s, e) => ayuda.Dispose();
 
             indiceAnterior = lista.SelectedIndex;
             lista.SelectedIndexChanged += (s, e) =>
@@ -326,16 +331,16 @@ namespace DigBit
             return nueva;
         }
 
-        private Button Flecha(string texto, string ayuda)
+        private Button Flecha(string texto, string queHace)
         {
             Button flecha = EstiloHorarios.CrearBoton(texto, Point.Empty, new Size(AnchoFlecha, 26));
             flecha.Font = new Font("Segoe UI Symbol", 9F, FontStyle.Bold);
             flecha.FlatAppearance.BorderSize = 1;
             flecha.Padding = new Padding(0);
             flecha.TabStop = false;
-            flecha.AccessibleName = ayuda;
+            flecha.AccessibleName = queHace;
             flecha.Disposed += (s, e) => flecha.Font.Dispose();
-            Ayuda.SetToolTip(flecha, ayuda);
+            ayuda.SetToolTip(flecha, queHace);
             return flecha;
         }
 
@@ -379,7 +384,7 @@ namespace DigBit
             string visible = elegido == null || textoVisible == null ? null : textoVisible(elegido);
             nombre.Text = visible ?? texto;
             nombre.AccessibleName = queCambia + ": " + texto + ". Pulsa para elegir otro.";
-            Ayuda.SetToolTip(nombre, texto.Length == 0 ? null : texto + Environment.NewLine + "Pulsa para elegir otro; ← y → para el anterior y el siguiente.");
+            ayuda.SetToolTip(nombre, texto.Length == 0 ? null : texto + Environment.NewLine + "Pulsa para elegir otro; ← y → para el anterior y el siguiente.");
             // En carrusel las dos flechas sirven siempre que haya otro a donde ir (si
             // lo hay hacia un lado, dando la vuelta tambien lo hay hacia el otro).
             bool hayOtro = Destino(1) >= 0;
@@ -468,14 +473,28 @@ namespace DigBit
     }
 
     /// <summary>
+    /// Un control que usa el mismo ← y → (sin Ctrl o con el): con el foco en el,
+    /// TeclasDeFlechas no se las quita. La cuadricula de un horario que se edita
+    /// (mueve el cuadro elegido) y el mes de Faltas (cambia de mes).
+    /// </summary>
+    internal interface IUsaFlechas
+    {
+        bool UsaFlechas(bool conCtrl);
+    }
+
+    /// <summary>
     /// ← y → del teclado en las pantallas de horarios: el laboratorio anterior o
-    /// siguiente (FlechasDeLista) y, con Ctrl, la semana o el mes; donde no hay
-    /// laboratorio (Mi horario), ← y → son la semana. Va a lo que se ve en la
+    /// siguiente (FlechasDeLista) y, con Ctrl, la semana, el dia o el mes; donde no
+    /// hay laboratorio (Mi horario), ← y → son la semana. Va a lo que se ve en la
     /// ventana activa (la pestana elegida). No se mete con lo que se escribe: en
     /// una caja de texto, una fecha, un numero o una lista abierta, las flechas
     /// siguen moviendo el cursor como siempre; con el foco en otra lista (el
     /// periodo o el docente de Estadisticas) o en unas opciones (Por semana y Por
-    /// mes de Graficas), eligen en ellas.
+    /// mes de Graficas), eligen en ellas; con el foco en un control que las usa
+    /// (IUsaFlechas: la cuadricula de Horario semanal y de la preparacion de
+    /// Proximo ciclo, el mes de Faltas), son de el (2026-11-03: antes cambiaban de
+    /// laboratorio y se perdian los cuadros elegidos). Ctrl+← → siguen siendo la
+    /// semana o el mes tambien desde la cuadricula.
     /// </summary>
     internal static class TeclasDeFlechas
     {
@@ -552,13 +571,21 @@ namespace DigBit
             }
 
             /// <summary>
-            /// Con el foco ahi, las flechas son de ese control: lo que se escribe, otra lista y unas
-            /// opciones (Por semana / Por mes de Graficas), donde ← y → eligen entre ellas; con Ctrl,
-            /// en las opciones siguen siendo de aqui (las secciones de Graficas).
+            /// Con el foco ahi, las flechas son de ese control: lo que se escribe, otra lista, unas
+            /// opciones (Por semana / Por mes de Graficas), donde ← y → eligen entre ellas, y lo que
+            /// las usa (IUsaFlechas); con Ctrl, en las opciones siguen siendo de aqui (las secciones
+            /// de Graficas).
             /// </summary>
             private static bool NoSeToca(Control foco, bool conCtrl)
             {
-                return EsDeEscribir(foco) || EsOtraLista(foco) || (!conCtrl && foco is RadioButton);
+                return EsDeEscribir(foco) || EsOtraLista(foco) || (!conCtrl && foco is RadioButton) || LasUsa(foco, conCtrl);
+            }
+
+            /// <summary>Un control (o el que lo contiene, como una tabla a su celda) que usa esas flechas el mismo.</summary>
+            private static bool LasUsa(Control foco, bool conCtrl)
+            {
+                IUsaFlechas propio = foco as IUsaFlechas ?? (foco == null ? null : foco.Parent as IUsaFlechas);
+                return propio != null && propio.UsaFlechas(conCtrl);
             }
 
             /// <summary>Donde ← y → mueven el cursor o eligen: ahi no se tocan.</summary>

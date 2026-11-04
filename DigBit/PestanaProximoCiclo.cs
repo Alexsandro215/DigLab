@@ -89,6 +89,25 @@ namespace DigBit
         {
             return "Cambiar horas de " + materia + " con " + grupo + " (" + Dia(dia) + " " + Horas(inicio, fin) + ")...";
         }
+
+        /// <summary>El ultimo dia que se ofrece al poner o cambiar horas en una plantilla: el sabado (2026-11-03).</summary>
+        public const int UltimoDiaDeClases = 6;
+
+        /// <summary>
+        /// Los dias que ofrecen los dialogos de horas de una plantilla: de lunes a
+        /// sabado, como la cuadricula. Si las horas que se cambian ya estan otro
+        /// dia (unas viejas el domingo), ese tambien, para que se vea cual es.
+        /// </summary>
+        public static List<OpcionCombo> DiasParaElegir(int? diaActual)
+        {
+            List<OpcionCombo> dias = Enumerable.Range(1, UltimoDiaDeClases).Select(d => new OpcionCombo { Id = d, Texto = HorariosDatos.NombresDia[d] }).ToList();
+            if (diaActual.HasValue && diaActual.Value > UltimoDiaDeClases && diaActual.Value < HorariosDatos.NombresDia.Length)
+            {
+                dias.Add(new OpcionCombo { Id = diaActual.Value, Texto = HorariosDatos.NombresDia[diaActual.Value] });
+            }
+
+            return dias;
+        }
     }
 
     /// <summary>
@@ -104,9 +123,13 @@ namespace DigBit
     ///    marca "En preparacion (plantilla): nada se usa hasta aplicarla" y sin
     ///    excepciones, cancelaciones ni sesiones extra. Poner horas encima de
     ///    otra clase del mismo laboratorio la reemplaza (antes pregunta): se le
-    ///    quita solo lo que se cruza. Los choques (la misma persona docente o el
+    ///    quita solo lo que se cruza, y eso queda en "Falta asignar" (con su
+    ///    lista, "Ponerla..." y "Ya no hace falta"), como "Quitar horas" si se
+    ///    van a dar en otro horario. Los choques (la misma persona docente o el
     ///    mismo grupo a la misma hora en otro laboratorio) no impiden guardarla:
-    ///    se avisan (en rojo, "Choques: N") y no dejan aplicar.
+    ///    se avisan (en rojo, "Choques: N") y no dejan aplicar. Tambien
+    ///    "Imprimir PDF" del laboratorio y, en la lista de clases, "Ver en el
+    ///    horario" (2026-11-03: las mismas acciones que Horario semanal).
     /// 3. Aplicar con fechas: PestanaAplicacion.
     /// Nada de lo de los pasos 1 y 2 cambia el horario que se usa (regla R1).
     /// Solo la administracion escribe; la persona responsable del laboratorio
@@ -216,6 +239,7 @@ namespace DigBit
         private readonly PastillaConfiguracion pastChoques;
         private readonly PastillaConfiguracion pastSinDocente;
         private readonly PastillaConfiguracion pastSinHorario;
+        private readonly PastillaConfiguracion pastFaltaAsignar;
         private readonly Label lblLaboratorio;
         private readonly ComboBox cboLaboratorio;
         // Las flechas del laboratorio (Deslizamiento).
@@ -227,10 +251,13 @@ namespace DigBit
         private readonly Button btnRenombrarAb;
         private readonly Button btnBorrarAb;
         private readonly Button btnVerEnHorario;
+        private readonly Button btnImprimir;
         private readonly Label lblLeyenda;
         private readonly Button btnMas;
         private readonly ContextMenuStrip menuMas;
         private readonly ToolStripMenuItem itemVista;
+        // "Imprimir PDF" en el menu cuando el boton no cabe en la fila (ventanas estrechas).
+        private readonly ToolStripMenuItem itemImprimir;
         private readonly ToolStripSeparator sepVista;
         private readonly ToolStripMenuItem itemGuardarComo;
         private readonly ToolStripMenuItem itemGuardarEn;
@@ -252,6 +279,7 @@ namespace DigBit
         private readonly TextBox txtBuscarClases;
         private readonly PastillaConfiguracion pastFiltro;
         private readonly DataGridView dgvClases;
+        private readonly Button btnVerEnSemana;
         private readonly Button btnNuevaClase;
         private readonly Button btnCambiarClase;
         private readonly Button btnQuitarClases;
@@ -272,12 +300,18 @@ namespace DigBit
         private bool llenando;
         // Lo que dice la linea de estado de la abierta cuando no hay otra cosa que decir.
         private string detalleAbierta = "";
+        // La clase traida de "Falta asignar" con «Ponerla...» (su idcarga): el
+        // siguiente "Poner clase..." ya la trae elegida. Esc la olvida.
+        private int? porPoner;
 
         /// <summary>Un laboratorio del combo: en la lista, con sus horas y choques; en la caja, solo su nombre (como Horario semanal).</summary>
         private sealed class ItemLaboratorio
         {
             public int Id;
+            /// <summary>El nombre que se ve ("... (desactivado)").</summary>
             public string Nombre;
+            /// <summary>Su nombre en la base, sin "(desactivado)": el del PDF.</summary>
+            public string Laboratorio;
             public string Texto;
             public double Horas;
             public int Choques;
@@ -374,8 +408,14 @@ namespace DigBit
             dgvLista.Columns.Add("Laboratorios", "Laboratorios");
             dgvLista.Columns.Add("Fechas", "Fechas");
             dgvLista.Columns.Add("Guardada", "Guardada");
-            // "Aplicado el 12/01/2027, ADMIN001" cabe entero a 1366.
-            EstiloHorarios.Pesos(dgvLista, 20, 15, 7, 7, 7, 8, 16, 20);
+            // A 1366 no caben en un renglon el nombre, "Aplicado, empieza el 04/11/2026", "Del
+            // 04/11/2026 al 03/04/2027" y "Aplicado el 03/11/2026, ADMPRUEBA": las cuentas van
+            // en su minimo, "Que es" y "Fechas" en uno, y lo que no quepa pasa al segundo
+            // renglon (nada se corta). Cada fila mide al menos lo de siempre (34).
+            dgvLista.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+            dgvLista.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
+            dgvLista.RowTemplate.MinimumHeight = dgvLista.RowTemplate.Height;
+            EstiloHorarios.Pesos(dgvLista, 18, 22, 5, 5, 5, 5, 20, 20);
             foreach (string corta in new[] { "Docentes", "Clases", "Horas", "Laboratorios" })
             {
                 dgvLista.Columns[corta].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
@@ -478,6 +518,12 @@ namespace DigBit
             pastSinHorario.Colores(PiezasConfiguracion.FondoAmbar, PiezasConfiguracion.BordeAmbar, PiezasConfiguracion.TextoAmbar);
             pastSinHorario.Click += (s, e) => CambiarVista(Vista.Clases, FiltroClases.SinHorario);
             ayuda.SetToolTip(pastSinHorario, "Clases sin horas en ningún laboratorio: es un aviso, no impide aplicar. Clic: verlas en la lista de clases.");
+            // Como Horario semanal con db/25: lo que le falta a alguna clase, en ambar. Solo se ve si falta algo.
+            pastFaltaAsignar = new PastillaConfiguracion("Falta asignar", 0, 28, fuentePastilla, true);
+            pastFaltaAsignar.Colores(PiezasConfiguracion.FondoAmbar, PiezasConfiguracion.BordeAmbar, PiezasConfiguracion.TextoAmbar);
+            pastFaltaAsignar.Click += (s, e) => VerPorAsignar();
+            ayuda.SetToolTip(pastFaltaAsignar, "Horas que le faltan a alguna clase de este horario, en todos los laboratorios: las que otra clase desplazó\n"
+                + "o las que se quitaron para darlas en otro horario. Bajan solas al ponerle horas a la clase. Clic: ver cuáles.");
 
             // Fila de los botones, como la de Horario semanal: el laboratorio y, a su derecha, las acciones.
             lblLaboratorio = EstiloHorarios.CrearEtiqueta("Laboratorio", new Point(Margen, ArribaFilaB + 8));
@@ -544,6 +590,10 @@ namespace DigBit
             btnVerEnHorario = EstiloHorarios.CrearBoton("Ver en Horario semanal", Point.Empty, new Size(210, 34));
             btnVerEnHorario.Click += (s, e) => VerEnHorario();
             ayuda.SetToolTip(btnVerEnHorario, "Lleva a Horario semanal, en la primera semana de este horario.");
+            // Como en Horario semanal; tambien en solo consulta (no escribe).
+            btnImprimir = EstiloHorarios.CrearBoton("Imprimir PDF", Point.Empty, new Size(126, 34));
+            btnImprimir.Click += (s, e) => ImprimirPdf();
+            ayuda.SetToolTip(btnImprimir, "El horario de este laboratorio en una hoja, sin códigos ni fechas (una semana tipo), para enseñarlo o imprimirlo.");
 
             lblLeyenda = new Label
             {
@@ -556,6 +606,7 @@ namespace DigBit
             btnMas = EstiloHorarios.CrearBoton("Más acciones ▾", Point.Empty, new Size(150, 34));
             menuMas = new ContextMenuStrip { Font = new DrawingFont("Century Gothic", 9.5F) };
             itemVista = new ToolStripMenuItem("Ver la lista de clases", null, (s, e) => CambiarVista(vista == Vista.Semana ? Vista.Clases : Vista.Semana, FiltroClases.Ninguno));
+            itemImprimir = new ToolStripMenuItem("Imprimir PDF de este laboratorio", null, (s, e) => ImprimirPdf());
             sepVista = new ToolStripSeparator();
             itemGuardarComo = new ToolStripMenuItem("Guardar como plantilla nueva...", null, (s, e) => GuardarComo());
             itemGuardarEn = new ToolStripMenuItem("Guardar en la plantilla de la que viene...", null, (s, e) => GuardarEnSuSitio());
@@ -563,7 +614,7 @@ namespace DigBit
             sepDescartar = new ToolStripSeparator();
             itemEmpezarDeNuevo = new ToolStripMenuItem("Empezar de nuevo (de hoy, de una plantilla o en blanco)...", null, (s, e) => PrepararHorario(null));
             itemDescartar = new ToolStripMenuItem("Descartar este horario en preparación...", null, (s, e) => Descartar());
-            menuMas.Items.AddRange(new ToolStripItem[] { itemVista, sepVista, itemGuardarComo, itemGuardarEn, itemCambiarNombre, sepDescartar, itemEmpezarDeNuevo, itemDescartar });
+            menuMas.Items.AddRange(new ToolStripItem[] { itemVista, itemImprimir, sepVista, itemGuardarComo, itemGuardarEn, itemCambiarNombre, sepDescartar, itemEmpezarDeNuevo, itemDescartar });
             btnMas.Click += (s, e) => MostrarMenuMas();
 
             panelLeyenda = new Panel { BackColor = Color.White, Size = new Size(600, 26) };
@@ -684,11 +735,16 @@ namespace DigBit
             // Los avisos son frases enteras: con un peso de 14 cada fila crecia a 8 lineas.
             EstiloHorarios.Pesos(dgvClases, 15, 20, 8, 22, 11, 24);
             dgvClases.SelectionChanged += (s, e) => ActualizarBotonesClases();
+            // Doble clic o Intro: cambiarla en la preparacion; solo para verla, verla en la semana.
             dgvClases.CellDoubleClick += (s, e) =>
             {
                 if (e.RowIndex >= 0 && Editable)
                 {
                     CambiarClaseElegida();
+                }
+                else if (e.RowIndex >= 0)
+                {
+                    VerElegidaEnSemana();
                 }
             };
             dgvClases.KeyDown += (s, e) =>
@@ -698,14 +754,27 @@ namespace DigBit
                     e.Handled = true;
                     QuitarClasesElegidas();
                 }
-                else if (e.KeyCode == Keys.Enter && Editable)
+                else if (e.KeyCode == Keys.Enter)
                 {
                     e.Handled = true;
                     e.SuppressKeyPress = true;
-                    CambiarClaseElegida();
+                    if (Editable)
+                    {
+                        CambiarClaseElegida();
+                    }
+                    else
+                    {
+                        VerElegidaEnSemana();
+                    }
                 }
             };
             dgvClases.Paint += (s, e) => PintarVacia(dgvClases, e.Graphics, textoClasesVacia);
+
+            // Como en Clases de Horarios (tambien en solo consulta: solo lleva a la semana).
+            btnVerEnSemana = EstiloHorarios.CrearBoton("Ver en el horario", Point.Empty, new Size(160, 34));
+            btnVerEnSemana.Click += (s, e) => VerElegidaEnSemana();
+            ayuda.SetToolTip(btnVerEnSemana, "Lleva a la semana, al laboratorio donde la clase elegida tiene más horas, con esa clase elegida y su docente resaltado.");
+            PiezasConfiguracion.AyudaSiDesactivado(ayuda, btnVerEnSemana, () => "Elige primero una clase de la lista.");
 
             btnNuevaClase = EstiloAdmin.BotonPrincipal("Nueva clase...", Point.Empty, new Size(150, 34));
             btnNuevaClase.Click += (s, e) => NuevaClase();
@@ -719,12 +788,12 @@ namespace DigBit
 
             foreach (Control c in new Control[]
             {
-                lnkVolverLista, pastMarca, pastChoques, pastSinDocente, pastSinHorario,
+                lnkVolverLista, pastMarca, pastChoques, pastSinDocente, pastSinHorario, pastFaltaAsignar,
                 lblLaboratorio, cboLaboratorio, btnPoner, btnCambiarHoras, btnQuitarHoras,
-                btnCargarBaseAb, btnRenombrarAb, btnBorrarAb, btnVerEnHorario, lblLeyenda, btnMas,
+                btnCargarBaseAb, btnRenombrarAb, btnBorrarAb, btnVerEnHorario, btnImprimir, lblLeyenda, btnMas,
                 panelLeyenda, lblEstadoAbierta, contenedorSemana,
                 lnkVolverSemana, lblDocenteFiltro, cboDocenteFiltro, lblBuscarClases, txtBuscarClases, pastFiltro,
-                dgvClases, btnNuevaClase, btnCambiarClase, btnQuitarClases
+                dgvClases, btnVerEnSemana, btnNuevaClase, btnCambiarClase, btnQuitarClases
             })
             {
                 panelAbierta.Controls.Add(c);
@@ -750,7 +819,8 @@ namespace DigBit
 
             // Solo consulta: nada que escriba se ve, ni antes de la primera colocacion.
             Permisos.Ocultar(btnGuardarHoy, btnCrearPlantilla, btnCargarBase, btnRenombrar, btnBorrar, btnPoner, btnCambiarHoras, btnQuitarHoras,
-                btnCargarBaseAb, btnRenombrarAb, btnBorrarAb, pastChoques, pastSinDocente, pastSinHorario, btnNuevaClase, btnCambiarClase, btnQuitarClases);
+                btnCargarBaseAb, btnRenombrarAb, btnBorrarAb, pastChoques, pastSinDocente, pastSinHorario, pastFaltaAsignar, btnNuevaClase, btnCambiarClase,
+                btnQuitarClases);
             ColoresProfesor.Cambio += ColoresCambiaron;
         }
 
@@ -971,7 +1041,8 @@ namespace DigBit
         /// <summary>
         /// Esc: vuelve atras dentro de la pestana y devuelve true; false si no hay
         /// a donde (y Esc cierra la ventana). Con cuadros o una clase elegidos en
-        /// la semana, primero los suelta; una caja de busqueda con texto, la
+        /// la semana, primero los suelta (luego olvida la clase traida de "Falta
+        /// asignar"); una caja de busqueda con texto, la
         /// borra; la lista de clases vuelve a la semana; una plantilla abierta
         /// solo para verla, a la lista; el paso 3, al paso 2.
         /// </summary>
@@ -1015,6 +1086,15 @@ namespace DigBit
             {
                 lienzo.LimpiarSeleccion();
                 ActualizarBotonesSemana();
+                return true;
+            }
+
+            // Sin nada elegido, Esc olvida la clase traida de "Falta asignar" (como Horario semanal).
+            if (porPoner.HasValue)
+            {
+                porPoner = null;
+                AcomodarAbierta();
+                Estado(null);
                 return true;
             }
 
@@ -1421,6 +1501,20 @@ namespace DigBit
 
             bool cabe = TextRenderer.MeasureText(lblEstadoAbierta.Text, lblEstadoAbierta.Font).Width <= lblEstadoAbierta.Width;
             lblEstadoAbierta.TextAlign = cabe ? ContentAlignment.MiddleRight : ContentAlignment.MiddleLeft;
+        }
+
+        /// <summary>
+        /// El alto de la linea de estado de una plantilla abierta: dos renglones, o
+        /// los que pida ese texto en ese ancho, hasta "maximo" (lo que no quepa, con "...").
+        /// </summary>
+        private int AltoDelEstado(string texto, int ancho, int maximo)
+        {
+            // El renglon como lo mide TextRenderer (17 a 9.5 pt; Font.Height dice 16).
+            int altoRenglon = TextRenderer.MeasureText("Ag", lblEstadoAbierta.Font).Height;
+            int pide = string.IsNullOrEmpty(texto) ? 0 : TextRenderer.MeasureText(texto, lblEstadoAbierta.Font, new Size(Math.Max(1, ancho), int.MaxValue),
+                TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPrefix).Height;
+            int renglones = Math.Max(2, Math.Min(maximo, (pide + altoRenglon - 1) / altoRenglon));
+            return renglones * altoRenglon + 2;
         }
 
         /// <summary>Sin filas: el texto centrado (que hay que hacer o por que no hay ninguna).</summary>
@@ -2171,7 +2265,30 @@ namespace DigBit
         private const string LeyendaPreparacion = "Arrastra o usa Ctrl+clic para elegir cuadros; clic en una clase: sus opciones. En rojo, lo que choca.";
         // Si la de arriba no cabe en dos lineas (ventanas estrechas).
         private const string LeyendaPreparacionCorta = "Arrastra para elegir cuadros; clic en una clase: sus opciones.";
+        // Con "Imprimir PDF" en la fila, a 1366 quedan unos 160 px: esta cabe en dos lineas.
+        private const string LeyendaPreparacionMinima = "Arrastra para elegir cuadros; clic: opciones.";
         private const string LeyendaLectura = "Pasa el ratón por una clase para ver sus datos. En rojo, lo que choca.";
+        // Si "Imprimir PDF" cabe en la fila del laboratorio (si no, sale en "Mas acciones").
+        private bool imprimirEnLaFila = true;
+
+        /// <summary>
+        /// Con una clase traida de "Falta asignar" (porPoner), la leyenda dice que
+        /// hacer con ella, como Horario semanal; null si no hay ninguna.
+        /// </summary>
+        private string LeyendaPorPoner(bool corta)
+        {
+            CargaCiclo carga = porPoner.HasValue && leido != null ? leido.Carga(porPoner.Value) : null;
+            if (carga == null)
+            {
+                return null;
+            }
+
+            int minutos = leido.PorAsignar.Where(p => p.CargaId == carga.Id).Sum(p => p.Minutos);
+            return corta
+                ? "Para poner " + carga.Nombre + ": elige cuadros y pulsa «Poner clase...». Esc: olvidarla."
+                : "Para poner " + carga.Nombre + " (" + (minutos <= 60 ? "falta " : "faltan ") + HorariosDatos.Duracion(minutos)
+                  + "): elige cuadros y pulsa «Poner clase...», ya la trae elegida. Esc: olvidarla.";
+        }
 
         /// <summary>
         /// Lee la plantilla y la ensena en esa vista. Si ya estaba abierta, se
@@ -2266,6 +2383,7 @@ namespace DigBit
             {
                 laboratorioElegido = laboratorioRecordado;
                 profesorFijado = 0;
+                porPoner = null;
                 llenando = true;
                 cboDocenteFiltro.Items.Clear();
                 llenando = false;
@@ -2369,6 +2487,8 @@ namespace DigBit
             btnBorrarAb.Visible = ciclo.Guardada && !soloConsulta && semana;
             // Ver una aplicada en Horario semanal no escribe: tambien en solo consulta.
             btnVerEnHorario.Visible = ciclo.Aplicada && ciclo.Desde.HasValue && semana;
+            // Si no cabe en la fila, AcomodarAbierta lo esconde y sale en "Mas acciones".
+            btnImprimir.Visible = semana && !Kiosco.Activo;
             lblLaboratorio.Visible = semana;
             cboLaboratorio.Visible = semana;
             lblLeyenda.Visible = semana;
@@ -2381,12 +2501,13 @@ namespace DigBit
             txtBuscarClases.Visible = !semana;
             pastFiltro.Visible = !semana && filtro != FiltroClases.Ninguno;
             dgvClases.Visible = !semana;
+            btnVerEnSemana.Visible = !semana;
             btnNuevaClase.Visible = !semana && Editable;
             btnCambiarClase.Visible = !semana && Editable;
             btnQuitarClases.Visible = !semana && Editable;
             ayuda.SetToolTip(lblLeyenda, prep
                 ? "Un cuadro por hora. Arrastra o usa Ctrl+clic para elegir cuadros y pulsa «Poner clase...»: la clase se pone todas las semanas.\n"
-                  + "Encima de otra clase de este laboratorio, la reemplaza (antes te pregunta): se le quita solo lo que se cruza.\n"
+                  + "Encima de otra clase de este laboratorio, la reemplaza (antes te pregunta): se le quita solo lo que se cruza, y eso queda en «Falta asignar».\n"
                   + "Clic en una clase: sus opciones (cambiar sus horas, quitarlas, cambiar su docente...). Doble clic: cambiar sus horas.\n"
                   + "Cada docente tiene su color, el mismo en todo DigBit. Haz clic en su nombre, debajo, para ver solo sus clases (otro clic, todas).\n"
                   + "En rojo, las clases que chocan (la misma persona docente o el mismo grupo a la misma hora en otro laboratorio): no dejan aplicar."
@@ -2413,6 +2534,15 @@ namespace DigBit
 
             pastSinDocente.Mostrado = "Sin docente: " + revision.SinProfesor;
             pastSinHorario.Mostrado = "Sin horario: " + revision.SinHorario;
+            // "Falta asignar": solo en la preparacion y si falta algo (como Horario semanal).
+            int faltan = leido.MinutosPorAsignar;
+            pastFaltaAsignar.Visible = prep && faltan > 0;
+            pastFaltaAsignar.Mostrado = "Falta asignar: " + HorariosDatos.Duracion(faltan);
+            if (porPoner.HasValue && (!prep || !leido.PorAsignar.Any(p => p.CargaId == porPoner.Value) || leido.Carga(porPoner.Value) == null))
+            {
+                // Ya se le pusieron sus horas (o se quito la clase): se olvida.
+                porPoner = null;
+            }
 
             LlenarLaboratorios();
             if (semana)
@@ -2429,7 +2559,11 @@ namespace DigBit
             AcomodarAbierta();
         }
 
-        /// <summary>Lo que dice la linea de estado sin otra cosa que decir: que tiene y, segun que es, de donde viene o cuando se guardo o se aplico.</summary>
+        /// <summary>
+        /// Lo que dice la linea de estado sin otra cosa que decir: que tiene y,
+        /// segun que es, de donde viene o cuando se guardo o se aplico. En solo
+        /// consulta no propone "cargala como base" (no puede).
+        /// </summary>
         private static string DetalleDe(CicloPreliminar ciclo)
         {
             string resumen = "«" + ciclo.Nombre + "»: " + RevisionCiclo.Resumen(ciclo) + ". ";
@@ -2447,7 +2581,7 @@ namespace DigBit
                 return resumen + "Guardada el " + PiezasConfiguracion.Fecha(cuando) + " a las " + PiezasConfiguracion.Hora(cuando)
                     + (string.IsNullOrEmpty(ciclo.CambiadoPor) ? "" : " por " + ciclo.CambiadoPor)
                     + (ciclo.CopiadoDel.HasValue ? ", del horario del " + PiezasConfiguracion.Fecha(ciclo.CopiadoDel.Value) : "")
-                    + ". Para cambiarla, cárgala como base.";
+                    + (Permisos.SoloConsulta ? "." : ". Para cambiarla, cárgala como base.");
             }
 
             string vigencia = ciclo.Desde.HasValue && ciclo.Hasta.HasValue
@@ -2493,7 +2627,7 @@ namespace DigBit
                 }
 
                 int xr = ancho - Margen;
-                foreach (PastillaConfiguracion p in new[] { pastSinHorario, pastSinDocente, pastChoques })
+                foreach (PastillaConfiguracion p in new[] { pastSinHorario, pastSinDocente, pastChoques, pastFaltaAsignar })
                 {
                     if (p.Visible)
                     {
@@ -2522,15 +2656,26 @@ namespace DigBit
                         }
                     }
 
-                    // La leyenda, entre los botones y "Mas acciones", entera en una o dos
-                    // lineas: la larga, la corta o ninguna (la ayuda al pasar el raton la dice entera).
+                    // "Imprimir PDF" junto a "Mas acciones", si cabe; si no, va en el menu.
+                    imprimirEnLaFila = !Kiosco.Activo && xb + 6 + btnImprimir.Width <= btnMas.Left - 8;
+                    btnImprimir.Visible = imprimirEnLaFila;
+                    btnImprimir.Location = new Point(btnMas.Left - 8 - btnImprimir.Width, ArribaFilaB);
+                    int derechaLeyenda = imprimirEnLaFila ? btnImprimir.Left : btnMas.Left;
+
+                    // La leyenda, entre los botones e "Imprimir PDF", entera en una o dos lineas:
+                    // la larga, la corta, la minima o ninguna (la ayuda al pasar el raton la dice entera).
+                    // Con una clase traida de "Falta asignar", que hacer con ella (en ambar).
                     int izquierda = Math.Max(flechasLaboratorio.Derecha, xb - 8) + 14;
-                    int anchoLeyenda = btnMas.Left - 14 - izquierda;
+                    int anchoLeyenda = derechaLeyenda - 14 - izquierda;
                     // El renglon como lo mide TextRenderer (17 a 8.5 pt; Font.Height dice 14).
                     int altoLinea = TextRenderer.MeasureText("Ag", lblLeyenda.Font).Height;
                     string leyenda = null;
                     int altoLeyenda = 0;
-                    foreach (string opcion in Editable ? new[] { LeyendaPreparacion, LeyendaPreparacionCorta } : new[] { LeyendaLectura })
+                    string paraPoner = Editable ? LeyendaPorPoner(false) : null;
+                    string[] opciones = paraPoner != null ? new[] { paraPoner, LeyendaPorPoner(true), "Elige cuadros y «Poner clase...». Esc: olvidarla." }
+                        : Editable ? new[] { LeyendaPreparacion, LeyendaPreparacionCorta, LeyendaPreparacionMinima } : new[] { LeyendaLectura };
+                    lblLeyenda.ForeColor = paraPoner != null ? PiezasConfiguracion.TextoAmbar : Color.Gray;
+                    foreach (string opcion in opciones)
                     {
                         int pide = anchoLeyenda < 120 ? int.MaxValue : TextRenderer.MeasureText(opcion, lblLeyenda.Font, new Size(anchoLeyenda, int.MaxValue),
                             TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl).Height;
@@ -2562,29 +2707,37 @@ namespace DigBit
                 // Fila C y el cuerpo.
                 if (semana)
                 {
+                    // La linea de estado, a la derecha de los docentes, tiene dos renglones
+                    // (tres si el resumen de la plantilla los pide): a 1366 no cabia en
+                    // uno y se leia cortado con "...". Lo pide el resumen, no cada aviso:
+                    // la cuadricula no salta con cada cambio.
                     int arriba = ArribaFilaB + 38;
                     int anchoLeyenda = (int)((ancho - 2 * Margen) * 0.6);
-                    panelLeyenda.SetBounds(Margen, arriba, anchoLeyenda, 26);
+                    panelLeyenda.SetBounds(Margen, arriba + 2, anchoLeyenda, 26);
                     int usado = PonerLeyendaEnSuSitio();
+                    // Solo lo que ocupan: lo demas es de la linea de estado.
+                    panelLeyenda.Width = Math.Max(1, usado);
                     int inicioEstado = Margen + Math.Max(usado, 0) + 16;
-                    lblEstadoAbierta.SetBounds(inicioEstado, arriba + 3, Math.Max(60, ancho - Margen - inicioEstado), 20);
+                    int anchoEstado = Math.Max(60, ancho - Margen - inicioEstado);
+                    lblEstadoAbierta.SetBounds(inicioEstado, arriba - 4, anchoEstado, AltoDelEstado(detalleAbierta, anchoEstado, 3));
                     // Encima del panel de los docentes (que es mas ancho que lo que ocupan).
                     lblEstadoAbierta.BringToFront();
                     AlinearEstado();
                     // Como Horario semanal: la cuadricula usa todo el alto que queda.
-                    int arribaCuerpo = arriba + 28;
+                    int arribaCuerpo = lblEstadoAbierta.Bottom + 2;
                     int disponible = alto - arribaCuerpo - 10;
                     int altoCuadricula = Math.Min(disponible, CuadriculaSemanal.AltoPara(disponible));
                     contenedorSemana.SetBounds(Margen, arribaCuerpo, ancho - 2 * Margen, Math.Max(120, altoCuadricula));
                 }
                 else
                 {
+                    // Abajo, siempre la fila de los botones: "Ver en el horario" tambien solo para verla.
                     int arribaCuerpo = ArribaFilaB + 40;
-                    int pie = Editable ? alto - AltoPie : alto - 30;
+                    int pie = alto - AltoPie;
                     dgvClases.SetBounds(Margen, arribaCuerpo, ancho - 2 * Margen, pie - arribaCuerpo - 4);
                     int y = alto - AltoPie + (AltoPie - btnNuevaClase.Height) / 2 + 1;
                     int xb = ancho - Margen;
-                    foreach (Button boton in new[] { btnQuitarClases, btnCambiarClase, btnNuevaClase })
+                    foreach (Button boton in new[] { btnQuitarClases, btnCambiarClase, btnNuevaClase, btnVerEnSemana })
                     {
                         if (boton.Visible)
                         {
@@ -2593,7 +2746,8 @@ namespace DigBit
                         }
                     }
 
-                    lblEstadoAbierta.SetBounds(Margen, pie + (Editable ? 10 : 6), Math.Max(60, xb - 2 * Margen), 20);
+                    int altoEstado = AltoDelEstado("", 100, 2);
+                    lblEstadoAbierta.SetBounds(Margen, pie + (AltoPie - altoEstado) / 2, Math.Max(60, xb - 2 * Margen), altoEstado);
                     AlinearEstado();
                 }
             }
@@ -2636,7 +2790,7 @@ namespace DigBit
                 string texto = nombre + ": " + (horas == 0 ? "sin horas" : RevisionCiclo.TextoHoras(horas))
                     + (choques == 0 ? "" : choques == 1 ? ", 1 choque" : ", " + choques + " choques")
                     + (encimadas ? ", clases encimadas" : "");
-                items.Add(new ItemLaboratorio { Id = par.Key, Nombre = nombre, Texto = texto, Horas = horas, Choques = choques + (encimadas ? 1 : 0) });
+                items.Add(new ItemLaboratorio { Id = par.Key, Nombre = nombre, Laboratorio = par.Value, Texto = texto, Horas = horas, Choques = choques + (encimadas ? 1 : 0) });
             }
 
             items = items.OrderBy(i => i.Nombre, StringComparer.CurrentCultureIgnoreCase).ToList();
@@ -3007,6 +3161,7 @@ namespace DigBit
 
             bool prep = Editable;
             itemVista.Text = vista == Vista.Semana ? "Ver la lista de clases" : "Ver la semana";
+            itemImprimir.Visible = vista == Vista.Semana && !Kiosco.Activo && !imprimirEnLaFila;
             sepVista.Visible = prep;
             itemGuardarComo.Visible = prep;
             itemGuardarEn.Visible = prep && leido.Ciclo.SeGuardaEnOrigen;
@@ -3131,8 +3286,16 @@ namespace DigBit
             int idCarga;
             falloEnNuevaClase = false;
             claseNuevaEnDialogo = false;
-            using (DialogoAsignarClase dialogo = new DialogoAsignarClase(ClasesDeLaPlantilla(), laboratorio, rangos, CrearClaseDesdeDialogo, null, null))
+            List<ClaseInfo> clases = ClasesDeLaPlantilla();
+            using (DialogoAsignarClase dialogo = new DialogoAsignarClase(clases, laboratorio, rangos, CrearClaseDesdeDialogo, null, null))
             {
+                // Traida de "Falta asignar" (Ponerla...): ya elegida, como en Horario semanal.
+                ClaseInfo preelegida = porPoner.HasValue ? clases.FirstOrDefault(c => c.Id == porPoner.Value) : null;
+                if (preelegida != null)
+                {
+                    dialogo.Preelegir(preelegida);
+                }
+
                 if (dialogo.ShowDialog(this) != DialogResult.OK)
                 {
                     TrasCancelarPoner();
@@ -3172,6 +3335,7 @@ namespace DigBit
                 return;
             }
 
+            int faltaba = PorAsignarDe(carga.Id);
             Cursor = Cursors.WaitCursor;
             try
             {
@@ -3189,8 +3353,32 @@ namespace DigBit
             }
 
             lienzo.LimpiarSeleccion();
-            Releer("Listo: " + carga.Nombre + " (" + (carga.ProfesorId.HasValue ? carga.ProfesorCorto : "sin docente") + ") quedó el "
-                + TextosDelHorario.Rangos(rangos) + ".");
+            ReleerTrasPoner("Listo: " + carga.Nombre + " (" + (carga.ProfesorId.HasValue ? carga.ProfesorCorto : "sin docente") + ") quedó el "
+                + TextosDelHorario.Rangos(rangos) + ".", carga.Id, faltaba);
+        }
+
+        /// <summary>Lo que le falta asignar a esa clase de la plantilla, en minutos.</summary>
+        private int PorAsignarDe(int idCarga)
+        {
+            return leido == null ? 0 : leido.PorAsignar.Where(p => p.CargaId == idCarga).Sum(p => p.Minutos);
+        }
+
+        /// <summary>
+        /// Releer tras ponerle horas a una clase: si le faltaba asignar, el "Listo"
+        /// dice tambien lo que le queda (bajo solo, como en Horario semanal).
+        /// </summary>
+        private void ReleerTrasPoner(string listo, int idCarga, int faltabaAntes)
+        {
+            if (!Releer(listo) || faltabaAntes <= 0)
+            {
+                return;
+            }
+
+            int ahora = PorAsignarDe(idCarga);
+            if (ahora < faltabaAntes)
+            {
+                Estado(listo + (ahora == 0 ? " Ya no le falta nada por asignar." : " Le falta asignar " + HorariosDatos.Duracion(ahora) + "."));
+            }
         }
 
         /// <summary>
@@ -3234,8 +3422,15 @@ namespace DigBit
             FranjaCiclo franja;
             falloEnNuevaClase = false;
             claseNuevaEnDialogo = false;
-            using (DialogoHorasDePlantilla dialogo = new DialogoHorasDePlantilla(() => leido, ClasesDeLaPlantilla(), laboratorio, null, null, dia, hora, CrearClaseDesdeDialogo))
+            List<ClaseInfo> clases = ClasesDeLaPlantilla();
+            using (DialogoHorasDePlantilla dialogo = new DialogoHorasDePlantilla(() => leido, clases, laboratorio, null, null, dia, hora, CrearClaseDesdeDialogo))
             {
+                ClaseInfo preelegida = porPoner.HasValue ? clases.FirstOrDefault(c => c.Id == porPoner.Value) : null;
+                if (preelegida != null)
+                {
+                    dialogo.Preelegir(preelegida);
+                }
+
                 if (dialogo.ShowDialog(this) != DialogResult.OK)
                 {
                     TrasCancelarPoner();
@@ -3253,6 +3448,7 @@ namespace DigBit
                 return;
             }
 
+            int faltaba = PorAsignarDe(carga.Id);
             Cursor = Cursors.WaitCursor;
             try
             {
@@ -3270,8 +3466,8 @@ namespace DigBit
             }
 
             lienzo.LimpiarSeleccion();
-            Releer("Listo: " + carga.Nombre + " (" + (carga.ProfesorId.HasValue ? carga.ProfesorCorto : "sin docente") + ") quedó el "
-                + TextosDelHorario.Dia(franja.DiaSemana) + " " + TextosDelHorario.Horas(franja.Inicio, franja.Fin) + ".");
+            ReleerTrasPoner("Listo: " + carga.Nombre + " (" + (carga.ProfesorId.HasValue ? carga.ProfesorCorto : "sin docente") + ") quedó el "
+                + TextosDelHorario.Dia(franja.DiaSemana) + " " + TextosDelHorario.Horas(franja.Inicio, franja.Fin) + ".", carga.Id, faltaba);
         }
 
         /// <summary>"Cambiar horas..." (boton, menu y doble clic): el dia, las horas o la clase de las horas elegidas.</summary>
@@ -3304,6 +3500,7 @@ namespace DigBit
                 nueva = dialogo.Franja;
             }
 
+            int faltaba = PorAsignarDe(idCarga);
             Cursor = Cursors.WaitCursor;
             try
             {
@@ -3321,11 +3518,16 @@ namespace DigBit
             }
 
             CargaCiclo destino = leido.Carga(idCarga) ?? carga;
-            Releer("Listo: " + destino.Nombre + " (" + (destino.ProfesorId.HasValue ? destino.ProfesorCorto : "sin docente") + ") quedó el "
-                + TextosDelHorario.Dia(nueva.DiaSemana) + " " + TextosDelHorario.Horas(nueva.Inicio, nueva.Fin) + ".");
+            ReleerTrasPoner("Listo: " + destino.Nombre + " (" + (destino.ProfesorId.HasValue ? destino.ProfesorCorto : "sin docente") + ") quedó el "
+                + TextosDelHorario.Dia(nueva.DiaSemana) + " " + TextosDelHorario.Horas(nueva.Inicio, nueva.Fin) + ".", destino.Id, faltaba);
         }
 
-        /// <summary>"Quitar horas..." (boton y menu): las horas elegidas, preguntando antes, como en Horario semanal.</summary>
+        /// <summary>
+        /// "Quitar horas..." (boton y menu): las horas elegidas, con el dialogo de
+        /// Horario semanal (DialogoQuitarHoras): "¿Se va a dar en otro horario?"
+        /// Si (la opcion por omision), sus horas quedan en "Falta asignar"; No, la
+        /// clase tendra menos horas. Quitar en rojo; Enter cancela.
+        /// </summary>
         private void QuitarHoras()
         {
             FranjaInfo elegida = lienzo.Seleccionada ?? franjaEnMenu;
@@ -3341,17 +3543,23 @@ namespace DigBit
             }
 
             string cual = "el " + TextosDelHorario.Dia(elegida.DiaSemana) + " " + TextosDelHorario.Horas(elegida.Inicio, elegida.Fin) + " de " + carga.Nombre;
-            if (MessageBox.Show(EstiloHorarios.Dueno(this), "¿Quitar del horario en preparación " + cual + "?" + Environment.NewLine + Environment.NewLine
-                    + "Lo que se usa hoy no cambia." + (carga.Franjas.Count == 1 ? " La clase se queda sin horas: sale en «Sin horario»." : ""),
-                    "Quitar horas", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            string descripcion = "Se quita del horario en preparación " + cual + ". Lo que se usa hoy no cambia."
+                + (carga.Franjas.Count == 1 ? " La clase se queda sin horas: sale en «Sin horario»." : "");
+            bool porAsignar;
+            using (DialogoQuitarHoras dialogo = new DialogoQuitarHoras(descripcion, null, null, null, HorariosDatos.MinutosEntre(elegida.Inicio, elegida.Fin)))
             {
-                return;
+                if (dialogo.ShowDialog(this) != DialogResult.OK)
+                {
+                    return;
+                }
+
+                porAsignar = dialogo.PorAsignar;
             }
 
             Cursor = Cursors.WaitCursor;
             try
             {
-                datos.QuitarFranja(elegida.Id, IdAdministrador());
+                datos.QuitarHoras(elegida.Id, porAsignar, IdAdministrador());
             }
             catch (Exception ex)
             {
@@ -3365,7 +3573,94 @@ namespace DigBit
             }
 
             lienzo.LimpiarSeleccion();
-            Releer("Listo: se quitó " + cual + ".");
+            Releer("Listo: se quitó " + cual + "." + (porAsignar ? " Sus horas quedan en «Falta asignar» para ponerlas en otro horario." : ""));
+        }
+
+        /// <summary>
+        /// "Falta asignar: N h": la lista (DialogoFaltaAsignarPlantilla). «Ponerla...»
+        /// lleva al laboratorio elegido con la clase ya elegida para el siguiente
+        /// "Poner clase..." (porPoner); "Ya no hace falta" la quita de la lista.
+        /// </summary>
+        private void VerPorAsignar()
+        {
+            if (!Editable || leido == null || leido.PorAsignar.Count == 0)
+            {
+                return;
+            }
+
+            List<OpcionCombo> laboratorios = cboLaboratorio.Items.OfType<ItemLaboratorio>().Select(i => new OpcionCombo { Id = i.Id, Texto = i.Nombre }).ToList();
+            Func<IWin32Window, PorAsignarCiclo, bool> resolver = (dueno, p) =>
+            {
+                CargaCiclo suya = leido.Carga(p.CargaId);
+                string clase = suya == null ? "esa clase" : suya.Nombre;
+                if (Permisos.Bloquear(dueno, "Dar por resueltas unas horas por asignar del horario en preparacion")
+                    || !DialogoConfirmacion.Preguntar(dueno, "Ya no hace falta", "¿Ya no hace falta asignar " + HorariosDatos.Duracion(p.Minutos) + " a " + clase + "?",
+                        "Salieron de " + p.Origen + ". Salen de «Falta asignar»; las horas de la clase no cambian.", "Ya no hace falta", false))
+                {
+                    return false;
+                }
+
+                try
+                {
+                    datos.YaNoHaceFalta(p.Id, IdAdministrador());
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    if (ex is ErrorDeDatos || ex is AccionNoPermitida)
+                    {
+                        MessageBox.Show(dueno, ex.Message, "Ya no hace falta", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                    else
+                    {
+                        AvisoDeFalloAdmin.Mostrar(dueno, "PestanaProximoCiclo.YaNoHaceFalta", ex, "No se pudo quitar de «Falta asignar»", Titulo);
+                    }
+
+                    return false;
+                }
+            };
+
+            PorAsignarCiclo elegida = null;
+            int donde = 0;
+            bool cambios;
+            using (DialogoFaltaAsignarPlantilla dialogo = new DialogoFaltaAsignarPlantilla(leido, laboratorios, laboratorioElegido, resolver))
+            {
+                if (dialogo.ShowDialog(this) == DialogResult.OK)
+                {
+                    elegida = dialogo.Elegida;
+                    donde = dialogo.LaboratorioElegido;
+                }
+
+                cambios = dialogo.HuboCambios;
+            }
+
+            if (cambios && !Releer(null))
+            {
+                return;
+            }
+
+            if (elegida == null || leido == null || leido.Carga(elegida.CargaId) == null)
+            {
+                return;
+            }
+
+            // A ese laboratorio, con la clase lista para el siguiente "Poner clase...".
+            porPoner = elegida.CargaId;
+            lienzo.LimpiarSeleccion();
+            ItemLaboratorio item = cboLaboratorio.Items.OfType<ItemLaboratorio>().FirstOrDefault(i => i.Id == donde);
+            if (item != null && item.Id != laboratorioElegido)
+            {
+                cboLaboratorio.SelectedItem = item;
+            }
+            else
+            {
+                PintarSemana();
+                AcomodarAbierta();
+            }
+
+            ActualizarBotonesSemana();
+            Estado(LeyendaPorPoner(false));
+            lienzo.Focus();
         }
 
         // =====================================================================
@@ -3604,8 +3899,121 @@ namespace DigBit
         private void ActualizarBotonesClases()
         {
             int elegidas = dgvClases.SelectedRows.Count;
+            btnVerEnSemana.Enabled = elegidas == 1;
             btnCambiarClase.Enabled = elegidas == 1;
             btnQuitarClases.Enabled = elegidas >= 1;
+        }
+
+        private void VerElegidaEnSemana()
+        {
+            List<CargaCiclo> elegidas = ClasesElegidas();
+            if (elegidas.Count == 1)
+            {
+                VerEnSemana(elegidas[0]);
+            }
+        }
+
+        /// <summary>
+        /// "Ver en el horario" de la lista de clases (como en Clases de Horarios):
+        /// la semana en el laboratorio donde la clase tiene mas horas, con su
+        /// primera franja ahi elegida y su docente resaltado. Sin horas, lo dice y
+        /// como ponerlas.
+        /// </summary>
+        private void VerEnSemana(CargaCiclo carga)
+        {
+            if (carga == null || leido == null)
+            {
+                return;
+            }
+
+            if (carga.Franjas.Count == 0)
+            {
+                Estado(carga.Nombre + " todavía no tiene horas" + (Editable ? ": en la semana elige cuadros libres y pulsa «Poner clase...»." : " en esta plantilla."), true);
+                return;
+            }
+
+            int laboratorio = carga.Franjas
+                .GroupBy(f => f.LaboratorioId)
+                .OrderByDescending(g => g.Sum(f => (f.Fin - f.Inicio).TotalHours))
+                .ThenBy(g => g.Min(f => f.DiaSemana * 10000 + (int)f.Inicio.TotalMinutes))
+                .First().Key;
+            bool otroLaboratorio = laboratorio != laboratorioElegido;
+            vista = Vista.Semana;
+            vistaRecordada = Vista.Semana;
+            filtro = FiltroClases.Ninguno;
+            laboratorioElegido = laboratorio;
+            laboratorioRecordado = laboratorio;
+            profesorFijado = carga.ProfesorId ?? 0;
+            lienzo.LimpiarSeleccion();
+            PintarAbierta();
+            lienzo.Seleccionada = lienzo.Franjas.Where(f => f.ClaseId == carga.Id).OrderBy(f => f.DiaSemana).ThenBy(f => f.Inicio).FirstOrDefault();
+            ActualizarBotonesSemana();
+            Estado(null);
+            if (otroLaboratorio && LaboratorioCambiado != null)
+            {
+                LaboratorioCambiado(laboratorio);
+            }
+
+            lienzo.Focus();
+        }
+
+        /// <summary>
+        /// "Imprimir PDF": el horario del laboratorio que se ve en una hoja, como
+        /// en Horario semanal (PdfHorario), pero de una semana tipo, sin fechas ni
+        /// codigos, en el visor de PDF de DigBit (ahi se ve y, si se quiere, se guarda).
+        /// </summary>
+        private void ImprimirPdf()
+        {
+            ItemLaboratorio laboratorio = cboLaboratorio.SelectedItem as ItemLaboratorio;
+            if (leido == null || laboratorio == null || Kiosco.Activo)
+            {
+                return;
+            }
+
+            CicloPreliminar ciclo = leido.Ciclo;
+            string queEs = ciclo.EnPreparacion ? "Próximo ciclo «" + ciclo.Nombre + "», en preparación: semana tipo, sin fechas"
+                : ciclo.Guardada ? "Plantilla guardada «" + ciclo.Nombre + "»: semana tipo, sin fechas"
+                : "Horario aplicado «" + ciclo.Nombre + "»" + (ciclo.Desde.HasValue && ciclo.Hasta.HasValue
+                    ? ", del " + PiezasConfiguracion.Fecha(ciclo.Desde.Value) + " al " + PiezasConfiguracion.Fecha(ciclo.Hasta.Value) : "")
+                  + ": así se aplicó";
+            byte[] pdf;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                // El pie dice cuando se genero: la hora del servidor (sin servidor, la de este equipo).
+                DateTime ahora = DateTime.Now;
+                try
+                {
+                    ahora = new Consultas().AhoraServidor();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("PestanaProximoCiclo.ImprimirPdf (hora del servidor)", ex);
+                }
+
+                pdf = PdfHorario.CrearDePlantilla(laboratorio.Laboratorio, queEs, lienzo.Franjas, ahora);
+            }
+            catch (Exception ex)
+            {
+                Cursor = Cursors.Default;
+                MostrarFallo("PestanaProximoCiclo.ImprimirPdf", "No se pudo preparar el PDF del horario", ex);
+                return;
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+
+            try
+            {
+                VisorPdf.Mostrar(this, pdf, PdfBitacora.NombreArchivo("Horario", laboratorio.Laboratorio, ciclo.Nombre));
+            }
+            catch (Exception ex)
+            {
+                // Un fallo de archivo aqui es el temporal de la vista previa, no uno que se eligio.
+                AvisoDeFalloAdmin.MostrarVistaPrevia(EstiloHorarios.Dueno(this), "PestanaProximoCiclo.ImprimirPdf (visor)", ex,
+                    "No se pudo mostrar el PDF del horario", Titulo);
+            }
         }
 
         /// <summary>"Ver en la lista de clases": esa clase elegida en la lista, sin filtros que la escondan.</summary>
@@ -3806,13 +4214,10 @@ namespace DigBit
 
             Label lblDia = EstiloHorarios.CrearEtiqueta("Día", new Point(24, 202));
             cboDia = EstiloHorarios.CrearCombo(new Point(110, 198), 150);
-            List<OpcionCombo> dias = new List<OpcionCombo>();
-            for (int d = 1; d <= 7; d++)
-            {
-                dias.Add(new OpcionCombo { Id = d, Texto = HorariosDatos.NombresDia[d] });
-            }
-
-            EstiloHorarios.Rellenar(cboDia, dias, existente != null ? existente.DiaSemana : (diaInicial ?? 1));
+            // De lunes a sabado, como la cuadricula (2026-11-03); unas que ya estan el domingo lo traen para verse.
+            List<OpcionCombo> dias = TextosDelHorario.DiasParaElegir(existente != null ? existente.DiaSemana : (int?)null);
+            int diaElegido = existente != null ? existente.DiaSemana : (diaInicial ?? 1);
+            EstiloHorarios.Rellenar(cboDia, dias, dias.Any(d => d.Id == diaElegido) ? diaElegido : 1);
 
             Label lblInicio = EstiloHorarios.CrearEtiqueta("Inicio", new Point(24, 246));
             cboInicio = EstiloHorarios.CrearComboHoras(new Point(110, 242), null);
@@ -3885,6 +4290,15 @@ namespace DigBit
             cboFin.TextChanged += (s, e) => RevisarChoques();
             RevisarChoques();
             ActiveControl = existente != null ? (Control)cboInicio : selector;
+        }
+
+        /// <summary>Una nueva con una clase ya elegida (la traida de "Falta asignar" con «Ponerla...»).</summary>
+        public void Preelegir(ClaseInfo clase)
+        {
+            if (existente == null && clase != null)
+            {
+                selector.Seleccionar(clase);
+            }
         }
 
         protected override void Dispose(bool disposing)
@@ -3973,8 +4387,8 @@ namespace DigBit
     /// <summary>
     /// En la preparacion de Proximo ciclo, antes de poner unas horas encima de
     /// otras clases del mismo laboratorio: que se les quita (RevisionCiclo.Reemplazos).
-    /// Como ConfirmarReemplazo de Horario semanal, pero sin "Falta asignar", que
-    /// en la preparacion no existe: la que se queda sin horas sale en "Sin horario".
+    /// Como ConfirmarReemplazo de Horario semanal: lo que se les quita queda en
+    /// "Falta asignar" (2026-11-03); la que se queda sin horas sale tambien en "Sin horario".
     /// </summary>
     internal static class ConfirmarReemplazoEnPreparacion
     {
@@ -3982,9 +4396,10 @@ namespace DigBit
         public static string Texto(IList<FranjaReemplazada> quitadas, IList<CargaCiclo> sinHoras)
         {
             string texto = quitadas.Count == 1
-                ? "Esto quita a " + quitadas[0].Describir() + " de este horario en preparación."
+                ? "Esto quita a " + quitadas[0].Describir() + " de este horario en preparación. Quedará en «Falta asignar» para ponerla en otro horario."
                 : "Esto quita de este horario en preparación:" + Environment.NewLine
-                    + string.Join(Environment.NewLine, quitadas.Select(q => "   • " + q.Describir()));
+                    + string.Join(Environment.NewLine, quitadas.Select(q => "   • " + q.Describir())) + Environment.NewLine
+                    + "Quedarán en «Falta asignar» para ponerlas en otro horario.";
             if (sinHoras.Count > 0)
             {
                 texto += Environment.NewLine + Environment.NewLine

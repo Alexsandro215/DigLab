@@ -738,9 +738,29 @@ namespace DigBit.conexion
             return ventana;
         }
 
+        /// <summary>
+        /// Si ya registro en esa sesion o, con "Ahora mismo", en la de la clase de
+        /// antes de su misma terna a esa misma hora ese dia: su clase ya termino ayer
+        /// (por eso solo pasa ahi) y la nueva es la misma. Dos clases seguidas del
+        /// mismo profesor, grupo y materia siguen siendo dos registros: ninguna de
+        /// las dos ha terminado ni sus horas se cruzan.
+        /// </summary>
         internal bool AlumnoYaRegistro(int idCodigo, int idUsuario)
         {
-            const string consulta = "SELECT COUNT(*) FROM registros_bitacoras WHERE fk_codigo_accesos = @IdCodigo AND fk_usuario = @IdUsuario";
+            const string consulta = @"
+                SELECT (SELECT COUNT(*) FROM registros_bitacoras WHERE fk_codigo_accesos = @IdCodigo AND fk_usuario = @IdUsuario)
+                     + (SELECT COUNT(*)
+                          FROM codigos_accesos ca
+                          INNER JOIN codigos_accesos s
+                                  ON s.fecha = ca.fecha AND s.idcodigos_accesos <> ca.idcodigos_accesos
+                                 AND s.usuarios_idusuarios = ca.usuarios_idusuarios AND s.materias_id_materia = ca.materias_id_materia
+                                 AND s.grupos_idgrupos = ca.grupos_idgrupos
+                                 AND TIME(s.hora_entrada) < TIME(ca.hora_salida) AND TIME(s.hora_salida) > TIME(ca.hora_entrada)
+                          INNER JOIN registros_bitacoras rb ON rb.fk_codigo_accesos = s.idcodigos_accesos AND rb.fk_usuario = @IdUsuario
+                          LEFT JOIN horarios hs            ON hs.idhorarios = s.horarios_idhorarios
+                          LEFT JOIN horario_excepciones xs ON xs.idhorario_excepciones = s.horario_excepciones_id
+                          INNER JOIN clases cs             ON cs.idclases = COALESCE(hs.clases_idclases, xs.clases_idclases)
+                         WHERE ca.idcodigos_accesos = @IdCodigo AND cs.vigente_hasta < ca.fecha)";
             using (MySqlConnection conexion = mconexion.GetConexion())
             using (MySqlCommand comando = new MySqlCommand(consulta, conexion))
             {

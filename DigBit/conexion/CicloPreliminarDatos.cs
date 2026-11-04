@@ -202,6 +202,48 @@ namespace DigBit.conexion
         }
     }
 
+    /// <summary>
+    /// Unas horas que le faltan a una clase del horario en preparacion ("Falta
+    /// asignar", como en Horario semanal con db/25): las que otra clase le quito
+    /// al ponerse encima, o las que se quitaron con "Quitar horas" para darlas en
+    /// otro horario. Bajan solas al ponerle horas a la clase (lo mas antiguo
+    /// primero). Sin migracion: van en ciclo_cargas (CicloPreliminarDatos.QuitadaPorAsignar).
+    /// </summary>
+    public class PorAsignarCiclo
+    {
+        /// <summary>El idcarga del renglon que las guarda (para "Ya no hace falta").</summary>
+        public int Id;
+        /// <summary>La clase de la plantilla a la que le faltan (su idcarga).</summary>
+        public int CargaId;
+        /// <summary>Lo que falta, en minutos (baja al ponerle horas a la clase).</summary>
+        public int Minutos;
+        public int LaboratorioId;
+        public string Laboratorio = "";
+        /// <summary>De donde salieron: el dia (1 = lunes) y las horas que se le quitaron.</summary>
+        public int DiaSemana;
+        public TimeSpan Inicio;
+        public TimeSpan Fin;
+        /// <summary>HorariosDatos.MotivoDesplazada (otra clase se puso en su lugar) o MotivoQuitada ("Quitar horas").</summary>
+        public string Motivo = "";
+
+        /// <summary>Lo que faltaba al crearse: las horas de donde salieron.</summary>
+        public int MinutosOriginales
+        {
+            get { return HorariosDatos.MinutosEntre(Inicio, Fin); }
+        }
+
+        /// <summary>"Laboratorio CISCO, lunes 08:00–10:00".</summary>
+        public string Origen
+        {
+            get
+            {
+                return (string.IsNullOrEmpty(Laboratorio) ? "" : EstiloHorarios.NombreLaboratorio(Laboratorio) + ", ")
+                    + (DiaSemana >= 1 && DiaSemana <= 7 ? HorariosDatos.NombresDia[DiaSemana].ToLowerInvariant() + " " : "")
+                    + HorariosDatos.Hora(Inicio) + "–" + HorariosDatos.Hora(Fin);
+            }
+        }
+    }
+
     /// <summary>Una persona docente con clases en la configuracion (para la leyenda y el filtro).</summary>
     public class ProfesorDelCiclo
     {
@@ -230,6 +272,12 @@ namespace DigBit.conexion
         public DateTime Hasta;
         /// <summary>El ultimo dia del horario de ahora.</summary>
         public DateTime Fin;
+        /// <summary>
+        /// "Ahora mismo" (pestana Aplicacion): el horario nuevo empieza al
+        /// aplicarlo. Desde es hoy y Fin ayer, los dos del servidor; lo ya
+        /// registrado hoy en las clases que se recortan no impide aplicar.
+        /// </summary>
+        public bool EmpiezaAhora;
     }
 
     /// <summary>Todo lo de una configuracion, leido de una vez (CicloPreliminarDatos.Leer).</summary>
@@ -255,6 +303,17 @@ namespace DigBit.conexion
         public bool ConBajas;
         /// <summary>La base guarda laboratorios desactivados (db/08).</summary>
         public bool ConLaboratoriosDesactivables;
+        /// <summary>
+        /// "Falta asignar": lo que le falta a cada una de sus clases, de lo mas
+        /// antiguo a lo mas nuevo (solo de clases que siguen en ella).
+        /// </summary>
+        public List<PorAsignarCiclo> PorAsignar = new List<PorAsignarCiclo>();
+
+        /// <summary>Todo lo que falta asignar, en minutos.</summary>
+        public int MinutosPorAsignar
+        {
+            get { return PorAsignar.Sum(p => p.Minutos); }
+        }
 
         public ProfesorDelCiclo Profesor(int id)
         {
@@ -396,6 +455,22 @@ namespace DigBit.conexion
         public const string NombrePreparacion = "Próximo ciclo";
         private static readonly CultureInfo Espanol = CultureInfo.GetCultureInfo("es-MX");
 
+        /// <summary>
+        /// ciclo_cargas.quitada = 2: el renglon no es una clase, sino unas horas
+        /// que le faltan a otra de la misma plantilla (su carga_origen): "Falta
+        /// asignar" sin migracion (2026-11-03). Lleva el docente, el grupo y la
+        /// materia de esa clase (las claves foraneas) y, en horario_origen,
+        /// "motivo|minutos|laboratorio|dia|HH:mm|HH:mm" (Cifrar). Todo lo demas
+        /// mira quitada = 0 (en la v2 Quitar borra la fila: el 1 ya no se usa),
+        /// asi que no se cuenta, no se copia a otra plantilla (Guardar como,
+        /// Cargar como base) ni se aplica como clase. Al aplicar, pasa tambien a
+        /// horas_por_asignar de la clase nueva (db/25: Falta asignar de Horario
+        /// semanal); sigue con la plantilla y vuelve si se deshace. Se borra al
+        /// ponerle sus horas a la clase (AsignarPorAsignar), con "Ya no hace
+        /// falta" o al quitar la clase.
+        /// </summary>
+        internal const int QuitadaPorAsignar = 2;
+
         private readonly Conexion mconexion = new Conexion();
 
         // ---------------------------------------------------------------------
@@ -431,7 +506,12 @@ namespace DigBit.conexion
             return situacion;
         }
 
-        /// <summary>A cada aplicada, el dia en que la corto la aplicada siguiente (su fin_anterior), si fue antes de su Hasta.</summary>
+        /// <summary>
+        /// A cada aplicada, el dia en que la corto la aplicada siguiente (su
+        /// fin_anterior), si fue antes de su Hasta y no antes de su Desde: dos
+        /// aplicadas "Ahora mismo" el mismo dia no se recortan (la de la manana
+        /// empezo hoy y el fin de la otra es ayer).
+        /// </summary>
         private static void MarcarCortadas(List<CicloPreliminar> ciclos)
         {
             List<CicloPreliminar> aplicadas = ciclos.Where(c => c.Aplicada && c.Desde.HasValue).OrderBy(c => c.Desde).ThenBy(c => c.Id).ToList();
@@ -439,7 +519,8 @@ namespace DigBit.conexion
             {
                 CicloPreliminar siguiente = aplicadas[i + 1];
                 CicloPreliminar esta = aplicadas[i];
-                if (siguiente.FinAnterior.HasValue && esta.Hasta.HasValue && siguiente.FinAnterior.Value < esta.Hasta.Value)
+                if (siguiente.FinAnterior.HasValue && esta.Hasta.HasValue && siguiente.FinAnterior.Value < esta.Hasta.Value
+                    && siguiente.FinAnterior.Value >= esta.Desde.Value)
                 {
                     esta.CortadaEl = siguiente.FinAnterior;
                 }
@@ -1229,7 +1310,8 @@ namespace DigBit.conexion
         /// <summary>
         /// Al guardar (Guardar y Guardar como): las clases del horario en
         /// preparacion quedan comparadas con lo que se guardo, que es su origen
-        /// desde ahora ("Frente a <<2026-1>>", CicloPreliminar.FrenteA).
+        /// desde ahora ("Frente a <<2026-1>>", CicloPreliminar.FrenteA). Lo que
+        /// falta asignar (QuitadaPorAsignar) no se toca: su horario_origen es lo que falta.
         /// </summary>
         private static void RenovarOrigenes(MySqlConnection conexion, MySqlTransaction transaccion, int idBorrador)
         {
@@ -1240,9 +1322,10 @@ namespace DigBit.conexion
                                                    TIME_FORMAT(f.hora_fin, '%H:%i'))
                                                    ORDER BY f.dia_semana, f.hora_inicio, f.laboratorio SEPARATOR ';')
                                               FROM ciclo_franjas f WHERE f.idcarga = cc.idcarga)
-                 WHERE cc.idciclo = @C", conexion, transaccion))
+                 WHERE cc.idciclo = @C AND cc.quitada <> @PorAsignar", conexion, transaccion))
             {
                 comando.Parameters.AddWithValue("@C", idBorrador);
+                comando.Parameters.AddWithValue("@PorAsignar", QuitadaPorAsignar);
                 comando.ExecuteNonQuery();
             }
         }
@@ -1343,11 +1426,17 @@ namespace DigBit.conexion
                 int idCiclo = BloquearCarga(conexion, transaccion, idCarga);
                 ExigirCatalogos(conexion, transaccion, profesor, grupo, materia, franjas);
                 ExigirNoRepetida(conexion, transaccion, idCiclo, profesor, grupo, materia, idCarga);
+                int minutosAntes = MinutosDeLaCarga(conexion, transaccion, idCarga);
+                // Lo que le falta asignar sigue con ella: con su docente, grupo y materia nuevos (las claves foraneas).
                 using (MySqlCommand comando = new MySqlCommand(@"
                     UPDATE ciclo_cargas SET profesor = @P, grupo = @G, materia = @M WHERE idcarga = @Id;
+                    UPDATE ciclo_cargas SET profesor = @P, grupo = @G, materia = @M
+                     WHERE idciclo = @C AND quitada = @PorAsignar AND carga_origen = @Id;
                     DELETE FROM ciclo_franjas WHERE idcarga = @Id;", conexion, transaccion))
                 {
                     comando.Parameters.AddWithValue("@Id", idCarga);
+                    comando.Parameters.AddWithValue("@C", idCiclo);
+                    comando.Parameters.AddWithValue("@PorAsignar", QuitadaPorAsignar);
                     comando.Parameters.AddWithValue("@P", profesor.HasValue ? (object)profesor.Value : DBNull.Value);
                     comando.Parameters.AddWithValue("@G", grupo);
                     comando.Parameters.AddWithValue("@M", materia);
@@ -1356,6 +1445,8 @@ namespace DigBit.conexion
 
                 RecortarEncimadas(conexion, transaccion, idCiclo, idCarga, franjas, 0);
                 InsertarFranjas(conexion, transaccion, idCarga, franjas);
+                // Si gano tiempo, lo que le faltaba baja (como Horario semanal al cambiar horas).
+                AsignarPorAsignar(conexion, transaccion, idCiclo, idCarga, MinutosDe(franjas) - minutosAntes);
                 Tocar(conexion, transaccion, idCiclo, idAdministrador);
                 transaccion.Commit();
                 Log.Info("Horario en preparacion " + idCiclo + ": clase " + idCarga + " cambiada (docente " + (profesor.HasValue ? profesor.Value.ToString() : "ninguno")
@@ -1406,26 +1497,54 @@ namespace DigBit.conexion
                 ExigirCatalogos(conexion, transaccion, null, null, null, franjas);
                 RecortarEncimadas(conexion, transaccion, idCiclo, idCarga, franjas, 0);
                 InsertarFranjas(conexion, transaccion, idCarga, franjas);
+                int asignados = AsignarPorAsignar(conexion, transaccion, idCiclo, idCarga, MinutosDe(franjas));
                 Tocar(conexion, transaccion, idCiclo, idAdministrador);
                 transaccion.Commit();
-                Log.Info("Horario en preparacion " + idCiclo + ": " + franjas.Count + " horarios mas para la clase " + idCarga + ".");
+                Log.Info("Horario en preparacion " + idCiclo + ": " + franjas.Count + " horarios mas para la clase " + idCarga
+                    + (asignados > 0 ? "; bajan " + asignados + " min de lo que le faltaba asignar" : "") + ".");
             }
         }
 
-        /// <summary>"Quitar estas horas": una franja del horario en preparacion.</summary>
+        /// <summary>"Quitar estas horas": una franja del horario en preparacion (sus horas no quedan en "Falta asignar").</summary>
         public void QuitarFranja(int idFranja, int idAdministrador)
+        {
+            QuitarHoras(idFranja, false, idAdministrador);
+        }
+
+        /// <summary>
+        /// "Quitar horas...": una franja del horario en preparacion. Con
+        /// porAsignar ("¿Se va a dar en otro horario?" Si, como Horario semanal),
+        /// sus horas quedan en "Falta asignar" de su clase.
+        /// </summary>
+        public void QuitarHoras(int idFranja, bool porAsignar, int idAdministrador)
         {
             Permisos.Exigir("Quitar unas horas del horario en preparacion");
             using (MySqlConnection conexion = mconexion.GetConexion())
             using (MySqlTransaction transaccion = conexion.BeginTransaction())
             {
-                int? idCiclo;
+                FranjaCiclo franja = null;
+                int? idCiclo = null;
                 using (MySqlCommand comando = new MySqlCommand(@"
-                    SELECT cc.idciclo FROM ciclo_franjas f INNER JOIN ciclo_cargas cc ON cc.idcarga = f.idcarga WHERE f.idfranja = @F", conexion, transaccion))
+                    SELECT cc.idciclo, f.idcarga, f.laboratorio, f.dia_semana, f.hora_inicio, f.hora_fin
+                    FROM ciclo_franjas f INNER JOIN ciclo_cargas cc ON cc.idcarga = f.idcarga WHERE f.idfranja = @F", conexion, transaccion))
                 {
                     comando.Parameters.AddWithValue("@F", idFranja);
-                    object valor = comando.ExecuteScalar();
-                    idCiclo = valor == null || valor == DBNull.Value ? (int?)null : Convert.ToInt32(valor);
+                    using (MySqlDataReader reader = comando.ExecuteReader())
+                    {
+                        if (reader.Read())
+                        {
+                            idCiclo = reader.GetInt32("idciclo");
+                            franja = new FranjaCiclo
+                            {
+                                Id = idFranja,
+                                CargaId = reader.GetInt32("idcarga"),
+                                LaboratorioId = reader.GetInt32("laboratorio"),
+                                DiaSemana = Convert.ToInt32(reader["dia_semana"]),
+                                Inicio = reader.GetTimeSpan("hora_inicio"),
+                                Fin = reader.GetTimeSpan("hora_fin")
+                            };
+                        }
+                    }
                 }
 
                 if (!idCiclo.HasValue)
@@ -1446,9 +1565,15 @@ namespace DigBit.conexion
                     throw new ErrorDeDatos("Esas horas ya no están en este horario: vuelve a entrar a la pestaña.");
                 }
 
+                if (porAsignar)
+                {
+                    InsertarPorAsignar(conexion, transaccion, idCiclo.Value, franja.CargaId, HorariosDatos.MotivoQuitada, franja.LaboratorioId, franja.DiaSemana,
+                        franja.Inicio, franja.Fin);
+                }
+
                 Tocar(conexion, transaccion, idCiclo.Value, idAdministrador);
                 transaccion.Commit();
-                Log.Info("Horario en preparacion " + idCiclo.Value + ": franja " + idFranja + " quitada.");
+                Log.Info("Horario en preparacion " + idCiclo.Value + ": franja " + idFranja + " quitada" + (porAsignar ? " (sus horas quedan por asignar)" : "") + ".");
             }
         }
 
@@ -1474,16 +1599,29 @@ namespace DigBit.conexion
             using (MySqlTransaction transaccion = conexion.BeginTransaction())
             {
                 int idCiclo = BloquearCarga(conexion, transaccion, idCarga);
+                // De que clase eran y cuanto duraban: lo que gana la clase a la que van baja lo que le faltaba.
+                int? cicloDeLaFranja = null;
+                int cargaDeAntes = 0;
+                int minutosDeAntes = 0;
                 using (MySqlCommand comando = new MySqlCommand(@"
-                    SELECT cc.idciclo FROM ciclo_franjas f INNER JOIN ciclo_cargas cc ON cc.idcarga = f.idcarga
+                    SELECT cc.idciclo, f.idcarga, f.hora_inicio, f.hora_fin FROM ciclo_franjas f INNER JOIN ciclo_cargas cc ON cc.idcarga = f.idcarga
                      WHERE f.idfranja = @F FOR UPDATE", conexion, transaccion))
                 {
                     comando.Parameters.AddWithValue("@F", idFranja);
-                    object valor = comando.ExecuteScalar();
-                    if (valor == null || valor == DBNull.Value || Convert.ToInt32(valor) != idCiclo)
+                    using (MySqlDataReader reader = comando.ExecuteReader())
                     {
-                        throw new ErrorDeDatos("Esas horas ya no están en este horario: vuelve a entrar a la pestaña.");
+                        if (reader.Read())
+                        {
+                            cicloDeLaFranja = reader.GetInt32("idciclo");
+                            cargaDeAntes = reader.GetInt32("idcarga");
+                            minutosDeAntes = HorariosDatos.MinutosEntre(reader.GetTimeSpan("hora_inicio"), reader.GetTimeSpan("hora_fin"));
+                        }
                     }
+                }
+
+                if (cicloDeLaFranja != idCiclo)
+                {
+                    throw new ErrorDeDatos("Esas horas ya no están en este horario: vuelve a entrar a la pestaña.");
                 }
 
                 // Las demas horas de la clase a la que va (sin las que se cambian): no pueden cruzarse.
@@ -1525,6 +1663,9 @@ namespace DigBit.conexion
                     comando.ExecuteNonQuery();
                 }
 
+                // Como Horario semanal: si va a otra clase, esa gana todas sus horas.
+                AsignarPorAsignar(conexion, transaccion, idCiclo, idCarga,
+                    HorariosDatos.MinutosEntre(nueva.Inicio, nueva.Fin) - (cargaDeAntes == idCarga ? minutosDeAntes : 0));
                 Tocar(conexion, transaccion, idCiclo, idAdministrador);
                 transaccion.Commit();
                 Log.Info("Horario en preparacion " + idCiclo + ": franja " + idFranja + " cambiada (clase " + idCarga + ", laboratorio " + nueva.LaboratorioId
@@ -1572,7 +1713,12 @@ namespace DigBit.conexion
                 using (MySqlCommand comando = new MySqlCommand("", conexion, transaccion))
                 {
                     comando.Parameters.AddWithValue("@C", ciclos[0]);
-                    comando.CommandText = "DELETE FROM ciclo_cargas WHERE idciclo = @C AND idcarga IN (" + Lista(comando, "k", idsCarga) + ")";
+                    comando.Parameters.AddWithValue("@PorAsignar", QuitadaPorAsignar);
+                    // Lo que les faltaba asignar se va con ellas.
+                    string ids = Lista(comando, "k", idsCarga);
+                    comando.CommandText = "DELETE FROM ciclo_cargas WHERE idciclo = @C AND quitada = @PorAsignar AND carga_origen IN (" + ids + ")";
+                    comando.ExecuteNonQuery();
+                    comando.CommandText = "DELETE FROM ciclo_cargas WHERE idciclo = @C AND quitada <> @PorAsignar AND idcarga IN (" + ids + ")";
                     quitadas = comando.ExecuteNonQuery();
                 }
 
@@ -1761,10 +1907,11 @@ namespace DigBit.conexion
         /// a las franjas de OTRAS clases sin quitar de ese horario que se cruzan
         /// con "nuevas" el mismo dia en el mismo laboratorio se les quita SOLO lo
         /// que se cruza (RevisionCiclo.Resto: la de en medio se parte en dos, la
-        /// tapada entera se borra). No hay "Falta asignar": la que se queda sin
-        /// horas sale en "Sin horario". La de "excluirFranja" (la que se mueve) no
-        /// cuenta. Dentro de la transaccion de quien la llama, con el horario ya
-        /// bloqueado. Devuelve cuantas franjas toco.
+        /// tapada entera se borra), y eso queda en su "Falta asignar" (2026-11-03,
+        /// como Horario semanal; la que se queda sin horas sale tambien en "Sin
+        /// horario"). La de "excluirFranja" (la que se mueve) no cuenta. Dentro de
+        /// la transaccion de quien la llama, con el horario ya bloqueado. Devuelve
+        /// cuantas franjas toco.
         /// </summary>
         private static int RecortarEncimadas(MySqlConnection conexion, MySqlTransaction transaccion, int idCiclo, int idCarga, IList<FranjaCiclo> nuevas,
             int excluirFranja)
@@ -1836,6 +1983,14 @@ namespace DigBit.conexion
                     Fin = t[1]
                 }).ToList();
                 InsertarFranjas(conexion, transaccion, otra.CargaId, trozos);
+                // Lo que se le quito (cada cruce, como RevisionCiclo.Reemplazos), en su "Falta asignar".
+                foreach (FranjaCiclo n in nuevas.Where(n => n.LaboratorioId == otra.LaboratorioId && n.DiaSemana == otra.DiaSemana
+                    && n.Inicio < otra.Fin && n.Fin > otra.Inicio))
+                {
+                    InsertarPorAsignar(conexion, transaccion, idCiclo, otra.CargaId, HorariosDatos.MotivoDesplazada, otra.LaboratorioId, otra.DiaSemana,
+                        n.Inicio > otra.Inicio ? n.Inicio : otra.Inicio, n.Fin < otra.Fin ? n.Fin : otra.Fin);
+                }
+
                 Log.Info("Horario en preparacion " + idCiclo + ": a la clase " + otra.CargaId + " se le quito lo que se cruzaba de su franja " + otra.Id
                     + " (laboratorio " + otra.LaboratorioId + ", dia " + otra.DiaSemana + ", " + HorariosDatos.Hora(otra.Inicio) + "-" + HorariosDatos.Hora(otra.Fin)
                     + "): " + (resto.Count == 0 ? "se quito entera" : "queda " + string.Join(" y ", resto.Select(t => HorariosDatos.Hora(t[0]) + "-" + HorariosDatos.Hora(t[1]))))
@@ -1869,6 +2024,242 @@ namespace DigBit.conexion
                 comando.CommandText = "INSERT INTO ciclo_franjas (idcarga, laboratorio, dia_semana, hora_inicio, hora_fin) VALUES " + string.Join(", ", filas);
                 comando.ExecuteNonQuery();
             }
+        }
+
+        // ---------------------------------------------------------------------
+        // Falta asignar (sin migracion: QuitadaPorAsignar)
+        // ---------------------------------------------------------------------
+
+        /// <summary>
+        /// "Ya no hace falta": unas horas por asignar del horario en preparacion se
+        /// dan por resueltas (se borran; las horas de la clase no cambian).
+        /// ErrorDeDatos si ya no estan (se asignaron, o se quito la clase, mientras tanto).
+        /// </summary>
+        public void YaNoHaceFalta(int idPorAsignar, int idAdministrador)
+        {
+            Permisos.Exigir("Dar por resueltas unas horas por asignar del horario en preparacion");
+            const string YaNoEstan = "Esas horas ya no están por asignar (quizá se asignaron mientras tanto). Vuelve a abrir la lista.";
+            using (MySqlConnection conexion = mconexion.GetConexion())
+            using (MySqlTransaction transaccion = conexion.BeginTransaction())
+            {
+                int? idCiclo;
+                using (MySqlCommand comando = new MySqlCommand(
+                    "SELECT idciclo FROM ciclo_cargas WHERE idcarga = @Id AND quitada = @PorAsignar", conexion, transaccion))
+                {
+                    comando.Parameters.AddWithValue("@Id", idPorAsignar);
+                    comando.Parameters.AddWithValue("@PorAsignar", QuitadaPorAsignar);
+                    object valor = comando.ExecuteScalar();
+                    idCiclo = valor == null || valor == DBNull.Value ? (int?)null : Convert.ToInt32(valor);
+                }
+
+                if (!idCiclo.HasValue)
+                {
+                    throw new ErrorDeDatos(YaNoEstan);
+                }
+
+                Bloquear(conexion, transaccion, idCiclo.Value, EstadoConfiguracion.EnPreparacion);
+                int borradas;
+                using (MySqlCommand comando = new MySqlCommand(
+                    "DELETE FROM ciclo_cargas WHERE idcarga = @Id AND idciclo = @C AND quitada = @PorAsignar", conexion, transaccion))
+                {
+                    comando.Parameters.AddWithValue("@Id", idPorAsignar);
+                    comando.Parameters.AddWithValue("@C", idCiclo.Value);
+                    comando.Parameters.AddWithValue("@PorAsignar", QuitadaPorAsignar);
+                    borradas = comando.ExecuteNonQuery();
+                }
+
+                if (borradas != 1)
+                {
+                    throw new ErrorDeDatos(YaNoEstan);
+                }
+
+                Tocar(conexion, transaccion, idCiclo.Value, idAdministrador);
+                transaccion.Commit();
+                Log.Info("Horario en preparacion " + idCiclo.Value + ": las horas por asignar " + idPorAsignar + " ya no hacen falta.");
+            }
+        }
+
+        /// <summary>
+        /// Unas horas que se le quitan a una clase del horario en preparacion
+        /// quedan en su "Falta asignar" (un renglon de QuitadaPorAsignar con su
+        /// docente, grupo y materia). Nada si no duran nada o la clase ya no esta.
+        /// </summary>
+        private static void InsertarPorAsignar(MySqlConnection conexion, MySqlTransaction transaccion, int idCiclo, int idCarga, string motivo,
+            int idLaboratorio, int diaSemana, TimeSpan inicio, TimeSpan fin)
+        {
+            PorAsignarCiclo nueva = new PorAsignarCiclo
+            {
+                CargaId = idCarga,
+                Motivo = motivo,
+                LaboratorioId = idLaboratorio,
+                DiaSemana = diaSemana,
+                Inicio = inicio,
+                Fin = fin
+            };
+            nueva.Minutos = nueva.MinutosOriginales;
+            if (nueva.Minutos <= 0)
+            {
+                return;
+            }
+
+            using (MySqlCommand comando = new MySqlCommand(@"
+                INSERT INTO ciclo_cargas (idciclo, profesor, grupo, materia, quitada, horario_origen, carga_origen)
+                SELECT idciclo, profesor, grupo, materia, @PorAsignar, @Que, idcarga FROM ciclo_cargas
+                 WHERE idcarga = @Carga AND idciclo = @C AND quitada = 0", conexion, transaccion))
+            {
+                comando.Parameters.AddWithValue("@PorAsignar", QuitadaPorAsignar);
+                comando.Parameters.AddWithValue("@Que", Cifrar(nueva));
+                comando.Parameters.AddWithValue("@Carga", idCarga);
+                comando.Parameters.AddWithValue("@C", idCiclo);
+                comando.ExecuteNonQuery();
+            }
+        }
+
+        /// <summary>
+        /// Las horas nuevas de una clase bajan lo que le faltaba asignar, de lo mas
+        /// antiguo a lo mas nuevo (como Horario semanal): lo que llega a cero se
+        /// borra. Devuelve cuantos minutos bajaron (0 si no gano tiempo).
+        /// </summary>
+        private static int AsignarPorAsignar(MySqlConnection conexion, MySqlTransaction transaccion, int idCiclo, int idCarga, int minutos)
+        {
+            if (minutos <= 0)
+            {
+                return 0;
+            }
+
+            List<PorAsignarCiclo> suyas = LeerPorAsignar(conexion, transaccion, idCiclo, " AND p.carga_origen = @Carga",
+                c => c.Parameters.AddWithValue("@Carga", idCarga), true);
+            int quedan = minutos;
+            int bajaron = 0;
+            foreach (PorAsignarCiclo p in suyas)
+            {
+                if (quedan <= 0)
+                {
+                    break;
+                }
+
+                int baja = Math.Min(quedan, p.Minutos);
+                quedan -= baja;
+                bajaron += baja;
+                p.Minutos -= baja;
+                using (MySqlCommand comando = new MySqlCommand(p.Minutos == 0
+                    ? "DELETE FROM ciclo_cargas WHERE idcarga = @Id AND quitada = @PorAsignar"
+                    : "UPDATE ciclo_cargas SET horario_origen = @Que WHERE idcarga = @Id AND quitada = @PorAsignar", conexion, transaccion))
+                {
+                    comando.Parameters.AddWithValue("@Id", p.Id);
+                    comando.Parameters.AddWithValue("@PorAsignar", QuitadaPorAsignar);
+                    comando.Parameters.AddWithValue("@Que", Cifrar(p));
+                    comando.ExecuteNonQuery();
+                }
+            }
+
+            return bajaron;
+        }
+
+        /// <summary>
+        /// Lo que falta asignar en el horario (y la condicion: " AND p.carga_origen
+        /// = @Carga"), de lo mas antiguo a lo mas nuevo, sin los nombres de los
+        /// laboratorios. Con bloquear, FOR UPDATE. Lo que no se entiende se salta.
+        /// </summary>
+        private static List<PorAsignarCiclo> LeerPorAsignar(MySqlConnection conexion, MySqlTransaction transaccion, int idCiclo, string condicion,
+            Action<MySqlCommand> parametros, bool bloquear)
+        {
+            List<PorAsignarCiclo> lista = new List<PorAsignarCiclo>();
+            using (MySqlCommand comando = new MySqlCommand(@"
+                SELECT p.idcarga, p.carga_origen, p.horario_origen FROM ciclo_cargas p
+                 WHERE p.idciclo = @C AND p.quitada = @PorAsignar" + condicion + @"
+                 ORDER BY p.idcarga" + (bloquear ? " FOR UPDATE" : ""), conexion, transaccion))
+            {
+                comando.Parameters.AddWithValue("@C", idCiclo);
+                comando.Parameters.AddWithValue("@PorAsignar", QuitadaPorAsignar);
+                if (parametros != null)
+                {
+                    parametros(comando);
+                }
+
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        int? carga = Entero(reader, "carga_origen");
+                        PorAsignarCiclo p = carga.HasValue ? Descifrar(reader.GetInt32("idcarga"), carga.Value, Texto(reader, "horario_origen")) : null;
+                        if (p != null)
+                        {
+                            lista.Add(p);
+                        }
+                        else
+                        {
+                            Log.Aviso("CicloPreliminarDatos: el renglon por asignar " + reader.GetInt32("idcarga") + " del horario " + idCiclo + " no se entiende; no se usa.");
+                        }
+                    }
+                }
+            }
+
+            return lista;
+        }
+
+        /// <summary>"desplazada|60|3|1|08:00|09:00": lo que va en horario_origen de un renglon de QuitadaPorAsignar.</summary>
+        private static string Cifrar(PorAsignarCiclo p)
+        {
+            return string.Join("|", p.Motivo, p.Minutos.ToString(CultureInfo.InvariantCulture), p.LaboratorioId.ToString(CultureInfo.InvariantCulture),
+                p.DiaSemana.ToString(CultureInfo.InvariantCulture), HorariosDatos.Hora(p.Inicio), HorariosDatos.Hora(p.Fin));
+        }
+
+        /// <summary>Lo que dice horario_origen de un renglon de QuitadaPorAsignar, o null si no se entiende.</summary>
+        private static PorAsignarCiclo Descifrar(int id, int idCarga, string texto)
+        {
+            string[] partes = (texto ?? "").Split('|');
+            int minutos;
+            int laboratorio;
+            int dia;
+            TimeSpan inicio;
+            TimeSpan fin;
+            if (partes.Length != 6
+                || !int.TryParse(partes[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out minutos) || minutos <= 0
+                || !int.TryParse(partes[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out laboratorio)
+                || !int.TryParse(partes[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out dia) || dia < 1 || dia > 7
+                || !TimeSpan.TryParse(partes[4], CultureInfo.InvariantCulture, out inicio)
+                || !TimeSpan.TryParse(partes[5], CultureInfo.InvariantCulture, out fin))
+            {
+                return null;
+            }
+
+            return new PorAsignarCiclo
+            {
+                Id = id,
+                CargaId = idCarga,
+                Motivo = partes[0] == HorariosDatos.MotivoQuitada ? HorariosDatos.MotivoQuitada : HorariosDatos.MotivoDesplazada,
+                Minutos = minutos,
+                LaboratorioId = laboratorio,
+                DiaSemana = dia,
+                Inicio = inicio,
+                Fin = fin
+            };
+        }
+
+        /// <summary>Lo que duran esas franjas, en minutos.</summary>
+        private static int MinutosDe(IEnumerable<FranjaCiclo> franjas)
+        {
+            return (franjas ?? new List<FranjaCiclo>()).Sum(f => HorariosDatos.MinutosEntre(f.Inicio, f.Fin));
+        }
+
+        /// <summary>Lo que duran ahora las horas de una clase del horario, en minutos.</summary>
+        private static int MinutosDeLaCarga(MySqlConnection conexion, MySqlTransaction transaccion, int idCarga)
+        {
+            int minutos = 0;
+            using (MySqlCommand comando = new MySqlCommand("SELECT hora_inicio, hora_fin FROM ciclo_franjas WHERE idcarga = @Id", conexion, transaccion))
+            {
+                comando.Parameters.AddWithValue("@Id", idCarga);
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        minutos += HorariosDatos.MinutosEntre(reader.GetTimeSpan("hora_inicio"), reader.GetTimeSpan("hora_fin"));
+                    }
+                }
+            }
+
+            return minutos;
         }
 
         // ---------------------------------------------------------------------
@@ -1930,10 +2321,11 @@ namespace DigBit.conexion
                 LEFT JOIN usuarios uor  ON uor.idusuarios = cc.profesor_origen
                 LEFT JOIN grupos gor    ON gor.idgrupos = cc.grupo_origen
                 LEFT JOIN materias mor  ON mor.id_materia = cc.materia_origen
-                WHERE cc.idciclo = @C
+                WHERE cc.idciclo = @C AND cc.quitada <> @PorAsignar
                 ORDER BY cc.profesor IS NOT NULL, u.apellido_paterno, u.nombre, m.nombre_materia, g.nombre_grupo, cc.idcarga", conexion, transaccion))
             {
                 comando.Parameters.AddWithValue("@C", idCiclo);
+                comando.Parameters.AddWithValue("@PorAsignar", QuitadaPorAsignar);
                 using (MySqlDataReader reader = comando.ExecuteReader())
                 {
                     while (reader.Read())
@@ -2031,6 +2423,28 @@ namespace DigBit.conexion
                             Activo = Convert.ToInt32(reader["activo"]) == 1
                         });
                     }
+                }
+            }
+
+            // "Falta asignar": solo de clases que siguen en ella, con el nombre de su laboratorio.
+            leido.PorAsignar = LeerPorAsignar(conexion, transaccion, idCiclo, "", null, false)
+                .Where(p => porId.ContainsKey(p.CargaId) && !porId[p.CargaId].Quitada).ToList();
+            if (leido.PorAsignar.Count > 0)
+            {
+                Dictionary<int, string> laboratorios = new Dictionary<int, string>();
+                using (MySqlCommand comando = new MySqlCommand("SELECT idlaboratorios, nombre_laboratorio FROM laboratorios", conexion, transaccion))
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        laboratorios[reader.GetInt32("idlaboratorios")] = Texto(reader, "nombre_laboratorio");
+                    }
+                }
+
+                foreach (PorAsignarCiclo p in leido.PorAsignar)
+                {
+                    string nombre;
+                    p.Laboratorio = laboratorios.TryGetValue(p.LaboratorioId, out nombre) ? nombre : "";
                 }
             }
 

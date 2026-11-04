@@ -1608,12 +1608,8 @@ namespace DigBit
             r.Laboratorio.MaxDropDownItems = 16;
             // Sin laboratorio (o uno que ya no esta), vacio: al guardar se pide.
             EstiloHorarios.Rellenar(r.Laboratorio, laboratorios, laboratorio);
-            List<OpcionCombo> dias = Enumerable.Range(1, CuadriculaSemanal.Dias).Select(d => new OpcionCombo { Id = d, Texto = HorariosDatos.NombresDia[d] }).ToList();
-            if (dia.HasValue && dia.Value > CuadriculaSemanal.Dias)
-            {
-                dias.Add(new OpcionCombo { Id = dia.Value, Texto = HorariosDatos.NombresDia[dia.Value] });
-            }
-
+            // De lunes a sabado (y el dia que ya tenia, si era otro), como "Cambiar horas".
+            List<OpcionCombo> dias = TextosDelHorario.DiasParaElegir(dia);
             EstiloHorarios.Rellenar(r.Dia, dias, dia);
             r.Quitar.LinkClicked += (s, e) => QuitarRenglon(r);
             ayuda.SetToolTip(r.Quitar, "Quita este horario de la clase (al guardar).");
@@ -2117,6 +2113,187 @@ namespace DigBit
             if (donde != null && donde.Visible && donde.Enabled)
             {
                 donde.Focus();
+            }
+        }
+    }
+
+    /// <summary>
+    /// "Falta asignar: N h" de la preparacion de Proximo ciclo (2026-11-03), como
+    /// el de Horario semanal (DialogoFaltaAsignar): lo que le falta a cada clase
+    /// del horario en preparacion, de donde salio y por que. «Ponerla...» cierra
+    /// con la elegida y el laboratorio donde ponerla (Elegida, LaboratorioElegido):
+    /// la pestana la deja preelegida para el siguiente "Poner clase...". "Ya no
+    /// hace falta" la quita (con confirmacion) sin cerrar. No hay fechas: una
+    /// plantilla no las tiene.
+    /// </summary>
+    internal class DialogoFaltaAsignarPlantilla : Form
+    {
+        private readonly CicloLeido leido;
+        private readonly DataGridView dgvLista;
+        private readonly Button btnPonerla;
+        private readonly Button btnNoHaceFalta;
+        private readonly ComboBox cboLaboratorio;
+        private readonly Label lblTotal;
+        private readonly Func<IWin32Window, PorAsignarCiclo, bool> yaNoHaceFalta;
+        private readonly List<PorAsignarCiclo> pendientes;
+
+        /// <summary>La elegida al pulsar "Ponerla..." (DialogResult.OK); null si se cerro.</summary>
+        public PorAsignarCiclo Elegida { get; private set; }
+
+        /// <summary>Donde ponerla: el laboratorio elegido en "Ponerla en".</summary>
+        public int LaboratorioElegido { get; private set; }
+
+        /// <summary>Si alguna se quito con "Ya no hace falta" (la pestana vuelve a leer).</summary>
+        public bool HuboCambios { get; private set; }
+
+        /// <param name="leido">La plantilla en preparacion: lo que le falta a sus clases (PorAsignar) y sus nombres.</param>
+        /// <param name="laboratorios">Los del selector de la semana, para "Ponerla en".</param>
+        /// <param name="yaNoHaceFalta">Pregunta, la quita y avisa si falla (con este dialogo de dueno): true si se quito.</param>
+        public DialogoFaltaAsignarPlantilla(CicloLeido leido, List<OpcionCombo> laboratorios, int laboratorioActual, Func<IWin32Window, PorAsignarCiclo, bool> yaNoHaceFalta)
+        {
+            this.leido = leido;
+            this.yaNoHaceFalta = yaNoHaceFalta;
+            pendientes = new List<PorAsignarCiclo>(leido.PorAsignar);
+            int ancho = Math.Min(1180, Screen.FromPoint(Cursor.Position).WorkingArea.Width - 40);
+            int alto = Math.Min(560, Screen.FromPoint(Cursor.Position).WorkingArea.Height - 60);
+            EstiloHorarios.PrepararDialogo(this, "Falta asignar", new Size(ancho, alto));
+
+            Label titulo = EstiloAdmin.TituloDialogo("Horas que falta asignar", ancho - 48);
+            string texto = "Lo que le falta a cada clase de este horario en preparación, en todos los laboratorios: las horas que otra clase desplazó "
+                + "o las que se quitaron para darlas en otro horario. Bajan solas al ponerle horas a la clase (lo más antiguo primero). "
+                + "«Ponerla...» te lleva al laboratorio que elijas con la clase ya elegida para el siguiente «Poner clase...». Lo que se usa hoy no cambia.";
+            Label explicacion = PiezasConfiguracion.Texto(texto, new Point(24, 54), new Size(ancho - 48, 20), 9.5F, Color.FromArgb(50, 50, 50));
+            explicacion.Height = PiezasConfiguracion.AltoDe(texto, explicacion.Font, explicacion.Width) + 4;
+
+            lblTotal = PiezasConfiguracion.Texto("", new Point(24, explicacion.Bottom + 6), new Size(ancho - 48, 20), 9.5F, PiezasConfiguracion.TextoAmbar, FontStyle.Bold);
+
+            int arribaLista = lblTotal.Bottom + 6;
+            dgvLista = EstiloHorarios.CrearGrid(new Point(24, arribaLista), new Size(ancho - 48, alto - 56 - 12 - arribaLista));
+            dgvLista.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+            dgvLista.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
+            dgvLista.Columns.Add("Clase", "Clase (materia - grupo)");
+            dgvLista.Columns.Add("Docente", "Docente");
+            dgvLista.Columns.Add("Faltan", "Faltan");
+            dgvLista.Columns.Add("Origen", "Salió de");
+            dgvLista.Columns.Add("Motivo", "Por qué");
+            EstiloHorarios.Pesos(dgvLista, 26, 22, 9, 22, 21);
+            Llenar();
+
+            Button cerrar = EstiloHorarios.CrearBoton("Cerrar", new Point(ancho - 24 - 120, ClientSize.Height - 56), new Size(120, 40));
+            cerrar.DialogResult = DialogResult.Cancel;
+            Controls.Add(titulo);
+            Controls.Add(explicacion);
+            Controls.Add(lblTotal);
+            Controls.Add(dgvLista);
+            Controls.Add(cerrar);
+            CancelButton = cerrar;
+            ActiveControl = dgvLista;
+
+            ToolTip ayuda = new ToolTip { AutoPopDelay = 15000 };
+            Disposed += (s, e) => ayuda.Dispose();
+
+            // Abajo a la izquierda: donde ponerla y las dos acciones; Cerrar a la derecha.
+            Label lblDonde = EstiloHorarios.CrearEtiqueta("Ponerla en", new Point(24, ClientSize.Height - 46));
+            cboLaboratorio = EstiloHorarios.CrearCombo(new Point(24 + lblDonde.PreferredWidth + 8, ClientSize.Height - 50), 220);
+            EstiloHorarios.Rellenar(cboLaboratorio, laboratorios ?? new List<OpcionCombo>(), laboratorioActual);
+            ayuda.SetToolTip(cboLaboratorio, "El laboratorio donde la quieres poner. Al elegir una clase de la lista, el de donde salió.");
+
+            btnPonerla = EstiloAdmin.BotonPrincipal("Ponerla...", new Point(cboLaboratorio.Right + 10, ClientSize.Height - 56), new Size(130, 40));
+            btnPonerla.Click += (s, e) => Ponerla();
+            ayuda.SetToolTip(btnPonerla, "Lleva al laboratorio elegido, con esta clase ya elegida para el siguiente «Poner clase...».\n"
+                + "Elige allí los cuadros (arrastra o usa Ctrl+clic) y pulsa «Poner clase...». Doble clic en la lista hace lo mismo.");
+
+            btnNoHaceFalta = EstiloHorarios.CrearBoton("Ya no hace falta", new Point(btnPonerla.Right + 10, ClientSize.Height - 56), new Size(160, 40));
+            btnNoHaceFalta.Click += (s, e) => NoHaceFalta();
+            ayuda.SetToolTip(btnNoHaceFalta, "La quita de la lista sin ponerle horas (antes te pregunta). Las horas de la clase no cambian.");
+
+            dgvLista.SelectionChanged += (s, e) => Elegir();
+            dgvLista.CellDoubleClick += (s, e) =>
+            {
+                if (e.RowIndex >= 0)
+                {
+                    Ponerla();
+                }
+            };
+
+            Controls.Add(lblDonde);
+            Controls.Add(cboLaboratorio);
+            Controls.Add(btnPonerla);
+            Controls.Add(btnNoHaceFalta);
+            Elegir();
+        }
+
+        private PorAsignarCiclo Actual
+        {
+            get { return dgvLista.CurrentRow == null ? null : dgvLista.CurrentRow.Tag as PorAsignarCiclo; }
+        }
+
+        private void Llenar()
+        {
+            dgvLista.Rows.Clear();
+            foreach (PorAsignarCiclo p in pendientes)
+            {
+                CargaCiclo carga = leido.Carga(p.CargaId);
+                int fila = dgvLista.Rows.Add(
+                    carga == null ? "" : carga.Materia + " - " + carga.Grupo,
+                    carga == null || !carga.ProfesorId.HasValue ? "Sin docente" : carga.Profesor,
+                    HorariosDatos.Duracion(p.Minutos) + (p.Minutos < p.MinutosOriginales ? " de " + HorariosDatos.Duracion(p.MinutosOriginales) : ""),
+                    p.Origen,
+                    p.Motivo == HorariosDatos.MotivoQuitada ? "Se quitó para darla en otro horario" : "Otra clase se puso en su lugar");
+                dgvLista.Rows[fila].Tag = p;
+            }
+
+            int total = pendientes.Sum(p => p.Minutos);
+            int clases = pendientes.Select(p => p.CargaId).Distinct().Count();
+            lblTotal.Text = pendientes.Count == 0 ? "Ya no falta asignar nada."
+                : "Falta asignar: " + HorariosDatos.Duracion(total) + " de " + clases + (clases == 1 ? " clase." : " clases.");
+        }
+
+        /// <summary>Con una elegida: "Ponerla en" pasa al laboratorio de donde salio (si esta en la lista).</summary>
+        private void Elegir()
+        {
+            PorAsignarCiclo p = Actual;
+            btnPonerla.Enabled = p != null && cboLaboratorio.Items.Count > 0;
+            btnNoHaceFalta.Enabled = p != null && yaNoHaceFalta != null;
+            if (p != null)
+            {
+                OpcionCombo suyo = cboLaboratorio.Items.OfType<OpcionCombo>().FirstOrDefault(o => o.Id == p.LaboratorioId);
+                if (suyo != null)
+                {
+                    cboLaboratorio.SelectedItem = suyo;
+                }
+            }
+        }
+
+        private void Ponerla()
+        {
+            PorAsignarCiclo p = Actual;
+            OpcionCombo laboratorio = cboLaboratorio.SelectedItem as OpcionCombo;
+            if (p == null || laboratorio == null)
+            {
+                return;
+            }
+
+            Elegida = p;
+            LaboratorioElegido = laboratorio.Id;
+            DialogResult = DialogResult.OK;
+        }
+
+        private void NoHaceFalta()
+        {
+            PorAsignarCiclo p = Actual;
+            if (p == null || yaNoHaceFalta == null || !yaNoHaceFalta(this, p))
+            {
+                return;
+            }
+
+            HuboCambios = true;
+            pendientes.Remove(p);
+            Llenar();
+            Elegir();
+            if (pendientes.Count == 0)
+            {
+                DialogResult = DialogResult.Cancel;
             }
         }
     }

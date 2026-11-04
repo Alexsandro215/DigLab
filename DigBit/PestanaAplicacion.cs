@@ -17,10 +17,15 @@ namespace DigBit
     /// aparte para aplicar el horario en preparacion. Tiene cuatro formas:
     /// - sin la base (falta db/16, db/23 o db/09): lo explica;
     /// - nada que aplicar (B): como preparar uno, y la tabla de los aplicados;
-    /// - la pagina de aplicar (C): el primer y el ultimo dia del horario nuevo,
-    ///   el ultimo del de ahora, el nombre en el registro y "Antes de aplicar"
-    ///   (lo rojo no deja aplicar, lo ambar avisa), con la revision en segundo
-    ///   plano; "Aplicar el horario..." pide la contrasena de la administracion;
+    /// - la pagina de aplicar (C): cuando empieza el horario nuevo ("Ahora
+    ///   mismo": hoy, al aplicarlo, y el de ahora hasta ayer, por omision si no
+    ///   tiene fechas guardadas; u "Otro dia", con su fecha y el ultimo dia del
+    ///   de ahora, por omision si las tiene), su ultimo dia,
+    ///   el nombre en el registro y "Antes de aplicar" (lo rojo no deja
+    ///   aplicar, lo ambar avisa), con la revision en segundo plano; con "Ahora
+    ///   mismo" lo que depende de la hora (las clases de hoy que ya terminaron)
+    ///   se rehace cada 30 s sin volver a leer; "Aplicar el horario..." pide la
+    ///   contrasena de la administracion;
     /// - aplicado y aun sin empezar (D): lo que se aplico y "Deshacer la
     ///   aplicacion..." mientras no empiece ni tenga sesiones.
     /// La persona responsable del laboratorio (solo consulta) ve B y D, sin
@@ -49,6 +54,8 @@ namespace DigBit
         /// </summary>
         private sealed class Recordado
         {
+            /// <summary>"Ahora mismo" (true) u "Otro dia" (false); null: aun no se eligio (por omision, ahora mismo).</summary>
+            public bool? Ahora;
             public DateTime? Fin;
             public bool FinTocado;
             public DateTime? Hasta;
@@ -67,6 +74,9 @@ namespace DigBit
         private readonly CicloPreliminarDatos datos = new CicloPreliminarDatos();
         private readonly ToolTip ayuda = new ToolTip { AutoPopDelay = 20000 };
         private readonly Timer temporizador = new Timer { Interval = 500 };
+        // Con "Ahora mismo": cada 30 s se rehace en memoria lo que depende de la
+        // hora del servidor (las clases de hoy que ya terminaron), sin volver a leer.
+        private readonly Timer relojAhora = new Timer { Interval = 30000 };
 
         // Las cuatro formas; se ve una.
         private readonly Panel vistaBase;
@@ -98,6 +108,10 @@ namespace DigBit
         private readonly LinkLabel lnkVerloC;
         private readonly Label lblFechas;
         private readonly Label lblRotDesde;
+        // Cuando empieza: "Ahora mismo (hoy, al aplicar)" u "Otro dia:" con dtpDesde.
+        private readonly RadioButton rbAhora;
+        private readonly RadioButton rbOtroDia;
+        private readonly Label lblHoyAhora;
         private readonly DateTimePicker dtpDesde;
         private readonly Label diaDesde;
         private readonly Label lblRotHasta;
@@ -122,8 +136,12 @@ namespace DigBit
         private readonly Label lblParaCargarlo;
         private readonly Button btnAplicar;
         private readonly Label lblEstadoC;
-        // Por que no se puede aplicar todavia, en rojo bajo el boton (sin pasar el raton).
+        // Por que no se puede aplicar todavia, en rojo junto al boton (sin pasar el raton).
         private readonly Label lblMotivoC;
+        // El boton, lblEstadoC y lblMotivoC: a dos columnas, sobre la pagina (AcomodarC).
+        private readonly Panel pieC;
+        // El pie esta abajo, sobre la pagina, porque la columna izquierda no cabe.
+        private bool pieFlotante;
         // ... columna derecha.
         private readonly Label lblAntes;
         private readonly Label lblRevisando;
@@ -181,6 +199,8 @@ namespace DigBit
         // Mientras aplica o deshace: ningun otro Aplicar ni Deshacer.
         private bool ocupado;
         private int anchoRenglones = -1;
+        // Mientras el reloj de "Ahora mismo" rehace los renglones: la lista se queda donde estaba.
+        private bool conservarDesplazamiento;
         private string motivoBoton = "";
         private string motivoDeshacer = "";
 
@@ -245,13 +265,21 @@ namespace DigBit
             });
             lblFechas = Titulo("Fechas", 10.5F);
             lblRotDesde = Rotulo("Primer día del nuevo horario");
+            rbAhora = Opcion("Ahora mismo (hoy, al aplicar)");
+            rbOtroDia = Opcion("Otro día:");
+            lblHoyAhora = Texto(10F, TextoGris);
+            ayuda.SetToolTip(rbAhora, "Empieza en el momento en que lo apliques: el horario en uso termina ayer.\n"
+                + "Las clases de hoy que ya terminaron no cuentan; la que está en curso y las que faltan, sí.\n"
+                + "Como empieza hoy, ya no se puede deshacer.");
+            ayuda.SetToolTip(rbOtroDia, "Empieza el día que elijas (después de hoy); hasta entonces nada cambia\n"
+                + "y se puede deshacer mientras no empiece.");
             dtpDesde = Fecha(vistaC, out diaDesde);
             lblRotHasta = Rotulo("Último día del nuevo horario");
             dtpHasta = Fecha(vistaC, out diaHasta);
             lblRotFin = Rotulo("Último día de clases del horario en uso");
             dtpFin = Fecha(vistaC, out diaFin);
             lblNotaFin = Texto(8.5F, TextoGris);
-            lblNotaFin.Text = "Por omisión, la víspera del primer día. Si antes hay vacaciones, pon el último día de clases: las vacaciones no cuentan como faltas.";
+            lblNotaFin.Text = NotaFinOtroDia;
             lblRotNombre = Rotulo("Nombre con que se guarda");
             txtNombre = EstiloHorarios.CrearTexto(Point.Empty, 260);
             txtNombre.MaxLength = CicloPreliminarDatos.LargoNombre;
@@ -300,16 +328,54 @@ namespace DigBit
             };
             lblPieRevision = Texto(9F, TextoGris);
             lblPieRevision.Text = "Lo rojo no deja aplicar. Lo ámbar es un aviso.";
+            // El boton con la linea de estado y el porque de no poder aplicar, en su
+            // pie: a dos columnas va sobre la pagina y, si la columna no cabe, se queda
+            // abajo, a la vista (AcomodarC); a una columna, en su sitio de la pagina.
+            pieC = new Panel { BackColor = Color.White, TabStop = false };
+            btnAplicar.TabIndex = 0;
+            pieC.Controls.AddRange(new Control[] { btnAplicar, lblEstadoC, lblMotivoC });
+            pieC.Paint += (s, e) =>
+            {
+                // Flotando sobre la pagina: una raya arriba, porque lo de abajo sigue detras.
+                if (pieFlotante)
+                {
+                    using (Pen raya = new Pen(Color.FromArgb(222, 222, 222)))
+                    {
+                        e.Graphics.DrawLine(raya, 0, 0, pieC.Width, 0);
+                    }
+                }
+            };
             vistaC.Controls.AddRange(new Control[]
             {
-                lblTituloC, lblResumenC, lnkVerloC, lblFechas, lblRotDesde, lblRotHasta, lblRotFin, lblNotaFin, lblRotNombre, txtNombre,
+                lblTituloC, lblResumenC, lnkVerloC, lblFechas, lblRotDesde, rbAhora, rbOtroDia, lblHoyAhora,
+                lblRotHasta, lblRotFin, lblNotaFin, lblRotNombre, txtNombre,
                 lblAlAplicar, lblRotCrean, lblCrean, lblRotTerminan, lblTerminan, lblRotCodigos, lblCodigos, lblNadaCambia,
-                chkGuardar, txtGuardarComo, lblParaCargarlo, btnAplicar, lblEstadoC, lblMotivoC,
+                chkGuardar, txtGuardarComo, lblParaCargarlo, pieC,
                 lblAntes, lblRevisando, lnkRevisarOtraVez, flowRevision, lblPieRevision
             });
             // Un boton desactivado no recibe el raton: la explicacion la da su contenedor.
-            AyudaSobreDesactivado(vistaC, btnAplicar, () => motivoBoton);
+            AyudaSobreDesactivado(pieC, btnAplicar, () => motivoBoton);
+            // El tabulador en el orden en que se ven (las fechas se anadieron antes que el resto).
+            Control[] enOrden = { lnkVerloC, rbAhora, rbOtroDia, dtpDesde, dtpHasta, dtpFin, txtNombre, chkGuardar, txtGuardarComo, pieC, lnkRevisarOtraVez };
+            for (int i = 0; i < enOrden.Length; i++)
+            {
+                enOrden[i].TabIndex = i;
+            }
 
+            // Una de las dos cambia y la otra tambien: basta con escuchar una.
+            rbAhora.CheckedChanged += (s, e) => ModoCambiado();
+            // Un clic en el dia de "Ahora mismo" tambien lo elige.
+            lblHoyAhora.Click += (s, e) => rbAhora.Checked = true;
+            // Y uno en la fecha apagada de "Otro dia" elige "Otro dia" (apagada no recibe
+            // el raton: le llega a su contenedor).
+            vistaC.MouseDown += (s, e) =>
+            {
+                if (!dtpDesde.Enabled && dtpDesde.Visible && dtpDesde.Bounds.Contains(e.Location) && borrador != null && !ocupado)
+                {
+                    rbOtroDia.Checked = true;
+                    dtpDesde.Focus();
+                }
+            };
             dtpDesde.ValueChanged += (s, e) => DesdeCambiado();
             dtpHasta.ValueChanged += (s, e) => HastaCambiado();
             dtpFin.ValueChanged += (s, e) => FinCambiado();
@@ -333,6 +399,8 @@ namespace DigBit
                 }
             };
             temporizador.Tick += (s, e) => LanzarRevision();
+            relojAhora.Tick += (s, e) => RelojAhora();
+            relojAhora.Start();
 
             // --- D. Aplicado y aun sin empezar ----------------------------------
             vistaD = NuevaVista();
@@ -432,6 +500,8 @@ namespace DigBit
                 lectura++;
                 temporizador.Stop();
                 temporizador.Dispose();
+                relojAhora.Stop();
+                relojAhora.Dispose();
                 ayuda.Dispose();
             }
 
@@ -639,6 +709,8 @@ namespace DigBit
                 v.Visible = v == vista;
             }
 
+            // A dos columnas el pie de C no esta dentro de vistaC: se esconde con ella.
+            pieC.Visible = vista == vistaC;
             vistaActual = vista;
             Acomodar();
         }
@@ -652,7 +724,7 @@ namespace DigBit
             bool consulta = Permisos.SoloConsulta;
             lblTextoB.Text = consulta
                 ? "Solo consulta: aquí se ve lo que se aplicó."
-                : "Aplicar cambia el horario que se usa en los laboratorios a partir de una fecha. Se aplica el horario en preparación: "
+                : "Aplicar cambia el horario que se usa en los laboratorios, desde ese momento o desde una fecha. Se aplica el horario en preparación: "
                   + "prepáralo en «2. Preparación» como copia del de hoy, de una plantilla guardada o en blanco.";
             btnIrB.Visible = !consulta;
             lblEstadoB.Text = "";
@@ -814,16 +886,34 @@ namespace DigBit
                 if (!mismo)
                 {
                     recargadoPorRevision = false;
+                    // Por omision, "Ahora mismo" (empieza al aplicarlo), salvo que ya tenga
+                    // fechas guardadas (las eligio con "Otro dia" o vuelve de Deshacer).
+                    bool ahora = recordado.Ahora ?? !enPreparacion.Desde.HasValue;
+                    rbAhora.Checked = ahora;
+                    rbOtroDia.Checked = !ahora;
+                    // dtpDesde es siempre la fecha de "Otro dia" (y la que se guarda como propuesta).
                     DateTime desde = enPreparacion.Desde ?? PrimerDiaPropuesto(finComun);
-                    DateTime hasta = enPreparacion.Hasta ?? (recordado.HastaTocado && recordado.Hasta.HasValue ? recordado.Hasta.Value : desde.AddMonths(5).AddDays(-1));
+                    DateTime empieza = ahora ? hoy.Date : desde;
+                    DateTime hasta = enPreparacion.Hasta ?? (recordado.HastaTocado && recordado.Hasta.HasValue ? recordado.Hasta.Value : empieza.AddMonths(5).AddDays(-1));
                     DateTime fin = recordado.FinTocado && recordado.Fin.HasValue ? recordado.Fin.Value : desde.AddDays(-1);
                     PonerFecha(dtpDesde, desde);
                     PonerFecha(dtpHasta, hasta);
-                    PonerFecha(dtpFin, fin);
+                    PonerFecha(dtpFin, ahora ? hoy.Date.AddDays(-1) : fin);
                     txtNombre.Text = recordado.NombreTocado && recordado.Nombre != null ? recordado.Nombre : NombrePropuesto();
                     chkGuardar.Checked = recordado.Guardar ?? true;
                     txtGuardarComo.Text = recordado.GuardarTocado && recordado.GuardarComo != null ? recordado.GuardarComo : "";
                     lblEstadoC.Text = "";
+                }
+                else if (EmpiezaAhora)
+                {
+                    // La misma pagina vuelta a leer (otra vez la pestana o F5), quiza
+                    // despues de la medianoche: Cargar ya puso el hoy del servidor y con
+                    // "Ahora mismo" el ultimo dia del de ahora es siempre ayer.
+                    PonerFecha(dtpFin, hoy.Date.AddDays(-1));
+                    if (!recordado.NombreTocado)
+                    {
+                        txtNombre.Text = NombrePropuesto();
+                    }
                 }
 
                 desdeGuardado = enPreparacion.Desde;
@@ -842,9 +932,134 @@ namespace DigBit
             nombreRevisado = null;
             errorRevision = null;
             anchoRenglones = -1;
+            PonerModo();
             PintarAlAplicar();
             MostrarVista(vistaC);
             LanzarRevision();
+        }
+
+        /// <summary>Lo que dice junto a "Antes de aplicar" cuando ya reviso (PonerRevisando le guarda sitio).</summary>
+        private const string TextoSeRevisa = "Se revisa al cambiar las fechas.";
+
+        /// <summary>La nota bajo el ultimo dia del horario en uso, con "Otro dia".</summary>
+        private const string NotaFinOtroDia = "Por omisión, la víspera del primer día. Si antes hay vacaciones, pon el último día de clases: "
+            + "las vacaciones no cuentan como faltas.";
+
+        /// <summary>"Ahora mismo": empieza al aplicarlo (hoy, y el horario de ahora hasta ayer).</summary>
+        private bool EmpiezaAhora
+        {
+            get { return rbAhora.Checked; }
+        }
+
+        /// <summary>El primer dia del horario nuevo: hoy (del servidor) con "Ahora mismo"; si no, el de "Otro dia".</summary>
+        private DateTime DesdeElegido()
+        {
+            return EmpiezaAhora ? hoy.Date : dtpDesde.Value.Date;
+        }
+
+        /// <summary>El ultimo dia del horario de ahora: ayer con "Ahora mismo"; si no, el que se eligio.</summary>
+        private DateTime FinElegido()
+        {
+            return EmpiezaAhora ? hoy.Date.AddDays(-1) : dtpFin.Value.Date;
+        }
+
+        /// <summary>
+        /// Lo que cambia con la opcion: con "Ahora mismo", la fecha de "Otro dia"
+        /// y el ultimo dia del horario en uso (fijo en ayer) apagados, y su nota.
+        /// </summary>
+        private void PonerModo()
+        {
+            bool ahora = EmpiezaAhora;
+            dtpDesde.Enabled = !ahora;
+            diaDesde.ForeColor = ahora ? PuntoGris : Color.FromArgb(80, 80, 80);
+            dtpFin.Enabled = !ahora;
+            diaFin.ForeColor = ahora ? PuntoGris : Color.FromArgb(80, 80, 80);
+            lblHoyAhora.Text = HistorialCambios.DiaYFecha(hoy);
+            lblHoyAhora.ForeColor = ahora ? TextoOscuro : TextoGris;
+            lblNotaFin.Text = ahora
+                ? "Con «Ahora mismo» es ayer, " + HistorialCambios.DiaYFecha(hoy.Date.AddDays(-1)) + ": hoy ya solo cuenta el horario nuevo."
+                : NotaFinOtroDia;
+            rbAhora.AccessibleDescription = "Hoy, " + HistorialCambios.DiaYFecha(hoy) + ". El horario en uso termina ayer.";
+        }
+
+        /// <summary>Se eligio "Ahora mismo" u "Otro dia": las fechas que dependen de ello, el nombre propuesto y otra revision.</summary>
+        private void ModoCambiado()
+        {
+            if (ajustando || borrador == null)
+            {
+                return;
+            }
+
+            recordado.Ahora = rbAhora.Checked;
+            ajustando = true;
+            try
+            {
+                if (!recordado.HastaTocado && !borrador.Hasta.HasValue)
+                {
+                    PonerFecha(dtpHasta, DesdeElegido().AddMonths(5).AddDays(-1));
+                }
+
+                PonerFecha(dtpFin, EmpiezaAhora ? hoy.Date.AddDays(-1)
+                    : recordado.FinTocado && recordado.Fin.HasValue ? recordado.Fin.Value : dtpDesde.Value.Date.AddDays(-1));
+                if (!recordado.NombreTocado)
+                {
+                    txtNombre.Text = NombrePropuesto();
+                }
+            }
+            finally
+            {
+                ajustando = false;
+            }
+
+            PonerModo();
+            AcomodarC();
+            PedirRevision();
+        }
+
+        /// <summary>
+        /// Cada 30 s con "Ahora mismo": lo que depende de la hora (las clases de
+        /// hoy que ya terminaron) se rehace en memoria con la hora del servidor
+        /// estimada (DatosDeAplicacion.AhoraEstimado); solo se vuelve a pintar si
+        /// cambio algo. Si en el servidor ya es otro dia, se vuelve a leer.
+        /// </summary>
+        private void RelojAhora()
+        {
+            if (IsDisposed || !Visible || vistaActual != vistaC || borrador == null || !EmpiezaAhora || revisado == null
+                || renglones == null || revisando || ocupado || errorRevision != null)
+            {
+                return;
+            }
+
+            if (revisado.AhoraEstimado.Date != revisado.Hoy.Date)
+            {
+                LanzarRevision();
+                return;
+            }
+
+            List<RenglonRevision> nuevos;
+            try
+            {
+                nuevos = RevisionAplicacion.Revisar(revisado, revisado.Fechas.Desde, revisado.Fechas.Hasta, revisado.Fechas.Fin, txtNombre.Text);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("PestanaAplicacion.RelojAhora", ex);
+                return;
+            }
+
+            if (!nuevos.Select(r => r.Nivel + "|" + r.Texto).SequenceEqual(renglones.Select(r => r.Nivel + "|" + r.Texto)))
+            {
+                // La lista se rehace sola: que no vuelva arriba si se estaba leyendo abajo.
+                conservarDesplazamiento = true;
+                try
+                {
+                    RehacerRevision();
+                }
+                finally
+                {
+                    conservarDesplazamiento = false;
+                }
+            }
         }
 
         /// <summary>
@@ -860,12 +1075,14 @@ namespace DigBit
 
         /// <summary>
         /// El primer dia que se propone: el siguiente a la fecha de fin mas comun
-        /// de las clases que valen hoy; si eso no es despues de hoy, manana.
+        /// de las clases que valen hoy; si eso no es despues de hoy, manana. Un
+        /// domingo no se propone: no hay clases, y el horario empezaria en vacio.
         /// </summary>
         private DateTime PrimerDiaPropuesto(DateTime? finComun)
         {
             DateTime propuesto = finComun.HasValue ? finComun.Value.Date.AddDays(1) : hoy.Date.AddDays(1);
-            return propuesto > hoy.Date ? propuesto : hoy.Date.AddDays(1);
+            propuesto = propuesto > hoy.Date ? propuesto : hoy.Date.AddDays(1);
+            return propuesto.DayOfWeek == DayOfWeek.Sunday ? propuesto.AddDays(1) : propuesto;
         }
 
         /// <summary>NombrePropuesto(desde, hasta) si se sigue llamando "Proximo ciclo"; si no, su nombre.</summary>
@@ -877,13 +1094,14 @@ namespace DigBit
             }
 
             return borrador.Nombre == CicloPreliminarDatos.NombrePreparacion
-                ? CicloPreliminarDatos.NombrePropuesto(dtpDesde.Value.Date, dtpHasta.Value.Date)
+                ? CicloPreliminarDatos.NombrePropuesto(DesdeElegido(), dtpHasta.Value.Date)
                 : borrador.Nombre;
         }
 
         private void DesdeCambiado()
         {
-            if (ajustando || borrador == null)
+            // Con "Ahora mismo" la fecha de "Otro dia" esta apagada: no manda.
+            if (ajustando || borrador == null || EmpiezaAhora)
             {
                 return;
             }
@@ -942,7 +1160,8 @@ namespace DigBit
 
         private void FinCambiado()
         {
-            if (ajustando || borrador == null)
+            // Con "Ahora mismo" es ayer y no se cambia (y no se recuerda como tocado).
+            if (ajustando || borrador == null || EmpiezaAhora)
             {
                 return;
             }
@@ -976,7 +1195,9 @@ namespace DigBit
                 return;
             }
 
-            DateTime desde = dtpDesde.Value.Date;
+            // Con "Ahora mismo" el primer dia no se ha elegido: se queda el que estuviera
+            // guardado (si no, la proxima vez propondria "Otro dia" sin que nadie lo pidiera).
+            DateTime? desde = EmpiezaAhora ? desdeGuardado : dtpDesde.Value.Date;
             DateTime hasta = dtpHasta.Value.Date;
             if ((desdeGuardado == desde && hastaGuardado == hasta) || hasta < desde)
             {
@@ -1052,6 +1273,9 @@ namespace DigBit
 
             otraRevision = false;
             int id = borrador.Id;
+            // Con "Ahora mismo" el primer dia (hoy) y el ultimo del de ahora (ayer) los
+            // pone el servidor: no el reloj de este equipo.
+            bool ahora = EmpiezaAhora;
             DateTime desde = dtpDesde.Value.Date;
             DateTime hasta = dtpHasta.Value.Date;
             DateTime fin = dtpFin.Value.Date;
@@ -1061,7 +1285,9 @@ namespace DigBit
                 Exception fallo = null;
                 try
                 {
-                    leidos = new CicloPreliminarDatos().LeerParaAplicar(id, desde, hasta, fin);
+                    leidos = ahora
+                        ? new CicloPreliminarDatos().LeerParaAplicarAhora(id, hasta)
+                        : new CicloPreliminarDatos().LeerParaAplicar(id, desde, hasta, fin);
                 }
                 catch (Exception ex)
                 {
@@ -1088,6 +1314,11 @@ namespace DigBit
             {
                 return;
             }
+
+            // Esta lectura ya termino (su tarea solo sale despues de pedir esto): si su
+            // Task aun no se marca como terminada, LanzarRevision la veria en curso,
+            // volveria a poner otraRevision y nadie la relanzaria ("Revisando..." para siempre).
+            revisionEnCurso = null;
 
             // Se pidio otra mientras esta leia: esta ya no vale y se lanza aquella.
             if (otraRevision)
@@ -1148,9 +1379,44 @@ namespace DigBit
                 recargadoPorRevision = false;
                 revisado = leidos;
                 errorRevision = null;
+                SeguirHoyDelServidor(leidos.Hoy);
             }
 
             RehacerRevision();
+        }
+
+        /// <summary>
+        /// Hoy es el del servidor (el de la ultima lectura): si paso la medianoche
+        /// desde que se abrio la pestana, "Ahora mismo" pasa a ese dia (y el de
+        /// ahora hasta la vispera) sin que la revision se quede esperando.
+        /// </summary>
+        private void SeguirHoyDelServidor(DateTime hoyLeido)
+        {
+            if (hoyLeido.Date == hoy.Date)
+            {
+                return;
+            }
+
+            hoy = hoyLeido.Date;
+            ajustando = true;
+            try
+            {
+                if (EmpiezaAhora)
+                {
+                    PonerFecha(dtpFin, hoy.AddDays(-1));
+                }
+
+                if (recordado != null && !recordado.NombreTocado)
+                {
+                    txtNombre.Text = NombrePropuesto();
+                }
+            }
+            finally
+            {
+                ajustando = false;
+            }
+
+            PonerModo();
         }
 
         /// <summary>Los renglones con lo ultimo leido y el nombre de ahora (el nombre se revisa en memoria).</summary>
@@ -1187,7 +1453,7 @@ namespace DigBit
                 }
             }
 
-            lblRevisando.Text = revisando ? "Revisando..." : errorRevision != null ? "" : "Se revisa al cambiar las fechas.";
+            lblRevisando.Text = revisando ? "Revisando..." : errorRevision != null ? "" : TextoSeRevisa;
             lnkRevisarOtraVez.Visible = !revisando && errorRevision != null;
             PintarAlAplicar();
             anchoRenglones = -1;
@@ -1203,29 +1469,45 @@ namespace DigBit
                 return;
             }
 
-            DateTime desde = dtpDesde.Value.Date;
+            bool ahora = EmpiezaAhora;
+            DateTime desde = DesdeElegido();
             DateTime hasta = dtpHasta.Value.Date;
-            DateTime fin = dtpFin.Value.Date;
+            DateTime fin = FinElegido();
             bool vale = revisado != null && !revisando && MismasFechas(revisado);
             int clases = vale ? revisado.Clases : borrador.Clases;
             int horarios = vale ? revisado.Horarios : borrador.Horarios;
-            lblCrean.Text = RevisionCiclo.TextoClases(clases) + " con " + RevisionCiclo.TextoHorarios(horarios) + ", del "
-                + HistorialCambios.DiaYFecha(desde) + " al " + HistorialCambios.DiaYFecha(hasta) + ".";
+            lblCrean.Text = RevisionCiclo.TextoClases(clases) + " con " + RevisionCiclo.TextoHorarios(horarios)
+                + (ahora ? ", desde hoy, " + HistorialCambios.DiaYFecha(desde) + ", al " : ", del " + HistorialCambios.DiaYFecha(desde) + " al ")
+                + HistorialCambios.DiaYFecha(hasta) + ".";
             if (!vale)
             {
-                lblTerminan.Text = "las clases que valen el " + HistorialCambios.DiaYFecha(fin) + " (se cuentan al revisar).";
+                lblTerminan.Text = ahora
+                    ? "las clases de ahora, ayer, " + HistorialCambios.DiaYFecha(fin) + " (se cuentan al revisar)."
+                    : "las clases que valen el " + HistorialCambios.DiaYFecha(fin) + " (se cuentan al revisar).";
                 lblCodigos.Text = "cada docente sigue con el suyo.";
             }
             else
             {
                 int n = revisado.Terminan;
                 int apagadas = revisado.Terminan - revisado.TerminanActivas;
-                lblTerminan.Text = n == 0
-                    ? "ninguna clase de ahora sigue después del " + HistorialCambios.DiaYFecha(fin) + ": no se recorta nada."
-                    : (n == 1 ? "la clase que seguía después del " : "las " + n + " clases que seguían después del ") + HistorialCambios.DiaYFecha(fin)
-                      + (apagadas > 0 ? " (" + (apagadas == 1 ? "1 de ellas desactivada" : apagadas + " de ellas desactivadas") + ")" : "")
-                      + (n == 1 ? " termina ese día" : " terminan ese día")
-                      + ". Sus sesiones, bitácoras, asistencias y faltas ya registradas no cambian.";
+                string deEllas = apagadas > 0 ? " (" + (apagadas == 1 ? "1 de ellas desactivada" : apagadas + " de ellas desactivadas") + ")" : "";
+                if (ahora)
+                {
+                    lblTerminan.Text = n == 0
+                        ? "ninguna clase de ahora sigue después de ayer: no se recorta nada."
+                        : (n == 1 ? "la clase de ahora" : "las " + n + " clases de ahora") + deEllas
+                          + (n == 1 ? " termina" : " terminan") + " ayer, " + HistorialCambios.DiaYFecha(fin)
+                          + ". Lo registrado hoy cuenta en su clase nueva o, si no sigue, en la de antes.";
+                }
+                else
+                {
+                    lblTerminan.Text = n == 0
+                        ? "ninguna clase de ahora sigue después del " + HistorialCambios.DiaYFecha(fin) + ": no se recorta nada."
+                        : (n == 1 ? "la clase que seguía después del " : "las " + n + " clases que seguían después del ") + HistorialCambios.DiaYFecha(fin)
+                          + deEllas
+                          + (n == 1 ? " termina ese día" : " terminan ese día")
+                          + ". Sus sesiones, bitácoras, asistencias y faltas ya registradas no cambian.";
+                }
                 // Hasta tres nombres: con mas, la columna crecia y salia la barra a 1366.
                 List<string> sinCodigo = revisado.DocentesSinCodigo ?? new List<string>();
                 List<string> nombres = sinCodigo.Take(sinCodigo.Count > 3 ? 2 : 3).ToList();
@@ -1239,7 +1521,10 @@ namespace DigBit
                 ayuda.SetToolTip(lblCodigos, sinCodigo.Count > 3 ? "Reciben código: " + RevisionCiclo.Enumerar(sinCodigo) + "." : null);
             }
 
-            lblNadaCambia.Text = fin < hoy.Date
+            lblNadaCambia.Text = ahora
+                ? "Empieza en cuanto lo apliques: desde ese momento los laboratorios y los paneles de los docentes usan el horario nuevo. "
+                  + "Como empieza hoy, ya no se podrá deshacer."
+                : fin < hoy.Date
                 ? "Desde que lo apliques y hasta el " + HistorialCambios.Fecha(desde) + " no hay clases en los laboratorios: las de ahora terminaron el "
                   + HistorialCambios.Fecha(fin) + "."
                 : "Hasta el " + HistorialCambios.Fecha(desde) + " nada cambia en los laboratorios ni en los paneles de los docentes.";
@@ -1267,10 +1552,17 @@ namespace DigBit
             lblParaCargarlo.Text = hayQueGuardar ? "Para cargarlo en otro ciclo." : "Ese día no hay clases que guardar.";
         }
 
+        /// <summary>La revision es de lo que se ve: la misma opcion ("Ahora mismo" u "Otro dia") y las mismas fechas.</summary>
         private bool MismasFechas(DatosDeAplicacion d)
         {
-            return d != null && d.Fechas != null && d.Fechas.Desde == dtpDesde.Value.Date && d.Fechas.Hasta == dtpHasta.Value.Date
-                && d.Fechas.Fin == dtpFin.Value.Date;
+            if (d == null || d.Fechas == null || d.Fechas.EmpiezaAhora != EmpiezaAhora || d.Fechas.Hasta != dtpHasta.Value.Date)
+            {
+                return false;
+            }
+
+            return EmpiezaAhora
+                ? d.Fechas.Desde == hoy.Date && d.Fechas.Fin == hoy.Date.AddDays(-1)
+                : d.Fechas.Desde == dtpDesde.Value.Date && d.Fechas.Fin == dtpFin.Value.Date;
         }
 
         /// <summary>
@@ -1329,6 +1621,7 @@ namespace DigBit
         /// <summary>Los renglones de "Antes de aplicar", del ancho de la lista.</summary>
         private void PintarRevision(int ancho)
         {
+            Point desplazado = flowRevision.AutoScrollPosition;
             flowRevision.SuspendLayout();
             List<Control> viejos = flowRevision.Controls.Cast<Control>().ToList();
             flowRevision.Controls.Clear();
@@ -1355,6 +1648,11 @@ namespace DigBit
             }
 
             flowRevision.ResumeLayout();
+            if (conservarDesplazamiento && flowRevision.AutoScroll)
+            {
+                flowRevision.AutoScrollPosition = new Point(-desplazado.X, -desplazado.Y);
+            }
+
             anchoRenglones = ancho;
         }
 
@@ -1430,9 +1728,11 @@ namespace DigBit
 
             CicloPreliminar enPreparacion = borrador;
             DatosDeAplicacion conQueSeReviso = revisado;
-            DateTime desde = dtpDesde.Value.Date;
+            bool ahora = EmpiezaAhora;
+            // Con "Ahora mismo", las de la revision: hoy y ayer del servidor.
+            DateTime desde = ahora ? revisado.Fechas.Desde.Date : dtpDesde.Value.Date;
             DateTime hasta = dtpHasta.Value.Date;
-            DateTime fin = dtpFin.Value.Date;
+            DateTime fin = ahora ? revisado.Fechas.Fin.Date : dtpFin.Value.Date;
             string nombre = txtNombre.Text.Trim();
             string guardarComo = chkGuardar.Enabled && chkGuardar.Checked ? txtGuardarComo.Text.Trim() : null;
             if (guardarComo != null && guardarComo.Length == 0)
@@ -1444,11 +1744,14 @@ namespace DigBit
 
             int clases = revisado.Clases;
             int terminan = revisado.Terminan;
-            string detalle = (clases == 1 ? "Se crea 1 clase" : "Se crean " + clases + " clases") + " desde el " + HistorialCambios.Fecha(desde)
-                + (terminan == 0 ? "; ninguna clase de ahora se recorta."
-                    : terminan == 1 ? " y la de ahora termina el " + HistorialCambios.Fecha(fin) + "."
-                    : " y las " + terminan + " de ahora terminan el " + HistorialCambios.Fecha(fin) + ".");
-            if (!DialogoContrasenaAdmin.Confirmar(Dueno(), "¿Aplicar «" + nombre + "»?", detalle, "Aplicar"))
+            string detalle = ahora
+                ? DetalleAhora(revisado, nombre)
+                : (clases == 1 ? "Se crea 1 clase" : "Se crean " + clases + " clases") + " desde el " + HistorialCambios.Fecha(desde)
+                  + (terminan == 0 ? "; ninguna clase de ahora se recorta."
+                      : terminan == 1 ? " y la de ahora termina el " + HistorialCambios.Fecha(fin) + "."
+                      : " y las " + terminan + " de ahora terminan el " + HistorialCambios.Fecha(fin) + ".");
+            if (!DialogoContrasenaAdmin.Confirmar(Dueno(), ahora ? "¿Aplicar «" + nombre + "» ahora mismo?" : "¿Aplicar «" + nombre + "»?", detalle,
+                ahora ? "Aplicar ahora" : "Aplicar"))
             {
                 return;
             }
@@ -1456,8 +1759,9 @@ namespace DigBit
             // Mientras se confirmaba pudo llegar otra revision o volver a leerse la
             // pestana: solo se aplica lo que se confirmo, con la misma revision.
             if (IsDisposed || ocupado || vistaActual != vistaC || borrador == null || borrador.Id != enPreparacion.Id
-                || revisado != conQueSeReviso || MotivoParaNoAplicar() != null
-                || dtpDesde.Value.Date != desde || dtpHasta.Value.Date != hasta || dtpFin.Value.Date != fin || txtNombre.Text.Trim() != nombre)
+                || revisado != conQueSeReviso || MotivoParaNoAplicar() != null || EmpiezaAhora != ahora
+                || (!ahora && (dtpDesde.Value.Date != desde || dtpFin.Value.Date != fin))
+                || dtpHasta.Value.Date != hasta || txtNombre.Text.Trim() != nombre)
             {
                 if (!IsDisposed && vistaActual == vistaC)
                 {
@@ -1475,7 +1779,9 @@ namespace DigBit
             Ocupado(true, lblEstadoC, "Aplicando... no cierres la ventana.");
             try
             {
-                resultado = datos.Aplicar(enPreparacion.Id, nombre, desde, hasta, fin, guardarComo, IdAdministrador());
+                resultado = ahora
+                    ? datos.AplicarAhora(enPreparacion.Id, nombre, desde, hasta, guardarComo, IdAdministrador())
+                    : datos.Aplicar(enPreparacion.Id, nombre, desde, hasta, fin, guardarComo, IdAdministrador());
             }
             catch (Exception ex)
             {
@@ -1493,14 +1799,35 @@ namespace DigBit
             }
 
             recordados.Remove(ClaveRecordada(enPreparacion));
-            string mensaje = "Listo: «" + resultado.Nombre + "» quedó aplicado.";
+            mensajePendiente = MensajeDeAplicado(resultado);
+            mensajePendienteEsError = false;
+            Cargar();
+        }
+
+        /// <summary>
+        /// El "Listo" de la linea de estado tras aplicar; con "Ahora mismo",
+        /// tambien a que hora empezo y cuantas clases de hoy ya no cuentan.
+        /// </summary>
+        private static string MensajeDeAplicado(ResultadoAplicar resultado)
+        {
+            string mensaje = "Listo: «" + resultado.Nombre + "» quedó aplicado"
+                + (!resultado.EmpezoAhora ? "."
+                    : " y cuenta desde las " + resultado.EmpezoA.ToString("HH:mm", Invariante) + " de hoy."
+                      + (resultado.SinContarHoy == 0 ? ""
+                          : resultado.SinContarHoy == 1 ? " 1 clase de hoy que ya había terminado no cuenta (en Faltas, «Volver a contar» la devuelve)."
+                          : " " + resultado.SinContarHoy + " clases de hoy que ya habían terminado no cuentan (en Faltas, «Volver a contar» las devuelve)."));
+            if (resultado.MinutosPorAsignar > 0)
+            {
+                mensaje += " " + HorariosDatos.Duracion(resultado.MinutosPorAsignar) + " pasan a «Falta asignar» de Horario semanal.";
+            }
+
             if (resultado.GuardadaNombre != null)
             {
                 mensaje += " También se guardó «" + resultado.GuardadaNombre + "» como quedó.";
             }
             else if (resultado.SinClasesQueGuardar)
             {
-                mensaje += " El horario de ahora no se guardó: el " + HistorialCambios.Fecha(fin) + " no tenía clases.";
+                mensaje += " El horario de ahora no se guardó: el " + HistorialCambios.Fecha(resultado.Fin) + " no tenía clases.";
             }
 
             if (resultado.RecibieronCodigo.Count > 0)
@@ -1508,9 +1835,40 @@ namespace DigBit
                 mensaje += " Recibieron código: " + RevisionCiclo.Enumerar(resultado.RecibieronCodigo) + ".";
             }
 
-            mensajePendiente = mensaje;
-            mensajePendienteEsError = false;
-            Cargar();
+            return mensaje;
+        }
+
+        /// <summary>
+        /// Lo que dice la confirmacion de "Ahora mismo": que empieza en ese
+        /// momento, que pasa con las clases de hoy (a la hora del servidor) y, bien
+        /// claro, que ya no se podra deshacer.
+        /// </summary>
+        private static string DetalleAhora(DatosDeAplicacion d, string nombre)
+        {
+            DateTime momento = d.AhoraEstimado;
+            ClasesDeHoy deHoy = RevisionAplicacion.ContarDeHoy(d, momento);
+            string cuentan = RevisionAplicacion.QuienesCuentan(deHoy);
+            List<string> partes = new List<string>
+            {
+                "Empieza en este momento, hoy " + HistorialCambios.DiaYFecha(d.Hoy) + " (" + momento.ToString("HH:mm", Invariante) + "): "
+                + (d.Clases == 1 ? "se crea 1 clase" : "se crean " + d.Clases + " clases") + " desde hoy y "
+                + (d.Terminan == 0 ? "ninguna de ahora se recorta." : d.Terminan == 1 ? "la de ahora termina ayer." : "las " + d.Terminan + " de ahora terminan ayer.")
+            };
+            if (deHoy.Terminadas > 0)
+            {
+                partes.Add(deHoy.Terminadas == 1
+                    ? "1 clase de hoy del horario nuevo ya terminó y no cuenta."
+                    : deHoy.Terminadas + " clases de hoy del horario nuevo ya terminaron y no cuentan.");
+            }
+
+            if (cuentan != null)
+            {
+                partes.Add(cuentan + " con el horario nuevo.");
+            }
+
+            partes.Add("Lo registrado hoy con el horario de ahora se queda y cuenta una sola vez en las listas.");
+            partes.Add("Como empieza hoy, ya no se podrá deshacer: después «" + nombre + "» solo se corrige en Horario semanal y Clases.");
+            return string.Join(" ", partes);
         }
 
         /// <summary>
@@ -1747,9 +2105,14 @@ namespace DigBit
         private static void AcomodarTabla(int x, int w, int alto, int arriba, Label estado, Label titulo, LinkLabel enlace, DataGridView grid, Label vacio)
         {
             estado.AutoSize = false;
-            estado.SetBounds(x, arriba + 8, w, 20);
-            titulo.Location = new Point(x, arriba + 34);
-            enlace.Location = new Point(x + w - enlace.Width, arriba + 37);
+            // Hasta tres renglones: el "Listo" de "Ahora mismo" dice tambien a que hora
+            // empezo y cuantas de hoy no cuentan (en uno se cortaba con "...").
+            int altoEstado = estado.Text.Length == 0 ? 20
+                : Math.Max(20, Math.Min(3 * estado.Font.Height + 4,
+                    TextRenderer.MeasureText(estado.Text, estado.Font, new Size(w, int.MaxValue), TextFormatFlags.WordBreak).Height + 2));
+            estado.SetBounds(x, arriba + 8, w, altoEstado);
+            titulo.Location = new Point(x, estado.Bottom + 6);
+            enlace.Location = new Point(x + w - enlace.Width, estado.Bottom + 9);
             int top = titulo.Bottom + 6;
             int filas = Math.Max(1, grid.Rows.Count);
             int deseado = grid.ColumnHeadersHeight + Math.Min(8, filas) * grid.RowTemplate.Height + 3;
@@ -1789,8 +2152,20 @@ namespace DigBit
 
             lblFechas.Location = new Point(x0, y);
             y += 28;
-            int xFecha = x0 + Math.Max(256, new[] { lblRotDesde, lblRotHasta, lblRotFin, lblRotNombre }.Max(r => r.PreferredWidth) + 8);
-            y = FilaDeFecha(lblRotDesde, dtpDesde, diaDesde, x0, xFecha, y) + 8;
+            // El primer dia: su rotulo y, debajo y con sangria, las dos opciones; el dia
+            // de "Ahora mismo" y la fecha de "Otro dia" en la columna de las fechas.
+            const int Sangria = 14;
+            int xFecha = x0 + Math.Max(256, Math.Max(new[] { lblRotHasta, lblRotFin, lblRotNombre }.Max(r => r.PreferredWidth) + 8,
+                Sangria + Math.Max(rbAhora.PreferredSize.Width, rbOtroDia.PreferredSize.Width) + 8));
+            lblRotDesde.Location = new Point(x0, y);
+            y = lblRotDesde.Bottom + 6;
+            rbAhora.Location = new Point(x0 + Sangria, y + 2);
+            lblHoyAhora.Location = new Point(xFecha, y + 4);
+            y += Math.Max(dtpDesde.Height, rbAhora.Height + 4) + 4;
+            rbOtroDia.Location = new Point(x0 + Sangria, y + 2);
+            dtpDesde.Location = new Point(xFecha, y);
+            diaDesde.Location = new Point(dtpDesde.Right + 10, y + 4);
+            y += Math.Max(dtpDesde.Height, rbOtroDia.Height + 4) + 10;
             y = FilaDeFecha(lblRotHasta, dtpHasta, diaHasta, x0, xFecha, y) + 8;
             y = FilaDeFecha(lblRotFin, dtpFin, diaFin, x0, xFecha, y) + 4;
             lblNotaFin.MaximumSize = new Size(Math.Min(540, wIzq), 0);
@@ -1814,18 +2189,17 @@ namespace DigBit
             lblParaCargarlo.MaximumSize = new Size(Math.Max(80, wIzq - 18 - 220 - 8), 0);
             lblParaCargarlo.Location = new Point(txtGuardarComo.Right + 8, y + 4);
             y = Math.Max(txtGuardarComo.Bottom, lblParaCargarlo.Bottom) + 12;
-            btnAplicar.SetBounds(x0, y, 240, 42);
-            lblEstadoC.SetBounds(x0 + 252, y, Math.Max(80, wIzq - 252), 42);
-            // El porque de no poder aplicar, junto al boton, donde va la linea de
-            // estado cuando no dice nada (asi no hace falta bajar a 1366x768).
-            lblMotivoC.SetBounds(x0 + 252, y, Math.Max(80, wIzq - 252), 42);
+
+            // El pie: el boton y, a su derecha, la linea de estado o, si no dice nada,
+            // el porque de no poder aplicar, del alto de su texto (antes, 42 fijos lo
+            // cortaban). Se coloca al final, segun quepa la columna.
+            int anchoTexto = Math.Max(80, wIzq - 252);
             lblMotivoC.Visible = lblMotivoC.Text.Length > 0 && lblEstadoC.Text.Length == 0;
-            if (lblMotivoC.Visible)
-            {
-                // La linea de estado (vacia) esta en el mismo sitio y es transparente: taparia el motivo.
-                lblMotivoC.BringToFront();
-            }
-            y = btnAplicar.Bottom + 12;
+            int altoEstado = Math.Max(42, AltoDeTexto(lblEstadoC, anchoTexto));
+            int altoMotivo = Math.Max(42, AltoDeTexto(lblMotivoC, anchoTexto));
+            int altoPie = lblMotivoC.Visible ? altoMotivo : altoEstado;
+            int yPie = y;
+            y = yPie + altoPie + 12;
 
             int anchoLista;
             if (dos)
@@ -1833,12 +2207,10 @@ namespace DigBit
                 int xd = x0 + wIzq + 36;
                 int wd = Math.Max(200, ancho - xd - 24);
                 lblAntes.Location = new Point(xd, 12);
-                lblRevisando.SetBounds(xd + wd - 320, 15, 320, 20);
-                lnkRevisarOtraVez.Location = new Point(xd + wd - lnkRevisarOtraVez.Width, 15);
                 // La clave de los colores, bajo su titulo y antes de los renglones (abajo
                 // del todo quedaba lejos de lo que explica).
                 lblPieRevision.Location = new Point(xd, lblAntes.Bottom + 2);
-                int arriba = lblPieRevision.Bottom + 8;
+                int arriba = PonerRevisando(xd, wd, 15, lblPieRevision.Bottom + 8);
                 flowRevision.AutoScroll = true;
                 flowRevision.SetBounds(xd, arriba, wd, Math.Max(80, alto - 10 - arriba));
                 anchoLista = wd - SystemInformation.VerticalScrollBarWidth - 6;
@@ -1851,8 +2223,6 @@ namespace DigBit
             {
                 int yd = y + 8;
                 lblAntes.Location = new Point(x0, yd);
-                lblRevisando.SetBounds(x0 + wIzq - 320, yd + 3, 320, 20);
-                lnkRevisarOtraVez.Location = new Point(x0 + wIzq - lnkRevisarOtraVez.Width, yd + 3);
                 anchoLista = wIzq;
                 if (anchoLista != anchoRenglones)
                 {
@@ -1861,12 +2231,81 @@ namespace DigBit
 
                 int altoLista = flowRevision.Controls.Cast<Control>().Sum(c => c.Height + c.Margin.Vertical) + 4;
                 lblPieRevision.Location = new Point(x0, lblAntes.Bottom + 2);
+                int arriba = PonerRevisando(x0, wIzq, yd + 3, lblPieRevision.Bottom + 8);
                 flowRevision.AutoScroll = false;
-                flowRevision.SetBounds(x0, lblPieRevision.Bottom + 8, wIzq, Math.Max(40, altoLista));
+                flowRevision.SetBounds(x0, arriba, wIzq, Math.Max(40, altoLista));
             }
 
+            // A dos columnas el pie va sobre la pagina, no dentro: si la columna izquierda
+            // no cabe, se queda abajo, a la vista, con el boton y su motivo (a 1366x705 el
+            // boton quedaba debajo de lo visible), y la pagina reserva su sitio para poder
+            // bajar a lo que queda detras. A una columna, en su sitio de la pagina.
+            const int MargenPie = 8;
+            pieFlotante = dos && yPie + altoPie + 2 * MargenPie > alto;
+            Control padrePie = dos ? (Control)this : vistaC;
+            if (pieC.Parent != padrePie)
+            {
+                padrePie.Controls.Add(pieC);
+            }
+
+            int dentro = pieFlotante ? MargenPie : 0;
+            btnAplicar.SetBounds(0, dentro, 240, 42);
+            lblEstadoC.SetBounds(252, dentro, anchoTexto, altoEstado);
+            lblMotivoC.SetBounds(252, dentro, anchoTexto, altoMotivo);
+            if (lblMotivoC.Visible)
+            {
+                // La linea de estado (vacia) esta en el mismo sitio y es transparente: taparia el motivo.
+                lblMotivoC.BringToFront();
+            }
+
+            int altoDelPie = altoPie + 2 * dentro;
+            pieC.SetBounds(x0, pieFlotante ? alto - altoDelPie : yPie, wIzq, altoDelPie);
+            vistaC.AutoScrollMinSize = pieFlotante ? new Size(0, yPie + altoPie + 2 * MargenPie) : Size.Empty;
+            if (padrePie == this)
+            {
+                pieC.BringToFront();
+            }
+
+            pieC.Invalidate();
             vistaC.ResumeLayout();
             vistaC.AutoScrollPosition = new Point(-desplazado.X, -desplazado.Y);
+        }
+
+        /// <summary>
+        /// "Revisando..." (y "Revisar otra vez") a la derecha del titulo de "Antes de
+        /// aplicar", sin encimarse con el titulo ni con la clave de los colores (a 1280
+        /// se encimaba con la clave); si no cabe ahi, en su propio renglon, bajo la
+        /// clave. Devuelve donde empiezan los renglones.
+        /// </summary>
+        private int PonerRevisando(int x, int ancho, int y, int arriba)
+        {
+            int necesita = TextRenderer.MeasureText(TextoSeRevisa, lblRevisando.Font).Width + 6;
+            int libreDesde = Math.Max(lblAntes.Right, lblPieRevision.Right) + 12;
+            int libre = Math.Min(320, x + ancho - libreDesde);
+            if (libre >= necesita)
+            {
+                lblRevisando.SetBounds(x + ancho - libre, y, libre, 20);
+            }
+            else
+            {
+                lblRevisando.SetBounds(x, arriba, ancho, 20);
+                arriba += 22;
+            }
+
+            lnkRevisarOtraVez.Location = new Point(x + ancho - lnkRevisarOtraVez.Width, lblRevisando.Top);
+            return arriba;
+        }
+
+        /// <summary>El alto de la etiqueta con su texto en ese ancho, de 1 a 4 renglones (vacia, 0).</summary>
+        private static int AltoDeTexto(Label etiqueta, int ancho)
+        {
+            if (etiqueta.Text.Length == 0)
+            {
+                return 0;
+            }
+
+            int alto = TextRenderer.MeasureText(etiqueta.Text, etiqueta.Font, new Size(ancho, int.MaxValue), TextFormatFlags.WordBreak).Height + 2;
+            return Math.Min(alto, 4 * TextRenderer.MeasureText("Ág", etiqueta.Font).Height + 2);
         }
 
         private static int FilaDeFecha(Label rotulo, DateTimePicker fecha, Label dia, int x0, int xFecha, int y)
@@ -1926,6 +2365,20 @@ namespace DigBit
             Label rotulo = EstiloHorarios.CrearEtiqueta(texto, Point.Empty);
             rotulo.Font = new DrawingFont("Century Gothic", 9.5F, FontStyle.Bold);
             return rotulo;
+        }
+
+        /// <summary>Una opcion de "Primer dia del nuevo horario", como las de la ficha del docente.</summary>
+        private static RadioButton Opcion(string texto)
+        {
+            return new RadioButton
+            {
+                AutoSize = true,
+                BackColor = Color.White,
+                Font = new DrawingFont("Century Gothic", 10F),
+                ForeColor = TextoOscuro,
+                Text = texto,
+                UseMnemonic = false
+            };
         }
 
         private static Label RotuloDeRenglon(string texto)

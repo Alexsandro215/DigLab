@@ -12,8 +12,10 @@ using DrawingFont = System.Drawing.Font;
 namespace DigBit
 {
     /// <summary>
-    /// El horario del profesor en una semana de calendario: de lunes a sabado,
-    /// cada dia con su fecha, y el selector de Horarios (SelectorSemana) para ir
+    /// El horario del profesor en una semana de calendario: de lunes a sabado
+    /// (el domingo, si tiene algo ese dia) y las horas de sus clases, tambien
+    /// antes de las 07:00 o despues de las 21:00 (MostrarSoloLoSuyo), cada dia
+    /// con su fecha, y el selector de Horarios (SelectorSemana) para ir
     /// a la anterior o a la siguiente y volver a "Esta semana". Al pulsar una
     /// clase se abre su bitacora de ESE dia (BitacoraSesion) con quien registro
     /// en ella; si aun no empieza, la ayuda dice desde cuando se registra.
@@ -565,16 +567,17 @@ namespace DigBit
 
         /// <summary>
         /// Las franjas de sus clases activas cuya vigencia toca esa semana (de
-        /// lunes a sabado). Las de cada clase se piden una vez (ObtenerFranjasDeClase:
+        /// lunes a domingo: unas horas del domingo tambien se ven, en su columna).
+        /// Las de cada clase se piden una vez (ObtenerFranjasDeClase:
         /// todas, tambien las que ya terminaron o aun no empiezan, db/20) y se
         /// guardan hasta la siguiente lectura completa (CargarHorario). El codigo,
         /// en mayusculas, como se dicta.
         /// </summary>
         private List<FranjaInfo> FranjasDeLaSemana(DateTime lunes)
         {
-            DateTime sabado = lunes.AddDays(CuadriculaSemanal.Dias - 1);
+            DateTime domingo = lunes.AddDays(CuadriculaSemanal.Domingo - 1);
             List<FranjaInfo> franjas = new List<FranjaInfo>();
-            foreach (ClaseInfo clase in clases.Where(c => c.Activa && c.VigenteDesde.Date <= sabado && c.VigenteHasta.Date >= lunes))
+            foreach (ClaseInfo clase in clases.Where(c => c.Activa && c.VigenteDesde.Date <= domingo && c.VigenteHasta.Date >= lunes))
             {
                 List<FranjaInfo> suyas;
                 if (!franjasDeClase.TryGetValue(clase.Id, out suyas))
@@ -598,7 +601,7 @@ namespace DigBit
         private static bool SeDaEnLaSemana(FranjaInfo franja, DateTime lunes)
         {
             DateTime fecha = lunes.AddDays(franja.DiaSemana - 1);
-            return franja.Activa && franja.DiaSemana >= 1 && franja.DiaSemana <= CuadriculaSemanal.Dias
+            return franja.Activa && franja.DiaSemana >= 1 && franja.DiaSemana <= CuadriculaSemanal.Domingo
                 && fecha >= franja.VigenteDesde.Date && fecha <= franja.VigenteHasta.Date;
         }
 
@@ -671,25 +674,33 @@ namespace DigBit
 
         /// <summary>
         /// La cuadricula solo con las horas en que tiene algo que se vea (sus
-        /// clases de lunes a sabado de esa semana y las sesiones extra que la
-        /// cuadricula pinta) mas las de la semana de hoy (horasDeHoy: al cambiar
-        /// de semana no se encoge), y sin el sabado si ninguna de las dos lo usa.
-        /// Sin nada, el dia entero. Necesita cuadricula.Semana ya puesta.
+        /// clases de esa semana y las sesiones extra que la cuadricula pinta) mas
+        /// las de la semana de hoy (horasDeHoy: al cambiar de semana no se encoge),
+        /// tambien antes de las 07:00 o despues de las 21:00 (2026-11-03: antes se
+        /// recortaban y una clase de las 21:00 no se veia); sin el sabado si
+        /// ninguna de las dos lo usa, y con el domingo solo si alguna lo usa. Sin
+        /// nada, el dia entero. Necesita cuadricula.Semana ya puesta; antes que
+        /// cuadricula.Franjas (ConDomingo).
         /// </summary>
         private void MostrarSoloLoSuyo(List<FranjaInfo> franjas, List<ExcepcionInfo> excepciones)
         {
-            List<FranjaInfo> visibles = franjas.Where(f => f.DiaSemana >= 1 && f.DiaSemana <= CuadriculaSemanal.Dias).ToList();
+            List<FranjaInfo> visibles = franjas.Where(f => f.DiaSemana >= 1 && f.DiaSemana <= CuadriculaSemanal.Domingo).ToList();
             List<ExcepcionInfo> extras = excepciones.Where(cuadricula.ExtraSeDibuja).ToList();
             List<TimeSpan> inicios = visibles.Select(f => f.Inicio).Concat(extras.Select(x => x.Inicio)).ToList();
             List<TimeSpan> fines = visibles.Select(f => f.Fin).Concat(extras.Select(x => x.Fin)).ToList();
             bool sabado = visibles.Any(f => f.DiaSemana == CuadriculaSemanal.Dias) || extras.Any(x => x.Fecha.DayOfWeek == DayOfWeek.Saturday);
+            // El domingo de esta semana lo pone la cuadricula sola (si tiene algo ese
+            // dia); el de la semana de hoy se queda al moverse, como el sabado.
+            bool domingo = false;
             if (horasDeHoy != null)
             {
                 inicios.Add(horasDeHoy.Desde);
                 fines.Add(horasDeHoy.Hasta);
                 sabado |= horasDeHoy.Sabado;
+                domingo = horasDeHoy.Domingo;
             }
 
+            cuadricula.ConDomingo = domingo;
             if (inicios.Count == 0)
             {
                 cuadricula.MostrarHoras(EstiloHorarios.HoraApertura, EstiloHorarios.HoraCierre);
@@ -702,22 +713,24 @@ namespace DigBit
             cuadricula.SabadoVisible = sabado;
         }
 
-        /// <summary>De que hora a que hora tiene clases una semana, y si da algo el sabado.</summary>
+        /// <summary>De que hora a que hora tiene clases una semana, y si da algo el sabado o el domingo.</summary>
         private sealed class HorasDeSemana
         {
             public TimeSpan Desde;
             public TimeSpan Hasta;
             public bool Sabado;
+            public bool Domingo;
 
-            /// <summary>Las de esas franjas (de lunes a sabado), o null si no hay ninguna.</summary>
+            /// <summary>Las de esas franjas (de lunes a domingo), o null si no hay ninguna.</summary>
             public static HorasDeSemana De(IEnumerable<FranjaInfo> franjas)
             {
-                List<FranjaInfo> visibles = franjas.Where(f => f.DiaSemana >= 1 && f.DiaSemana <= CuadriculaSemanal.Dias).ToList();
+                List<FranjaInfo> visibles = franjas.Where(f => f.DiaSemana >= 1 && f.DiaSemana <= CuadriculaSemanal.Domingo).ToList();
                 return visibles.Count == 0 ? null : new HorasDeSemana
                 {
                     Desde = visibles.Min(f => f.Inicio),
                     Hasta = visibles.Max(f => f.Fin),
-                    Sabado = visibles.Any(f => f.DiaSemana == CuadriculaSemanal.Dias)
+                    Sabado = visibles.Any(f => f.DiaSemana == CuadriculaSemanal.Dias),
+                    Domingo = visibles.Any(f => f.DiaSemana == CuadriculaSemanal.Domingo)
                 };
             }
         }

@@ -316,6 +316,9 @@ namespace DigBit.conexion
         public string ProfesorCorto;
         public string Grupo;
         public string Materia;
+        /// <summary>Para reconocer la sesion de la clase de antes de su misma terna (EmparejarSesiones). Interno: no va en los volcados.</summary>
+        internal int MateriaId;
+        internal int GrupoId;
         public TimeSpan Inicio;
         public TimeSpan Fin;
         /// <summary>El de la cancelacion, o el de la extra.</summary>
@@ -500,6 +503,13 @@ namespace DigBit.conexion
         public int BitacorasEnOtra;
         public SesionAgenda EnOtra;
         public bool NoContaba;
+        /// <summary>
+        /// BitacorasEnOtra y EnOtra son los de la sesion de la clase de antes de su
+        /// misma terna, recortada por "Ahora mismo" (HorariosDatos.AnotarSesiones
+        /// con deClasesTerminadas). No cambia SesionId: la clase sigue sin sesion
+        /// propia, y con la generacion de codigos su docente la abre con la suya.
+        /// </summary>
+        public bool EnLaDeAntes;
 
         /// <summary>Cuantas bitacoras tiene esta clase: las de su sesion o, si salio vacia, las que quedaron en otra.</summary>
         public int BitacorasDeLaClase
@@ -1081,7 +1091,9 @@ namespace DigBit.conexion
                             + ": su vigencia no puede empezar después, dejaría fuera esas sesiones.");
                     }
 
-                    if (sesiones.Ultima.HasValue && hasta.Date < sesiones.Ultima.Value)
+                    // Si no se cambia su ultimo dia no deja fuera nada nuevo: una clase que
+                    // "Ahora mismo" termino ayer tiene sesiones de hoy y se tiene que poder editar.
+                    if (sesiones.Ultima.HasValue && hasta.Date < sesiones.Ultima.Value && hasta.Date != actual.VigenteHasta.Date)
                     {
                         throw new InvalidOperationException("La clase tiene sesiones hasta el " + sesiones.Ultima.Value.ToString("dd/MM/yyyy")
                             + ": su vigencia no puede terminar antes, dejaría fuera esas sesiones.");
@@ -1470,10 +1482,20 @@ namespace DigBit.conexion
             }
         }
 
+        /// <summary>
+        /// Tambien contra las sesiones extra ya puestas de hoy en adelante, en las
+        /// fechas de su vigencia que caen en su dia (ChoqueConExtra): si no, ese
+        /// dia habria dos clases a la vez, aunque ValidarExtra si lo impide al reves.
+        /// </summary>
         /// <param name="excluirTambien">Otras franjas que no cuentan (las que un reemplazo va a recortar, db/25); null: ninguna.</param>
+        /// <param name="cancelacionesDe">
+        /// La franja cuyas cancelaciones tendra (la que se cambia desde una fecha o
+        /// el trozo de antes de una partida); null: excluirFranjaId. Esos dias no
+        /// se da y no choca con una sesion extra.
+        /// </param>
         private static string ValidarFranjaEn(MySqlConnection conexion, MySqlTransaction transaccion, int? excluirFranjaId, int idClase,
             int idLaboratorio, int diaSemana, TimeSpan inicio, TimeSpan fin, DateTime? propiaDesde, DateTime? propiaHasta,
-            IEnumerable<int> excluirTambien = null)
+            IEnumerable<int> excluirTambien = null, int? cancelacionesDe = null)
         {
             // Solo numeros: van en el texto de la consulta.
             string fueraTambien = excluirTambien == null || !excluirTambien.Any() ? ""
@@ -1548,7 +1570,7 @@ namespace DigBit.conexion
                   AND h.hora_inicio < @Fin AND h.hora_fin > @Inicio
                   AND " + cruce + @"
                   AND (h.laboratorios_idlaboratorios = @Lab OR c.usuarios_idusuarios = @Profesor OR c.grupos_idgrupos = @Grupo)
-                ORDER BY h.hora_inicio
+                ORDER BY h.hora_inicio, mismo_lab DESC, h.idhorarios
                 LIMIT 1", conexion, transaccion))
             {
                 comando.Parameters.AddWithValue("@Lab", idLaboratorio);
@@ -1562,12 +1584,75 @@ namespace DigBit.conexion
                 comando.Parameters.AddWithValue("@Hasta", hasta);
                 using (MySqlDataReader reader = comando.ExecuteReader())
                 {
+                    if (reader.Read())
+                    {
+                        return DescribirConflicto(reader, VigenciaDeLaOtra(reader));
+                    }
+                }
+            }
+
+            return ChoqueConExtra(conexion, transaccion, clase, idLaboratorio, diaSemana, inicio, fin, desde, hasta,
+                cancelacionesDe ?? excluirFranjaId, excluirTambien);
+        }
+
+        /// <summary>
+        /// ValidarFranjaEn contra las sesiones extra (tambien lo que le queda de
+        /// un recorte a otra clase): las de hoy en adelante, de desde a hasta, que
+        /// caen en su dia de la semana, de clases activas y vigentes ese dia, por
+        /// laboratorio, profesor o grupo, como ValidarExtraEn al reves. Lo que ya
+        /// paso no se puede dar dos veces. No cuentan los dias en que la franja
+        /// (propias) esta cancelada, ni lo que le queda de un recorte a una de las
+        /// excluidas: el reemplazo la quita o la parte (Recortar). Null si nada.
+        /// </summary>
+        private static string ChoqueConExtra(MySqlConnection conexion, MySqlTransaction transaccion, ClaseInfo clase, int idLaboratorio, int diaSemana,
+            TimeSpan inicio, TimeSpan fin, DateTime desde, DateTime hasta, int? propias, IEnumerable<int> excluidas)
+        {
+            // Solo numeros: van en el texto de la consulta.
+            string restosDeExcluidas = excluidas == null || !excluidas.Any() ? "" : @"
+                  AND NOT EXISTS (SELECT 1 FROM horario_excepciones y
+                                  INNER JOIN horarios hy ON hy.idhorarios = y.horarios_idhorarios
+                                   WHERE y.tipo = 'cancelada' AND y.fecha = x.fecha
+                                     AND hy.idhorarios IN (" + string.Join(",", excluidas.Select(i => i.ToString(CultureInfo.InvariantCulture))) + @")
+                                     AND hy.clases_idclases = x.clases_idclases AND hy.laboratorios_idlaboratorios = x.laboratorios_idlaboratorios
+                                     AND x.hora_inicio >= hy.hora_inicio AND x.hora_fin <= hy.hora_fin)";
+            using (MySqlCommand comando = new MySqlCommand(@"
+                SELECT l.nombre_laboratorio, c.codigo, m.nombre_materia, g.nombre_grupo, x.hora_inicio, x.hora_fin, x.fecha,
+                       (x.laboratorios_idlaboratorios = @Lab) AS mismo_lab,
+                       (c.usuarios_idusuarios = @Profesor) AS mismo_profesor,
+                       (c.grupos_idgrupos = @Grupo) AS mismo_grupo
+                FROM horario_excepciones x
+                INNER JOIN clases c       ON c.idclases = x.clases_idclases
+                INNER JOIN grupos g       ON g.idgrupos = c.grupos_idgrupos
+                INNER JOIN materias m     ON m.id_materia = c.materias_id_materia
+                INNER JOIN laboratorios l ON l.idlaboratorios = x.laboratorios_idlaboratorios
+                WHERE x.tipo = 'extra'
+                  AND x.fecha BETWEEN @Desde AND @Hasta AND x.fecha >= CURDATE() AND WEEKDAY(x.fecha) + 1 = @Dia
+                  AND x.hora_inicio < @Fin AND x.hora_fin > @Inicio
+                  AND c.activa = 1 AND x.fecha BETWEEN c.vigente_desde AND c.vigente_hasta
+                  AND (x.laboratorios_idlaboratorios = @Lab OR c.usuarios_idusuarios = @Profesor OR c.grupos_idgrupos = @Grupo)
+                  AND NOT EXISTS (SELECT 1 FROM horario_excepciones z
+                                   WHERE z.tipo = 'cancelada' AND z.horarios_idhorarios = @Propias AND z.fecha = x.fecha)" + restosDeExcluidas + @"
+                ORDER BY x.fecha, x.hora_inicio
+                LIMIT 1", conexion, transaccion))
+            {
+                comando.Parameters.AddWithValue("@Lab", idLaboratorio);
+                comando.Parameters.AddWithValue("@Profesor", clase.ProfesorId);
+                comando.Parameters.AddWithValue("@Grupo", clase.GrupoId);
+                comando.Parameters.AddWithValue("@Dia", diaSemana);
+                comando.Parameters.AddWithValue("@Inicio", inicio);
+                comando.Parameters.AddWithValue("@Fin", fin);
+                comando.Parameters.AddWithValue("@Desde", desde.Date);
+                comando.Parameters.AddWithValue("@Hasta", hasta.Date);
+                comando.Parameters.AddWithValue("@Propias", propias ?? 0);
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
                     if (!reader.Read())
                     {
                         return null;
                     }
 
-                    return DescribirConflicto(reader, VigenciaDeLaOtra(reader));
+                    // "... de 10:00 a 11:00 el 05/11/2026 (sesión extra) en Lab 1: mismo grupo."
+                    return DescribirConflicto(reader, " el " + reader.GetDateTime("fecha").ToString("dd/MM/yyyy") + " (sesión extra)");
                 }
             }
         }
@@ -1792,17 +1877,74 @@ namespace DigBit.conexion
         /// <summary>InvalidOperationException si desde es anterior al primer dia en que puede aplicar un cambio.</summary>
         private static void ExigirPrimerDiaPosible(HistoriaFranja historia, DateTime hoy, DateTime desde, string que)
         {
+            string problema = ProblemaDePrimerDia(historia, hoy, desde, que);
+            if (problema != null)
+            {
+                throw new InvalidOperationException(problema);
+            }
+        }
+
+        /// <summary>Por que desde es anterior al primer dia en que puede aplicar un cambio, o null (tambien la vista previa de un reemplazo).</summary>
+        private static string ProblemaDePrimerDia(HistoriaFranja historia, DateTime hoy, DateTime desde, string que)
+        {
             if (desde >= historia.PrimerDiaPosible)
             {
-                return;
+                return null;
             }
 
-            throw new InvalidOperationException(historia.SesionHoyConDadas
+            return historia.SesionHoyConDadas
                 ? "Hoy ya hubo clase en esa franja, con bitácoras o asistencias que dio su docente: " + que + " desde mañana ("
                   + historia.PrimerDiaPosible.ToString("dd/MM/yyyy") + ")."
                 : historia.SesionHoyConBitacoras
                 ? "Hoy ya hubo clase en esa franja y se registraron bitácoras: " + que + " desde mañana (" + historia.PrimerDiaPosible.ToString("dd/MM/yyyy") + ")."
-                : "No puede ser desde una fecha que ya pasó: " + que + " desde hoy (" + hoy.ToString("dd/MM/yyyy") + ") en adelante.");
+                : "No puede ser desde una fecha que ya pasó: " + que + " desde hoy (" + hoy.ToString("dd/MM/yyyy") + ") en adelante.";
+        }
+
+        /// <summary>
+        /// Las fechas de esas cancelaciones cuyo resto (lo que le quedaba a la
+        /// clase de un recorte, LeerRestos, con las horas de antes) ya no seria
+        /// resto de la franja con sus datos nuevos: otra clase u otro laboratorio,
+        /// otro dia de la semana, o fuera de sus horas. Quedaria como una sesion
+        /// extra suelta junto a la franja nueva cancelada ese dia. Sin contarUsados,
+        /// uno que ya tiene bitacoras (o asistencias dadas) no cuenta: es lo que
+        /// paso ese dia (cambio en su sitio, sin fecha que elegir).
+        /// </summary>
+        private static List<DateTime> RecortesQueNoCaben(MySqlConnection conexion, MySqlTransaction transaccion, List<CanceladaDeFranja> canceladas,
+            FranjaGuardada vieja, int idClase, int idLaboratorio, int diaSemana, TimeSpan inicio, TimeSpan fin, bool contarUsados)
+        {
+            bool mismoSitio = idClase == vieja.ClaseId && idLaboratorio == vieja.LaboratorioId;
+            return canceladas
+                .Where(x => LeerRestos(conexion, transaccion, x.Id).Any(r => (contarUsados || (r.Bitacoras == 0 && r.Dadas == 0))
+                    && (!mismoSitio || DiaDeLaSemana(x.Fecha) != diaSemana || r.Inicio < inicio || r.Fin > fin)))
+                .Select(x => x.Fecha).ToList();
+        }
+
+        /// <summary>Que hacer con RecortesQueNoCaben; conFecha: el cambio aplica desde una fecha que se puede elegir.</summary>
+        private static string TextoDeRecortesQueNoCaben(List<DateTime> recortes, bool conFecha)
+        {
+            return "Primero quita " + (recortes.Count == 1 ? "el recorte del " : "los recortes del ") + ListaDeFechas(recortes)
+                + " (en Cambios de un día)" + (conFecha ? " o elige otra fecha" : "") + ": lo que le quedaba a la clase "
+                + (recortes.Count == 1 ? "ese día" : "esos días") + " ya no encajaría en el horario nuevo.";
+        }
+
+        /// <summary>
+        /// Un cambio en su sitio (ActualizarFranja, o CambiarFranjaDesde sin
+        /// fecha; sin db/20, como en la escuela, siempre) se lleva sus
+        /// cancelaciones, pero no lo que le quedaba a la clase de un recorte de hoy
+        /// en adelante: si ya no le cabe (RecortesQueNoCaben), ese dia quedaria el
+        /// resto con las horas de antes y la franja nueva cancelada (y, al quitar
+        /// la cancelacion, la clase dos veces). InvalidOperationException con que
+        /// hacer, como la rama con fecha.
+        /// </summary>
+        private static void ExigirQueLosRestosQuepan(MySqlConnection conexion, MySqlTransaction transaccion, FranjaGuardada vieja, DateTime hoy,
+            int idClase, int idLaboratorio, int diaSemana, TimeSpan inicio, TimeSpan fin)
+        {
+            List<DateTime> recortes = RecortesQueNoCaben(conexion, transaccion, CanceladasDesde(conexion, transaccion, vieja.Id, hoy),
+                vieja, idClase, idLaboratorio, diaSemana, inicio, fin, false);
+            if (recortes.Count > 0)
+            {
+                throw new InvalidOperationException(TextoDeRecortesQueNoCaben(recortes, false));
+            }
         }
 
         private static DateTime Hoy(MySqlConnection conexion, MySqlTransaction transaccion)
@@ -1907,6 +2049,8 @@ namespace DigBit.conexion
         /// pasadas. Con los cambios desde una fecha encendidos (ConFecha), una
         /// franja con historia no se cambia asi (InvalidOperationException): se
         /// usa CambiarFranjaDesde, para que nada reescriba el pasado por error.
+        /// Tampoco si lo que le queda a la clase de un recorte de hoy en adelante
+        /// ya no le cabria (ExigirQueLosRestosQuepan).
         /// </summary>
         public void ActualizarFranja(int idFranja, int idClase, int idLaboratorio, int diaSemana, TimeSpan inicio, TimeSpan fin)
         {
@@ -1929,6 +2073,7 @@ namespace DigBit.conexion
                     }
 
                     conHistoria = historia.TieneHistoria;
+                    ExigirQueLosRestosQuepan(conexion, transaccion, franja, hoy, idClase, idLaboratorio, diaSemana, inicio, fin);
                 }
 
                 string conflicto = ValidarFranjaEn(conexion, transaccion, idFranja, idClase, idLaboratorio, diaSemana, inicio, fin,
@@ -2044,6 +2189,7 @@ namespace DigBit.conexion
                 bool conHistorial = HistorialCambios.Activo(conexion, transaccion);
                 if (EnSuSitio(historia, vieja, hoy, dia))
                 {
+                    ExigirQueLosRestosQuepan(conexion, transaccion, vieja, hoy, idClase, idLaboratorio, diaSemana, inicio, fin);
                     conflicto = ValidarFranjaEn(conexion, transaccion, idFranja, idClase, idLaboratorio, diaSemana, inicio, fin, vieja.FranjaDesde, vieja.FranjaHasta);
                     if (conflicto != null)
                     {
@@ -2083,15 +2229,10 @@ namespace DigBit.conexion
                 // horas de la vieja) solo sigue siendo su resto con la nueva si esta
                 // es de la misma clase y laboratorio y lo contiene; si no, quedaria
                 // como una sesion extra suelta junto a la clase entera.
-                bool mismoSitio = idClase == vieja.ClaseId && idLaboratorio == vieja.LaboratorioId;
-                List<DateTime> recortes = canceladas
-                    .Where(x => LeerRestos(conexion, transaccion, x.Id).Any(r => !mismoSitio || r.Inicio < inicio || r.Fin > fin))
-                    .Select(x => x.Fecha).ToList();
+                List<DateTime> recortes = RecortesQueNoCaben(conexion, transaccion, canceladas, vieja, idClase, idLaboratorio, diaSemana, inicio, fin, true);
                 if (recortes.Count > 0)
                 {
-                    throw new InvalidOperationException("Primero quita " + (recortes.Count == 1 ? "el recorte del " : "los recortes del ")
-                        + ListaDeFechas(recortes) + " (en Cambios de un día) o elige otra fecha: lo que le quedaba a la clase "
-                        + (recortes.Count == 1 ? "ese día" : "esos días") + " ya no encajaría en el horario nuevo.");
+                    throw new InvalidOperationException(TextoDeRecortesQueNoCaben(recortes, true));
                 }
 
                 // La nueva no empieza antes que la vieja (si esta empezaba despues de desde).
@@ -2104,8 +2245,10 @@ namespace DigBit.conexion
                     comando.ExecuteNonQuery();
                 }
 
-                // Ya con la vieja terminada: no choca con la nueva.
-                conflicto = ValidarFranjaEn(conexion, transaccion, null, idClase, idLaboratorio, diaSemana, inicio, fin, nuevaDesde, vieja.FranjaHasta);
+                // Ya con la vieja terminada: no choca con la nueva. Los dias de sus
+                // cancelaciones, que pasan a la nueva, no chocan con una sesion extra.
+                conflicto = ValidarFranjaEn(conexion, transaccion, null, idClase, idLaboratorio, diaSemana, inicio, fin, nuevaDesde, vieja.FranjaHasta,
+                    null, idFranja);
                 if (conflicto != null)
                 {
                     throw new InvalidOperationException(conflicto);
@@ -2232,17 +2375,11 @@ namespace DigBit.conexion
                 // no, el resto seguiria como sesion extra de una clase que ya no se
                 // da. Antes de escribir nada: con bitacoras en un resto, no se quita.
                 List<CanceladaDeFranja> canceladas = CanceladasDesde(conexion, transaccion, idFranja, dia);
-                Dictionary<int, List<RestoDeClase>> restos = new Dictionary<int, List<RestoDeClase>>();
-                foreach (CanceladaDeFranja cancelada in canceladas)
+                Dictionary<int, List<RestoDeClase>> restos = canceladas.ToDictionary(x => x.Id, x => LeerRestos(conexion, transaccion, x.Id));
+                string conRegistros = ProblemaDeRestosUsados(canceladas, restos, dia);
+                if (conRegistros != null)
                 {
-                    restos[cancelada.Id] = LeerRestos(conexion, transaccion, cancelada.Id);
-                    RestoDeClase usado = restos[cancelada.Id].FirstOrDefault(r => r.Bitacoras > 0 || r.Dadas > 0);
-                    if (usado != null)
-                    {
-                        throw new InvalidOperationException("El recorte del " + cancelada.Fecha.ToString("dd/MM/yyyy") + " " + YaTieneRegistros(usado.Dadas) + " "
-                            + "(lo que le quedaba a la clase, " + usado + "): no se puede quitar la franja desde el " + dia.ToString("dd/MM/yyyy")
-                            + ". Elige una fecha posterior al " + cancelada.Fecha.ToString("dd/MM/yyyy") + ".");
-                    }
+                    throw new InvalidOperationException(conRegistros);
                 }
 
                 if (!franja.FranjaHasta.HasValue || franja.FranjaHasta.Value > dia.AddDays(-1))
@@ -2285,6 +2422,27 @@ namespace DigBit.conexion
                 Log.Info("Franja " + idFranja + " quitada desde el " + dia.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
                     + (canceladas.Count > 0 ? " (con " + canceladas.Count + " cancelaciones" + (restosBorrados > 0 ? " y " + restosBorrados + " restos de recortes" : "") + ")" : "") + ".");
             }
+        }
+
+        /// <summary>
+        /// QuitarFranjaDesde: si un resto de esas cancelaciones (restos, por su id)
+        /// ya tiene bitacoras o asistencias dadas, por que no se puede quitar desde
+        /// dia; si no, null (tambien la vista previa de un reemplazo).
+        /// </summary>
+        private static string ProblemaDeRestosUsados(List<CanceladaDeFranja> canceladas, Dictionary<int, List<RestoDeClase>> restos, DateTime dia)
+        {
+            foreach (CanceladaDeFranja cancelada in canceladas)
+            {
+                RestoDeClase usado = restos[cancelada.Id].FirstOrDefault(r => r.Bitacoras > 0 || r.Dadas > 0);
+                if (usado != null)
+                {
+                    return "El recorte del " + cancelada.Fecha.ToString("dd/MM/yyyy") + " " + YaTieneRegistros(usado.Dadas) + " "
+                        + "(lo que le quedaba a la clase, " + usado + "): no se puede quitar la franja desde el " + dia.ToString("dd/MM/yyyy")
+                        + ". Elige una fecha posterior al " + cancelada.Fecha.ToString("dd/MM/yyyy") + ".";
+                }
+            }
+
+            return null;
         }
 
         /// <summary>Una cancelacion de una franja (CanceladasDesde).</summary>
@@ -2348,7 +2506,8 @@ namespace DigBit.conexion
         }
 
         /// <summary>
-        /// Borra una franja, como siempre: con ella sus cancelaciones, y sus
+        /// Borra una franja, como siempre: con ella sus cancelaciones (y lo que le
+        /// quedaba a la clase de sus recortes de hoy en adelante), y sus
         /// sesiones se quedan sin enlace. Con los cambios desde una fecha
         /// encendidos (ConFecha), una franja con historia no se borra
         /// (InvalidOperationException): se usa QuitarFranjaDesde.
@@ -2382,7 +2541,12 @@ namespace DigBit.conexion
 
         /// <summary>
         /// BorrarFranjaEn y su renglon en el historial (db/21), con lo que se lleva
-        /// la base en cascada: sus cancelaciones de cualquier fecha.
+        /// la base en cascada: sus cancelaciones de cualquier fecha. Antes, lo que
+        /// le quedaba a la clase de sus recortes de hoy en adelante (LeerRestos):
+        /// la cascada no se lo lleva y ese dia la clase seguiria aunque ya no
+        /// este en el horario (sin db/20, como en la escuela, se borra asi). Un
+        /// resto que ya tiene bitacoras o asistencias dadas es lo que paso ese dia
+        /// y se queda, como los de dias pasados.
         /// </summary>
         private static void BorrarFranjaConHistorial(MySqlConnection conexion, MySqlTransaction transaccion, int idFranja, bool conHistoria, string porque = null)
         {
@@ -2398,13 +2562,32 @@ namespace DigBit.conexion
                 }
             }
 
+            int recortes = 0, restos = 0;
+            foreach (CanceladaDeFranja cancelada in CanceladasDesde(conexion, transaccion, idFranja, Hoy(conexion, transaccion)))
+            {
+                List<RestoDeClase> sinUsar = LeerRestos(conexion, transaccion, cancelada.Id).Where(r => r.Bitacoras == 0 && r.Dadas == 0).ToList();
+                foreach (RestoDeClase resto in sinUsar)
+                {
+                    BorrarExcepcionEn(conexion, transaccion, resto.Id);
+                }
+
+                recortes += sinUsar.Count > 0 ? 1 : 0;
+                restos += sinUsar.Count;
+            }
+
             BorrarFranjaEn(conexion, transaccion, idFranja);
             if (antes != null)
             {
                 AnotarFranja(conexion, transaccion, AccionDeCambio.Quitar, idFranja, antes, null, null,
                     antes.Clase + ": " + antes.Donde + ". Se borra del horario" + (conHistoria ? ", también de las semanas que ya pasaron" : "")
-                    + (canceladas == 1 ? ", con su cancelación" : canceladas > 1 ? ", con sus " + canceladas + " cancelaciones" : "") + "."
-                    + (porque == null ? "" : " " + porque));
+                    + (canceladas == 1 ? ", con su cancelación" : canceladas > 1 ? ", con sus " + canceladas + " cancelaciones" : "")
+                    + (recortes == 1 ? " y lo que le quedaba a la clase de su recorte" : recortes > 1 ? " y lo que le quedaba a la clase de sus " + recortes + " recortes" : "")
+                    + "." + (porque == null ? "" : " " + porque));
+            }
+
+            if (restos > 0)
+            {
+                Log.Info("Franja " + idFranja + " borrada con " + restos + " restos de sus recortes de hoy en adelante.");
             }
         }
 
@@ -2526,8 +2709,12 @@ namespace DigBit.conexion
             }
         }
 
-        /// <param name="creadaEn">Null: ahora. Las de un "No tomar en cuenta" llevan todas el mismo (NoTomarEnCuenta).</param>
-        private static int InsertarCancelada(MySqlConnection conexion, MySqlTransaction transaccion, int idFranja, DateTime fecha, string motivo, int creadaPor,
+        /// <param name="creadaEn">
+        /// Null: ahora. Las de un "No tomar en cuenta" llevan todas el mismo
+        /// (NoTomarEnCuenta, y Aplicar con "Ahora mismo" para las de hoy que ya
+        /// terminaron: CicloPreliminarDatos.Aplicar.cs).
+        /// </param>
+        internal static int InsertarCancelada(MySqlConnection conexion, MySqlTransaction transaccion, int idFranja, DateTime fecha, string motivo, int creadaPor,
             DateTime? creadaEn = null)
         {
             using (MySqlCommand comando = new MySqlCommand(@"
@@ -2627,41 +2814,61 @@ namespace DigBit.conexion
 
         /// <summary>
         /// ValidarExtra en una conexion (y transaccion) que ya se tiene: la de
-        /// AplicarExcepcion ve asi las franjas que acaba de cancelar.
+        /// AplicarExcepcion ve asi las franjas que acaba de cancelar. Una sesion
+        /// extra de una clase desactivada o ya terminada ese dia no cuenta (nadie la
+        /// puede usar), como en ChoqueConExtra.
         /// </summary>
+        /// <param name="devuelta">
+        /// Es una franja a la que se le quita la cancelacion (QuitarCancelacionEn):
+        /// un choque con otra franja ya estaba en el horario de todas las semanas
+        /// (ValidarFranjaEn no mira las cancelaciones) y no impide devolverla, como
+        /// en "Volver a contar" de Faltas; tampoco lo que le queda de un recorte a
+        /// una de esas franjas, que es parte de ella. Solo cuenta lo puesto para ese
+        /// dia: las demas sesiones extra.
+        /// </param>
         private static string ValidarExtraEn(MySqlConnection conexion, MySqlTransaction transaccion, int? excluirExcepcionId, ClaseInfo clase,
-            int idLaboratorio, DateTime fecha, TimeSpan inicio, TimeSpan fin)
+            int idLaboratorio, DateTime fecha, TimeSpan inicio, TimeSpan fin, bool devuelta = false)
         {
             bool conVigencia = Esquema.VigenciaDeFranjas(conexion, transaccion);
-            using (MySqlCommand comando = new MySqlCommand(@"
-                SELECT l.nombre_laboratorio, c.codigo, m.nombre_materia, g.nombre_grupo, h.hora_inicio, h.hora_fin,
-                       (h.laboratorios_idlaboratorios = @Lab) AS mismo_lab,
-                       (c.usuarios_idusuarios = @Profesor) AS mismo_profesor,
-                       (c.grupos_idgrupos = @Grupo) AS mismo_grupo
-                FROM horarios h
-                INNER JOIN clases c       ON c.idclases = h.clases_idclases
-                INNER JOIN grupos g       ON g.idgrupos = c.grupos_idgrupos
-                INNER JOIN materias m     ON m.id_materia = c.materias_id_materia
-                INNER JOIN laboratorios l ON l.idlaboratorios = h.laboratorios_idlaboratorios
-                WHERE h.dia_semana = WEEKDAY(@Fecha) + 1
-                  AND " + VigenciaFranjas.SeDa(conVigencia, "@Fecha") + @"
-                  AND h.hora_inicio < @Fin AND h.hora_fin > @Inicio
-                  AND (h.laboratorios_idlaboratorios = @Lab OR c.usuarios_idusuarios = @Profesor OR c.grupos_idgrupos = @Grupo)
-                  AND NOT EXISTS (SELECT 1 FROM horario_excepciones x
-                                   WHERE x.tipo = 'cancelada' AND x.horarios_idhorarios = h.idhorarios AND x.fecha = @Fecha)
-                ORDER BY h.hora_inicio
-                LIMIT 1", conexion, transaccion))
+            if (!devuelta)
             {
-                AgregarParametrosConflicto(comando, clase, idLaboratorio, fecha, inicio, fin, 0);
-                using (MySqlDataReader reader = comando.ExecuteReader())
+                using (MySqlCommand comando = new MySqlCommand(@"
+                    SELECT l.nombre_laboratorio, c.codigo, m.nombre_materia, g.nombre_grupo, h.hora_inicio, h.hora_fin,
+                           (h.laboratorios_idlaboratorios = @Lab) AS mismo_lab,
+                           (c.usuarios_idusuarios = @Profesor) AS mismo_profesor,
+                           (c.grupos_idgrupos = @Grupo) AS mismo_grupo
+                    FROM horarios h
+                    INNER JOIN clases c       ON c.idclases = h.clases_idclases
+                    INNER JOIN grupos g       ON g.idgrupos = c.grupos_idgrupos
+                    INNER JOIN materias m     ON m.id_materia = c.materias_id_materia
+                    INNER JOIN laboratorios l ON l.idlaboratorios = h.laboratorios_idlaboratorios
+                    WHERE h.dia_semana = WEEKDAY(@Fecha) + 1
+                      AND " + VigenciaFranjas.SeDa(conVigencia, "@Fecha") + @"
+                      AND h.hora_inicio < @Fin AND h.hora_fin > @Inicio
+                      AND (h.laboratorios_idlaboratorios = @Lab OR c.usuarios_idusuarios = @Profesor OR c.grupos_idgrupos = @Grupo)
+                      AND NOT EXISTS (SELECT 1 FROM horario_excepciones x
+                                       WHERE x.tipo = 'cancelada' AND x.horarios_idhorarios = h.idhorarios AND x.fecha = @Fecha)
+                    ORDER BY h.hora_inicio
+                    LIMIT 1", conexion, transaccion))
                 {
-                    if (reader.Read())
+                    AgregarParametrosConflicto(comando, clase, idLaboratorio, fecha, inicio, fin, 0);
+                    using (MySqlDataReader reader = comando.ExecuteReader())
                     {
-                        return DescribirConflicto(reader);
+                        if (reader.Read())
+                        {
+                            return DescribirConflicto(reader);
+                        }
                     }
                 }
             }
 
+            // Lo que le queda de un recorte a otra franja (LeerRestos) es parte de ella.
+            string sinRestos = !devuelta ? "" : @"
+                  AND NOT EXISTS (SELECT 1 FROM horario_excepciones y
+                                  INNER JOIN horarios hy ON hy.idhorarios = y.horarios_idhorarios
+                                   WHERE y.tipo = 'cancelada' AND y.fecha = x.fecha
+                                     AND hy.clases_idclases = x.clases_idclases AND hy.laboratorios_idlaboratorios = x.laboratorios_idlaboratorios
+                                     AND x.hora_inicio >= hy.hora_inicio AND x.hora_fin <= hy.hora_fin)";
             using (MySqlCommand comando = new MySqlCommand(@"
                 SELECT l.nombre_laboratorio, c.codigo, m.nombre_materia, g.nombre_grupo, x.hora_inicio, x.hora_fin,
                        (x.laboratorios_idlaboratorios = @Lab) AS mismo_lab,
@@ -2674,7 +2881,8 @@ namespace DigBit.conexion
                 INNER JOIN laboratorios l ON l.idlaboratorios = x.laboratorios_idlaboratorios
                 WHERE x.tipo = 'extra' AND x.fecha = @Fecha AND x.idhorario_excepciones <> @Excluir
                   AND x.hora_inicio < @Fin AND x.hora_fin > @Inicio
-                  AND (x.laboratorios_idlaboratorios = @Lab OR c.usuarios_idusuarios = @Profesor OR c.grupos_idgrupos = @Grupo)
+                  AND c.activa = 1 AND x.fecha BETWEEN c.vigente_desde AND c.vigente_hasta
+                  AND (x.laboratorios_idlaboratorios = @Lab OR c.usuarios_idusuarios = @Profesor OR c.grupos_idgrupos = @Grupo)" + sinRestos + @"
                 ORDER BY x.hora_inicio
                 LIMIT 1", conexion, transaccion))
             {
@@ -3151,9 +3359,12 @@ namespace DigBit.conexion
                 BorrarExcepcionEn(conexion, transaccion, resto.Id);
             }
 
-            // La clase vuelve entera ese dia: que no choque con nada (una sesion
-            // extra de otra clase en el laboratorio, o su profesor o su grupo en
-            // otro). Con la cancelacion aun puesta, para que no choque consigo misma.
+            // La clase vuelve entera ese dia: que no choque con lo que se puso para
+            // ese dia (una sesion extra de otra clase en el laboratorio, o de su
+            // profesor o su grupo en otro). Un choque con otra franja ya estaba en
+            // el horario de todas las semanas y no la impide (ValidarExtraEn con
+            // devuelta), como en "Volver a contar". Con la cancelacion aun puesta,
+            // para que no choque consigo misma.
             ClaseInfo clase = null;
             int idLaboratorio = 0;
             DateTime fecha = DateTime.MinValue;
@@ -3192,7 +3403,7 @@ namespace DigBit.conexion
 
             if (clase != null)
             {
-                string conflicto = ValidarExtraEn(conexion, transaccion, null, clase, idLaboratorio, fecha, inicio, fin);
+                string conflicto = ValidarExtraEn(conexion, transaccion, null, clase, idLaboratorio, fecha, inicio, fin, true);
                 if (conflicto != null)
                 {
                     throw new InvalidOperationException("No se puede devolver " + clase.Codigo + " " + clase.Materia + " - " + clase.Grupo + " ("
@@ -3469,9 +3680,10 @@ namespace DigBit.conexion
         /// <summary>
         /// El creada_en de un lote: la hora del servidor, o un segundo despues si
         /// ya hay otra cancelacion con la misma clave (mismo motivo, quien y
-        /// segundo): VolverAContar la quitaria con este lote.
+        /// segundo): VolverAContar la quitaria con este lote. Tambien lo usa
+        /// Aplicar con "Ahora mismo" (CicloPreliminarDatos.Aplicar.cs).
         /// </summary>
-        private static DateTime MomentoDelLote(MySqlConnection conexion, MySqlTransaction transaccion, string motivo, int creadaPor)
+        internal static DateTime MomentoDelLote(MySqlConnection conexion, MySqlTransaction transaccion, string motivo, int creadaPor)
         {
             DateTime momento;
             using (MySqlCommand comando = new MySqlCommand("SELECT NOW()", conexion, transaccion))
@@ -4281,7 +4493,7 @@ namespace DigBit.conexion
                 panorama.GeneralGuardada = panorama.ConModos ? ajustes.General : null;
                 // Si no se pudo leer (error de esquema), lo ultimo que se supo.
                 panorama.CodigosSoloResponsables = ajustes.SoloResponsables ?? CodigosSoloResponsables.Activa;
-                AnotarSesiones(conexion, panorama.Agenda, panorama.Fecha, null);
+                AnotarSesiones(conexion, panorama.Agenda, panorama.Fecha, null, true);
                 if (codigosParaDar && panorama.CodigosSoloResponsables && Permisos.VeCodigosDeProfesor)
                 {
                     AnotarCodigosParaDar(conexion, panorama);
@@ -4394,17 +4606,31 @@ namespace DigBit.conexion
         /// de la pantalla de bitacoras). La sesion de una franja es la de su dia;
         /// la de una sesion extra, la de su excepcion (codigos_accesos, db/01).
         /// </summary>
-        private static void AnotarSesiones(MySqlConnection conexion, List<SesionAgenda> agenda, DateTime fecha, int? idLaboratorio)
+        /// <param name="deClasesTerminadas">
+        /// Tambien lo que Faltas le cuenta a una clase sin sesion ni nada en ella:
+        /// la sesion de la clase de antes de su terna (EsDeLaClaseDeAntes), en
+        /// BitacorasEnOtra y EnOtra. Solo para lo que se ensena (los paneles y las
+        /// alertas): lo que abre o acepta una clase (el alumno, el codigo generado)
+        /// mira su sesion propia.
+        /// </param>
+        private static void AnotarSesiones(MySqlConnection conexion, List<SesionAgenda> agenda, DateTime fecha, int? idLaboratorio, bool deClasesTerminadas = false)
         {
+            List<SesionAgenda> deAntes = new List<SesionAgenda>();
             using (MySqlCommand comando = new MySqlCommand(@"
                 SELECT ca.idcodigos_accesos, ca.horarios_idhorarios, ca.horario_excepciones_id, ca.codigo,
                        COUNT(DISTINCT rb.fk_usuario) AS alumnos,
-                       COUNT(DISTINCT CASE WHEN " + Consultas.CondicionConFalla + @" THEN rb.fk_usuario END) AS con_fallas
+                       COUNT(DISTINCT CASE WHEN " + Consultas.CondicionConFalla + @" THEN rb.fk_usuario END) AS con_fallas"
+                + (deClasesTerminadas ? @",
+                       ca.laboratorios_idlaboratorios AS lab, ca.usuarios_idusuarios AS profesor, ca.materias_id_materia AS materia,
+                       ca.grupos_idgrupos AS grupo, ca.hora_entrada, ca.hora_salida,
+                       MAX(cs.vigente_hasta < ca.fecha) AS de_terminada" : "") + @"
                 FROM codigos_accesos ca
-                LEFT JOIN registros_bitacoras rb ON rb.fk_codigo_accesos = ca.idcodigos_accesos
+                LEFT JOIN registros_bitacoras rb ON rb.fk_codigo_accesos = ca.idcodigos_accesos"
+                + (deClasesTerminadas ? SesionConSuClase : "") + @"
                 WHERE ca.fecha = @Fecha" + (idLaboratorio.HasValue ? " AND ca.laboratorios_idlaboratorios = @Lab" : "") + @"
                   AND (ca.horarios_idhorarios IS NOT NULL OR ca.horario_excepciones_id IS NOT NULL)
-                GROUP BY ca.idcodigos_accesos, ca.horarios_idhorarios, ca.horario_excepciones_id, ca.codigo", conexion))
+                GROUP BY ca.idcodigos_accesos, ca.horarios_idhorarios, ca.horario_excepciones_id, ca.codigo"
+                + (deClasesTerminadas ? ", ca.laboratorios_idlaboratorios, ca.usuarios_idusuarios, ca.materias_id_materia, ca.grupos_idgrupos, ca.hora_entrada, ca.hora_salida" : ""), conexion))
             {
                 comando.Parameters.AddWithValue("@Fecha", fecha.Date);
                 if (idLaboratorio.HasValue)
@@ -4423,6 +4649,32 @@ namespace DigBit.conexion
                             : franja.HasValue && s.FranjaId == franja);
                         if (entrada == null)
                         {
+                            if (deClasesTerminadas && !reader.IsDBNull(reader.GetOrdinal("de_terminada")) && Convert.ToInt32(reader["de_terminada"]) == 1
+                                && !reader.IsDBNull(reader.GetOrdinal("materia")) && !reader.IsDBNull(reader.GetOrdinal("grupo")) && !reader.IsDBNull(reader.GetOrdinal("profesor")))
+                            {
+                                TimeSpan? inicio = LeerHora(reader["hora_entrada"]);
+                                TimeSpan? fin = LeerHora(reader["hora_salida"]);
+                                if (inicio.HasValue && fin.HasValue)
+                                {
+                                    deAntes.Add(new SesionAgenda
+                                    {
+                                        SesionId = Convert.ToInt32(reader["idcodigos_accesos"]),
+                                        CodigoSesion = Convert.ToString(reader["codigo"], CultureInfo.InvariantCulture),
+                                        FranjaId = franja,
+                                        ExcepcionId = excepcion,
+                                        EsExtra = excepcion.HasValue,
+                                        LaboratorioId = reader.IsDBNull(reader.GetOrdinal("lab")) ? 0 : Convert.ToInt32(reader["lab"]),
+                                        ProfesorId = Convert.ToInt32(reader["profesor"]),
+                                        MateriaId = Convert.ToInt32(reader["materia"]),
+                                        GrupoId = Convert.ToInt32(reader["grupo"]),
+                                        Inicio = inicio.Value,
+                                        Fin = fin.Value,
+                                        Alumnos = Convert.ToInt32(reader["alumnos"]),
+                                        ConFallas = Convert.ToInt32(reader["con_fallas"])
+                                    });
+                                }
+                            }
+
                             continue;
                         }
 
@@ -4432,6 +4684,78 @@ namespace DigBit.conexion
                         entrada.ConFallas = Convert.ToInt32(reader["con_fallas"]);
                     }
                 }
+            }
+
+            if (deAntes.Count > 0)
+            {
+                AnotarLasDeLaClaseDeAntes(conexion, agenda, deAntes);
+            }
+        }
+
+        /// <summary>
+        /// JOIN de una sesion (alias ca) con la clase de la franja o la extra a la
+        /// que esta enlazada (alias cs). Si su dia es posterior al ultimo de esa
+        /// clase, es EsDeLaClaseDeAntes: con los datos de siempre no pasa, porque una
+        /// clase no se puede terminar antes de su ultima sesion.
+        /// </summary>
+        private const string SesionConSuClase = @"
+                LEFT JOIN horarios hs            ON hs.idhorarios = ca.horarios_idhorarios
+                LEFT JOIN horario_excepciones xs ON xs.idhorario_excepciones = ca.horario_excepciones_id
+                LEFT JOIN clases cs              ON cs.idclases = COALESCE(hs.clases_idclases, xs.clases_idclases)";
+
+        /// <summary>
+        /// La regla comun de EmparejarSesiones y AnotarSesiones (panel en vivo, alertas
+        /// y panel del docente): una sesion enlazada
+        /// a una clase que termino antes de su dia (solo pasa con "Ahora mismo":
+        /// lo registrado hoy antes de aplicar, en una clase que termino ayer) es de
+        /// la clase de ese dia de su misma persona docente, grupo y materia cuyas
+        /// horas se crucen, aunque esa este en otro laboratorio.
+        /// </summary>
+        private static bool EsDeLaClaseDeAntes(int profesorSesion, int? materiaSesion, int? grupoSesion, TimeSpan entrada, TimeSpan? salida,
+            int profesorClase, int materiaClase, int grupoClase, TimeSpan inicioClase, TimeSpan finClase)
+        {
+            return profesorSesion == profesorClase && materiaSesion == materiaClase && grupoSesion == grupoClase
+                && entrada < finClase
+                && (salida.HasValue && salida.Value > entrada ? salida.Value : entrada + TimeSpan.FromHours(1)) > inicioClase;
+        }
+
+        /// <summary>
+        /// A cada clase del dia que siga sin bitacoras, lo que se registro en la
+        /// sesion de la clase de antes de su terna (EsDeLaClaseDeAntes), con sus
+        /// asistencias dadas, como en Faltas. Una sesion, una clase.
+        /// </summary>
+        private static void AnotarLasDeLaClaseDeAntes(MySqlConnection conexion, List<SesionAgenda> agenda, List<SesionAgenda> deAntes)
+        {
+            Dictionary<int, int> dadas = AsistenciasDadas.ContarPorSesion(conexion, deAntes.Select(s => s.SesionId.Value));
+            foreach (SesionAgenda sesion in deAntes.OrderBy(s => s.SesionId))
+            {
+                int cuantas;
+                sesion.AsistenciasDadas = dadas.TryGetValue(sesion.SesionId.Value, out cuantas) ? cuantas : 0;
+                if (sesion.Alumnos == 0 && sesion.AsistenciasDadas == 0)
+                {
+                    continue;
+                }
+
+                SesionAgenda clase = agenda.Where(s => !s.Cancelada && s.Utilizable && s.Alumnos == 0 && !s.EnLaDeAntes
+                        && EsDeLaClaseDeAntes(sesion.ProfesorId, sesion.MateriaId, sesion.GrupoId, sesion.Inicio, sesion.Fin, s.ProfesorId, s.MateriaId, s.GrupoId, s.Inicio, s.Fin))
+                    .OrderBy(s => s.Inicio).ThenBy(s => s.LaboratorioId).FirstOrDefault();
+                if (clase == null)
+                {
+                    continue;
+                }
+
+                // Lo que necesita quien abre esa sesion desde el panel (VerRegistro): sus datos y su enlace.
+                sesion.Materia = clase.Materia;
+                sesion.Grupo = clase.Grupo;
+                sesion.Profesor = clase.Profesor;
+                sesion.ClaseId = clase.ClaseId;
+                sesion.Codigo = clase.Codigo;
+                sesion.Motivo = "";
+                clase.EnLaDeAntes = true;
+                clase.EnOtra = sesion;
+                clase.BitacorasEnOtra = sesion.Alumnos;
+                clase.ConFallas = sesion.ConFallas;
+                clase.AsistenciasDadas = sesion.AsistenciasDadas;
             }
         }
 
@@ -4515,7 +4839,7 @@ namespace DigBit.conexion
                            h.hora_inicio, h.hora_fin, c.usuarios_idusuarios AS profesor_id,
                            u.nombre AS profesor_nombre, u.apellido_paterno AS profesor_paterno,
                            CONCAT_WS(' ', u.nombre, u.apellido_paterno, u.apellido_materno) AS profesor,
-                           g.nombre_grupo, m.nombre_materia,
+                           g.nombre_grupo, m.nombre_materia, c.materias_id_materia AS materia_id, c.grupos_idgrupos AS grupo_id,
                            (x.idhorario_excepciones IS NOT NULL) AS cancelada, x.motivo,
                            (" + string.Format(profesorEseDia, "d.fecha") + @") AS utilizable
                     FROM (SELECT DATE_ADD(DATE(@Desde), INTERVAL (a.n + 10 * b.n + 100 * k.n) DAY) AS fecha
@@ -4552,7 +4876,7 @@ namespace DigBit.conexion
                            x.hora_inicio, x.hora_fin, c.usuarios_idusuarios AS profesor_id,
                            u.nombre AS profesor_nombre, u.apellido_paterno AS profesor_paterno,
                            CONCAT_WS(' ', u.nombre, u.apellido_paterno, u.apellido_materno) AS profesor,
-                           g.nombre_grupo, m.nombre_materia, x.motivo, x.creada_en,
+                           g.nombre_grupo, m.nombre_materia, c.materias_id_materia AS materia_id, c.grupos_idgrupos AS grupo_id, x.motivo, x.creada_en,
                            (c.activa = 1 AND x.fecha BETWEEN c.vigente_desde AND c.vigente_hasta AND " + string.Format(profesorEseDia, "x.fecha") + @") AS utilizable
                     FROM horario_excepciones x
                     INNER JOIN clases c   ON c.idclases = x.clases_idclases
@@ -4583,15 +4907,18 @@ namespace DigBit.conexion
                     SELECT ca.idcodigos_accesos, COALESCE(ca.fecha, DATE(ca.hora_registro)) AS fecha, ca.laboratorios_idlaboratorios AS lab_id,
                            ca.horarios_idhorarios, ca.horario_excepciones_id, ca.usuarios_idusuarios AS profesor_id,
                            CONCAT_WS(' ', u.nombre, u.apellido_paterno, u.apellido_materno) AS profesor,
-                           ca.hora_entrada, ca.hora_salida, COUNT(DISTINCT rb.fk_usuario) AS alumnos
+                           ca.hora_entrada, ca.hora_salida, COUNT(DISTINCT rb.fk_usuario) AS alumnos,
+                           ca.materias_id_materia AS materia_id, ca.grupos_idgrupos AS grupo_id,
+                           MAX(cs.vigente_hasta < COALESCE(ca.fecha, DATE(ca.hora_registro))) AS de_terminada
                     FROM codigos_accesos ca
                     LEFT JOIN usuarios u ON u.idusuarios = ca.usuarios_idusuarios
-                    LEFT JOIN registros_bitacoras rb ON rb.fk_codigo_accesos = ca.idcodigos_accesos
+                    LEFT JOIN registros_bitacoras rb ON rb.fk_codigo_accesos = ca.idcodigos_accesos" + SesionConSuClase + @"
                     WHERE COALESCE(ca.fecha, DATE(ca.hora_registro)) BETWEEN DATE(@Desde) AND DATE(@Hasta)
                       AND NOT " + CondicionUsoLibre + @"
                     GROUP BY ca.idcodigos_accesos, COALESCE(ca.fecha, DATE(ca.hora_registro)), ca.laboratorios_idlaboratorios,
                              ca.horarios_idhorarios, ca.horario_excepciones_id, ca.usuarios_idusuarios,
-                             CONCAT_WS(' ', u.nombre, u.apellido_paterno, u.apellido_materno), ca.hora_entrada, ca.hora_salida", conexion))
+                             CONCAT_WS(' ', u.nombre, u.apellido_paterno, u.apellido_materno), ca.hora_entrada, ca.hora_salida,
+                             ca.materias_id_materia, ca.grupos_idgrupos", conexion))
                 {
                     comando.Parameters.AddWithValue("@Desde", calendario.Desde);
                     comando.Parameters.AddWithValue("@Hasta", calendario.Hasta);
@@ -4610,7 +4937,10 @@ namespace DigBit.conexion
                                 Profesor = Texto(reader, "profesor"),
                                 Entrada = LeerHora(reader["hora_entrada"]),
                                 Salida = LeerHora(reader["hora_salida"]),
-                                Alumnos = Convert.ToInt32(reader["alumnos"])
+                                Alumnos = Convert.ToInt32(reader["alumnos"]),
+                                MateriaId = reader.IsDBNull(reader.GetOrdinal("materia_id")) ? (int?)null : Convert.ToInt32(reader["materia_id"]),
+                                GrupoId = reader.IsDBNull(reader.GetOrdinal("grupo_id")) ? (int?)null : Convert.ToInt32(reader["grupo_id"]),
+                                DeClaseTerminada = !reader.IsDBNull(reader.GetOrdinal("de_terminada")) && Convert.ToInt32(reader["de_terminada"]) == 1
                             });
                         }
                     }
@@ -4761,8 +5091,9 @@ namespace DigBit.conexion
                         Cancelada = s.Cancelada,
                         Utilizable = s.Utilizable,
                         CreadaEn = s.CreadaEn,
-                        SesionId = s.SesionId,
-                        Bitacoras = s.Alumnos,
+                        // Con lo de la clase de antes (AnotarSesiones), como en Faltas.
+                        SesionId = s.EnLaDeAntes && s.EnOtra != null ? s.EnOtra.SesionId : s.SesionId,
+                        Bitacoras = s.EnLaDeAntes ? s.BitacorasEnOtra : s.Alumnos,
                         AsistenciasDadas = s.AsistenciasDadas
                     };
                     calendario.Clases.Add(clase);
@@ -4787,6 +5118,12 @@ namespace DigBit.conexion
                 SesionAgenda s = par.Value;
                 s.EsResto = clase.EsResto;
                 s.NoContaba = clase.Estado == EstadoEnCalendario.NoContaba;
+                if (s.EnLaDeAntes)
+                {
+                    // Sus bitacoras ya estan en la sesion de la clase de antes.
+                    continue;
+                }
+
                 ClaseDelCalendario otra = clase.OtraClase;
                 if (otra == null && clase.EsResto && clase.Bitacoras == 0)
                 {
@@ -4942,6 +5279,8 @@ namespace DigBit.conexion
                 ProfesorCorto = NombreCorto(Texto(reader, "profesor_nombre"), Texto(reader, "profesor_paterno")),
                 Grupo = Texto(reader, "nombre_grupo"),
                 Materia = Texto(reader, "nombre_materia"),
+                MateriaId = Convert.ToInt32(reader["materia_id"]),
+                GrupoId = Convert.ToInt32(reader["grupo_id"]),
                 Utilizable = !reader.IsDBNull(reader.GetOrdinal("utilizable")) && Convert.ToInt32(reader["utilizable"]) == 1
             };
         }
@@ -4961,13 +5300,19 @@ namespace DigBit.conexion
             public int Alumnos;
             /// <summary>Las asistencias que dio su profesor en ella (db/22, las que cuentan).</summary>
             public int Dadas;
+            public int? MateriaId;
+            public int? GrupoId;
+            /// <summary>Enlazada a una clase que termino antes de su dia (EsDeLaClaseDeAntes).</summary>
+            public bool DeClaseTerminada;
         }
 
         /// <summary>
         /// A cada clase, su sesion: la de su franja ese dia o la de su extra; si no
-        /// tiene, una sin enlace del mismo laboratorio, dia y profesor cuyas horas
-        /// se crucen (una sesion, una clase). Las sesiones que no son de ninguna
-        /// clase van a Otras.
+        /// tiene (o la suya salio vacia), la de la clase de antes de su terna, aunque
+        /// este en otro laboratorio (EsDeLaClaseDeAntes: solo con "Ahora mismo"); si
+        /// no, una sin enlace del mismo laboratorio, dia y profesor cuyas horas se
+        /// crucen (una sesion, una clase). Las sesiones que no son de ninguna clase
+        /// van a Otras.
         /// </summary>
         internal static void EmparejarSesiones(CalendarioBitacoras calendario, List<SesionDelCalendario> sesiones)
         {
@@ -5006,6 +5351,28 @@ namespace DigBit.conexion
                 clase.SesionId = s.Id;
                 clase.Bitacoras = s.Alumnos;
                 clase.AsistenciasDadas = s.Dadas;
+                usadas.Add(s.Id);
+            }
+
+            // Lo registrado antes de aplicar con "Ahora mismo": a su clase nueva, antes
+            // que a otra del mismo profesor en ese laboratorio. Su sesion propia, si
+            // salio vacia, ya no cuenta.
+            foreach (SesionDelCalendario s in sesiones.Where(x => x.DeClaseTerminada && !usadas.Contains(x.Id) && x.Entrada.HasValue && (x.Alumnos > 0 || x.Dadas > 0))
+                .OrderBy(x => x.Fecha).ThenBy(x => x.Id))
+            {
+                ClaseDelCalendario clase = calendario.Clases
+                    .Where(c => c.Fecha == s.Fecha && !c.Cancelada && c.Utilizable && (!c.SesionId.HasValue || (c.Bitacoras == 0 && c.AsistenciasDadas == 0))
+                        && EsDeLaClaseDeAntes(s.ProfesorId, s.MateriaId, s.GrupoId, s.Entrada.Value, s.Salida, c.ProfesorId, c.MateriaId, c.GrupoId, c.Inicio, c.Fin))
+                    .OrderBy(c => c.Inicio).ThenBy(c => c.LaboratorioId).FirstOrDefault();
+                if (clase == null)
+                {
+                    continue;
+                }
+
+                clase.SesionId = s.Id;
+                clase.Bitacoras = s.Alumnos;
+                clase.AsistenciasDadas = s.Dadas;
+                clase.SesionSinEnlace = true;
                 usadas.Add(s.Id);
             }
 
@@ -5245,7 +5612,7 @@ namespace DigBit.conexion
                 .Where(s => s.ProfesorId == idProfesor && s.Utilizable).OrderBy(s => s.Inicio).ToList();
             if (conConteos && suyas.Count > 0)
             {
-                AnotarSesiones(conexion, suyas, fecha, null);
+                AnotarSesiones(conexion, suyas, fecha, null, true);
             }
 
             return suyas;
@@ -5619,9 +5986,11 @@ namespace DigBit.conexion
                             List<string> abiertaEn = candidatas
                                 .Where(c => c.LaboratorioId != idLaboratorio && ReglasCodigo.Abierta(c.Inicio, c.Fin, c.Cancelada, ahora.TimeOfDay))
                                 .Select(c => c.Laboratorio).Distinct().ToList();
-                            return abiertaEn.Count == 0 ? RechazoCodigoFijo()
+                            bool soloResponsables = CodigosDeResponsables(conexion);
+                            return abiertaEn.Count == 0 ? RechazoCodigoFijo(soloResponsables)
                                 : Rechazo(MotivoCodigo.CodigoFijo, "Ese es el código fijo de tu docente: ahora sirve en " + string.Join(" / ", abiertaEn)
-                                    + ". Si tu clase es en este laboratorio, aquí cada clase tiene su propio código: pídeselo a tu docente.");
+                                    + ". Si tu clase es en este laboratorio, aquí cada clase tiene su propio código: "
+                                    + (soloResponsables ? "lo da la persona responsable del laboratorio." : "pídeselo a tu docente."));
                         }
                     }
                 }
@@ -5648,10 +6017,24 @@ namespace DigBit.conexion
             }
         }
 
-        private static ResultadoCodigo RechazoCodigoFijo()
+        /// <param name="soloResponsables">CodigosDeResponsables: su docente no ve el codigo de la clase.</param>
+        private static ResultadoCodigo RechazoCodigoFijo(bool soloResponsables)
         {
             return Rechazo(MotivoCodigo.CodigoFijo, "Ese es el código fijo de tu docente. En este laboratorio cada clase tiene "
-                + "su propio código, que tu docente ve al entrar a DigBit durante la clase: pídeselo.");
+                + (soloResponsables ? "su propio código, que da la persona responsable del laboratorio: pídeselo."
+                    : "su propio código, que tu docente ve al entrar a DigBit durante la clase: pídeselo."));
+        }
+
+        /// <summary>
+        /// "Los docentes no ven los codigos" (CodigosSoloResponsables), leido ahora
+        /// para lo que se le dice al alumno: con ella el codigo de la clase lo da la
+        /// persona responsable del laboratorio (asi lo dice el panel del docente:
+        /// CodigosSoloResponsables.PideElCodigo), no le aparece a su docente al
+        /// entrar a DigBit. Sin poder leerlo, lo ultimo que se supo.
+        /// </summary>
+        private static bool CodigosDeResponsables(MySqlConnection conexion)
+        {
+            return ModosDeAcceso.LeerAjustes(conexion).SoloResponsables ?? CodigosSoloResponsables.Activa;
         }
 
         /// <summary>
@@ -5724,7 +6107,7 @@ namespace DigBit.conexion
             {
                 if (EsCodigoFijo(conexion, codigo))
                 {
-                    return RechazoCodigoFijo();
+                    return RechazoCodigoFijo(CodigosDeResponsables(conexion));
                 }
 
                 DateTime ahora = Ahora(conexion);
@@ -5735,12 +6118,17 @@ namespace DigBit.conexion
                 if (sinAbrir != null)
                 {
                     // Con otra clase ya abierta a la vez (dos seguidas en el margen),
-                    // puede que solo se equivocara al teclear el de la suya: las dos cosas.
+                    // puede que solo se equivocara al teclear el de la suya: las dos
+                    // cosas. Si los docentes no ven los codigos, que el suyo aun no
+                    // entre no cambia nada: el codigo lo da la persona responsable.
+                    bool soloResponsables = CodigosDeResponsables(conexion);
                     return Rechazo(MotivoCodigo.SinAbrir, abiertas.Any(s => s.SesionId.HasValue)
                         ? "Ese no es el código de la clase que ya está abierta: revisa que esté bien escrito. Si vienes a la de las "
-                          + Hora(sinAbrir.Inicio) + ", tu docente todavía no entra a DigBit: el código le aparece al entrar."
+                          + Hora(sinAbrir.Inicio) + (soloResponsables ? ", su código lo da la persona responsable del laboratorio."
+                              : ", tu docente todavía no entra a DigBit: el código le aparece al entrar.")
                         : "Ese no es el código de la clase de las " + Hora(sinAbrir.Inicio) + ": revisa que esté bien escrito. "
-                          + "Tu docente todavía no entra a DigBit para esa clase: el código le aparece al entrar. Pídeselo.");
+                          + (soloResponsables ? "El código de esa clase lo da la persona responsable del laboratorio: pídeselo."
+                              : "Tu docente todavía no entra a DigBit para esa clase: el código le aparece al entrar. Pídeselo."));
                 }
             }
 
@@ -5819,7 +6207,8 @@ namespace DigBit.conexion
                         Motivo = MotivoCodigo.ModoCambiado,
                         Modo = modo,
                         Mensaje = modo == ModoCodigo.Renovable
-                            ? "Ahora hace falta el código de la clase: pídeselo a tu docente."
+                            ? "Ahora hace falta el código de la clase: " + (CodigosDeResponsables(conexion)
+                                ? "pídeselo a la persona responsable del laboratorio." : "pídeselo a tu docente.")
                             : "Ahora hace falta el código de tu docente."
                     };
                 }
@@ -5904,7 +6293,8 @@ namespace DigBit.conexion
                         Motivo = MotivoCodigo.ModoCambiado,
                         Modo = modo,
                         Mensaje = modo == ModoCodigo.Renovable
-                            ? "Ahora hace falta el código de la clase: pídeselo a tu docente."
+                            ? "Ahora hace falta el código de la clase: " + (CodigosDeResponsables(conexion)
+                                ? "pídeselo a la persona responsable del laboratorio." : "pídeselo a tu docente.")
                             : "Ahora hace falta el código de tu docente."
                     };
                 }
@@ -6086,7 +6476,8 @@ namespace DigBit.conexion
         /// Lo que la pantalla del alumno necesita de su laboratorio ahora mismo, en
         /// una conexion: la hora del servidor, el modo, la agenda de hoy (lo que el
         /// servidor acepta) con la sesion de cada clase si ya existe, y si la base
-        /// guarda los avisos de red (db/10).
+        /// guarda los avisos de red (db/10). Con la generacion de codigos, tambien
+        /// si los docentes ven los codigos (lo deja en CodigosSoloResponsables.Activa).
         /// </summary>
         public SituacionLaboratorio SituacionDelLaboratorio(int idLaboratorio)
         {
@@ -6095,6 +6486,13 @@ namespace DigBit.conexion
             {
                 situacion.AhoraServidor = Ahora(conexion);
                 situacion.Modo = ModosDeAcceso.Leer(conexion, idLaboratorio);
+                if (situacion.Modo == ModoCodigo.Renovable)
+                {
+                    // "Los docentes no ven los codigos": queda en CodigosSoloResponsables.Activa
+                    // y la pantalla del alumno dice entonces quien da el codigo de la clase.
+                    ModosDeAcceso.LeerAjustes(conexion);
+                }
+
                 situacion.ConUsoLibre = situacion.Modo == ModoCodigo.SinCodigo && Esquema.UsoLibre(conexion);
                 situacion.ConAvisosDeRed = Esquema.EquiposSinInternet(conexion);
                 if (situacion.ConAvisosDeRed)

@@ -52,6 +52,10 @@ namespace DigBit
         private readonly Label lblError;
         // "Los docentes no ven los codigos" (CodigosSoloResponsables); null sin db/13: no se ofrece.
         private readonly CheckBox chkDocentes;
+        // Las explicaciones de las formas y la nota de abajo: lo que dicen de quien
+        // da el codigo de la clase sigue a la casilla de los docentes.
+        private readonly Dictionary<ModoCodigo, Label> explicaciones = new Dictionary<ModoCodigo, Label>();
+        private readonly Label lblNota;
 
         /// <summary>El titulo de la ventana y de los sitios que la abren.</summary>
         public const string Titulo = "Códigos de las clases";
@@ -91,7 +95,8 @@ namespace DigBit
 
             Controls.Add(PiezasDeModos.Seccion("Para toda la escuela", new Point(24, 56)));
             Panel pnlGeneral = new Panel { Location = new Point(24, 84), Width = Ancho - 48, BackColor = Color.White };
-            pnlGeneral.Height = PiezasDeModos.Opciones(pnlGeneral, opciones, datos.UsoLibre, datos.SesionesUnicas, null);
+            pnlGeneral.Height = PiezasDeModos.Opciones(pnlGeneral, opciones, datos.UsoLibre, datos.SesionesUnicas, null,
+                datos.DocentesSinCodigos ?? false, explicaciones);
             opciones[generalAntes].Checked = true;
             foreach (RadioButton opcion in opciones.Values)
             {
@@ -107,7 +112,11 @@ namespace DigBit
                 // Se guarda con lo demas (Guardar), en configuracion (db/13).
                 chkDocentes = CasillaDocentes(new Point(24, pnlGeneral.Bottom - 2), Ancho - 48);
                 chkDocentes.Checked = datos.DocentesSinCodigos.Value;
-                chkDocentes.CheckedChanged += (s, e) => lblError.Text = "";
+                chkDocentes.CheckedChanged += (s, e) =>
+                {
+                    lblError.Text = "";
+                    QuienDaElCodigo(chkDocentes.Checked);
+                };
                 Controls.Add(chkDocentes);
                 Label lblDocentes = PiezasDeModos.Nota("Cada docente le pide el código de su clase a la persona responsable del laboratorio. "
                     + "No aplica a «" + ModosDeAcceso.Nombre(ModoCodigo.SinCodigo) + "».", new Point(44, chkDocentes.Bottom + 1), Ancho - 68);
@@ -151,10 +160,9 @@ namespace DigBit
             }
 
             y = pnlFilas.Bottom + 10;
-            string nota = "Vale en cuanto guardes. Las clases que ya empezaron conservan su código hasta que terminen; si iban sin código, "
-                + "a quien llegue tarde le hará falta el que ve su docente en DigBit. Antes de cambiarlo, actualiza DigBit (versión 1.1) "
-                + "en los equipos de ese laboratorio y en las computadoras de sus docentes.";
-            Label lblNota = PiezasDeModos.Nota(nota, new Point(24, y), Ancho - 48);
+            // Tan alta como la mas alta de sus dos versiones: la casilla la cambia sin mover nada.
+            bool sinCodigos = datos.DocentesSinCodigos ?? false;
+            lblNota = PiezasDeModos.Nota(NotaDeCambio(sinCodigos), new Point(24, y), Ancho - 48, NotaDeCambio(!sinCodigos));
             Controls.Add(lblNota);
 
             // Tres lineas: un error de conexion o de la base dice la causa y que hacer.
@@ -214,6 +222,26 @@ namespace DigBit
                 KeyValuePair<ModoCodigo, RadioButton> marcada = opciones.FirstOrDefault(o => o.Value.Checked);
                 return marcada.Value != null ? marcada.Key : generalAntes;
             }
+        }
+
+        /// <summary>La nota de abajo; soloResponsables: con la casilla de los docentes, el codigo lo da la persona responsable.</summary>
+        private static string NotaDeCambio(bool soloResponsables)
+        {
+            return "Vale en cuanto guardes. Las clases que ya empezaron conservan su código hasta que terminen; si iban sin código, "
+                + "a quien llegue tarde le hará falta " + (soloResponsables ? "el que da la persona responsable del laboratorio" : "el que ve su docente en DigBit")
+                + ". Antes de cambiarlo, actualiza DigBit (versión 1.1) en los equipos de ese laboratorio y en las computadoras de sus docentes.";
+        }
+
+        /// <summary>Lo que dicen la generacion de codigos y la nota de quien da el codigo, como la casilla de los docentes.</summary>
+        private void QuienDaElCodigo(bool soloResponsables)
+        {
+            Label renovable;
+            if (explicaciones.TryGetValue(ModoCodigo.Renovable, out renovable))
+            {
+                renovable.Text = PiezasDeModos.Explicacion(ModoCodigo.Renovable, datos.UsoLibre, soloResponsables);
+            }
+
+            lblNota.Text = NotaDeCambio(soloResponsables);
         }
 
         /// <summary>
@@ -535,7 +563,7 @@ namespace DigBit
 
             Panel pnlOpciones = new Panel { Location = new Point(24, 60), Width = Ancho - 48, BackColor = Color.White };
             pnlOpciones.Height = PiezasDeModos.Opciones(pnlOpciones, opciones, datos.UsoLibre,
-                datos.SesionesUnicas || laboratorio.Modo == ModoCodigo.Renovable, general);
+                datos.SesionesUnicas || laboratorio.Modo == ModoCodigo.Renovable, general, datos.DocentesSinCodigos ?? false);
             opciones[laboratorio.Modo].Checked = true;
             Controls.Add(pnlOpciones);
 
@@ -759,8 +787,13 @@ namespace DigBit
             return ModosDeAcceso.Nombre(modo);
         }
 
-        /// <summary>Lo que hace cada forma, sin darle otro nombre: cada una se llama siempre como en Titulo.</summary>
-        public static string Explicacion(ModoCodigo modo, bool usoLibre)
+        /// <summary>
+        /// Lo que hace cada forma, sin darle otro nombre: cada una se llama siempre
+        /// como en Titulo. soloResponsables: "Los docentes no ven los codigos"
+        /// (CodigosSoloResponsables), el codigo de cada clase lo da la persona
+        /// responsable del laboratorio.
+        /// </summary>
+        public static string Explicacion(ModoCodigo modo, bool usoLibre, bool soloResponsables = false)
         {
             switch (modo)
             {
@@ -770,7 +803,8 @@ namespace DigBit
                         + (usoLibre ? "" : " (Para registrar sin clase falta aplicar db/14 en la base.)");
                 case ModoCodigo.Renovable:
                     return "Un código distinto para cada clase y cada día, que DigBit genera al empezar la semana. Solo tú los ves todos "
-                        + "(en Horarios); cada docente ve el de su clase al entrar a DigBit cuando inicia (desde "
+                        + (soloResponsables ? "(en Horarios); el de cada clase lo da la persona responsable del laboratorio cuando inicia (desde "
+                            : "(en Horarios); cada docente ve el de su clase al entrar a DigBit cuando inicia (desde ")
                         + HorariosDatos.MargenAntesDelInicioMinutos + " minutos antes).";
                 default:
                     return "Cada docente tiene un código, el mismo en todas sus clases, que dicta a su grupo. "
@@ -786,21 +820,32 @@ namespace DigBit
             return seccion;
         }
 
-        /// <summary>Texto gris tan alto como lo que dice (no corta la ultima linea).</summary>
-        public static Label Nota(string texto, Point posicion, int ancho)
+        /// <summary>
+        /// Texto gris tan alto como lo que dice (no corta la ultima linea); con
+        /// otroTexto, como el mas alto de los dos: puede pasar al otro sin mover nada.
+        /// </summary>
+        public static Label Nota(string texto, Point posicion, int ancho, string otroTexto = null)
         {
             DrawingFont fuente = new DrawingFont("Century Gothic", 9F);
-            int alto = TextRenderer.MeasureText(texto, fuente, new Size(ancho, int.MaxValue), TextFormatFlags.WordBreak).Height + 4;
+            int alto = Math.Max(AltoDe(texto, fuente, ancho), otroTexto == null ? 0 : AltoDe(otroTexto, fuente, ancho)) + 4;
             return new Label { AutoSize = false, Font = fuente, ForeColor = Gris, Location = posicion, Size = new Size(ancho, alto), Text = texto };
+        }
+
+        private static int AltoDe(string texto, DrawingFont fuente, int ancho)
+        {
+            return TextRenderer.MeasureText(texto, fuente, new Size(ancho, int.MaxValue), TextFormatFlags.WordBreak).Height;
         }
 
         /// <summary>
         /// Las tres opciones, cada una con su explicacion debajo, dentro del panel;
         /// devuelve el alto que ocupan. Con general, esa opcion lo dice ("como toda
         /// la escuela"). Sin conGeneracion (falta un indice de db/04) la generacion
-        /// de codigos no se puede elegir.
+        /// de codigos no se puede elegir. soloResponsables, como en Explicacion; con
+        /// explicaciones, deja ahi la de cada forma, tan alta que puede pasar a la
+        /// otra version (la casilla de los docentes) sin mover nada.
         /// </summary>
-        public static int Opciones(Panel panel, Dictionary<ModoCodigo, RadioButton> opciones, bool usoLibre, bool conGeneracion, ModoCodigo? general)
+        public static int Opciones(Panel panel, Dictionary<ModoCodigo, RadioButton> opciones, bool usoLibre, bool conGeneracion, ModoCodigo? general,
+            bool soloResponsables = false, Dictionary<ModoCodigo, Label> explicaciones = null)
         {
             DrawingFont fuente = new DrawingFont("Century Gothic", 9.5F);
             int ancho = panel.Width - 20;
@@ -824,10 +869,12 @@ namespace DigBit
 
                 opciones[modo] = opcion;
                 panel.Controls.Add(opcion);
-                string explicacion = Explicacion(modo, usoLibre);
+                string explicacion = Explicacion(modo, usoLibre, soloResponsables);
                 // Tan alta como su texto: con una altura fija, una explicacion de
-                // cuatro lineas perdia la ultima.
-                int alto = TextRenderer.MeasureText(explicacion, fuente, new Size(ancho, int.MaxValue), TextFormatFlags.WordBreak).Height;
+                // cuatro lineas perdia la ultima. Si la casilla la puede cambiar,
+                // como la mas alta de las dos.
+                int alto = Math.Max(AltoDe(explicacion, fuente, ancho),
+                    explicaciones == null ? 0 : AltoDe(Explicacion(modo, usoLibre, !soloResponsables), fuente, ancho));
                 Label detalle = new Label
                 {
                     AutoSize = false,
@@ -840,6 +887,11 @@ namespace DigBit
                 // Un clic en la explicacion tambien elige la opcion.
                 detalle.Click += (s, e) => { if (opcion.Enabled) opcion.Checked = true; };
                 panel.Controls.Add(detalle);
+                if (explicaciones != null)
+                {
+                    explicaciones[modo] = detalle;
+                }
+
                 y += 26 + alto + 12;
             }
 

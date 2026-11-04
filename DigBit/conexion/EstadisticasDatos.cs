@@ -2873,8 +2873,13 @@ namespace DigBit.conexion
 
                 // Las sesiones del periodo (tambien uso libre y fuera del horario). El
                 // uso libre no tiene docente ni grupo: solo entra con los dos en "Todos".
+                // Con un ciclo que ya termino o un horario aplicado, tambien las del dia
+                // de mas de sus clases (HastaDe).
+                HashSet<string> delDiaDeMas = new HashSet<string>(clases.Where(c => HastaDe(c) > hasta)
+                    .Select(c => ClaveDeTernaYDia(c.ProfesorId, c.MateriaId, c.GrupoId, HastaDe(c))));
                 sesiones = A.SesionPorId.Values
-                    .Where(s => s.Fecha >= desde && s.Fecha <= hasta
+                    .Where(s => ((s.Fecha >= desde && s.Fecha <= hasta)
+                            || (delDiaDeMas.Count > 0 && delDiaDeMas.Contains(ClaveDeTernaYDia(s.DocenteId ?? 0, s.MateriaId ?? 0, s.GrupoId ?? 0, s.Fecha))))
                         && (F.Docente == 0 || s.DocenteId == F.Docente)
                         && (F.Grupo == 0 || s.GrupoId == F.Grupo))
                     .OrderBy(s => s.Fecha).ThenBy(s => s.Id)
@@ -2882,7 +2887,29 @@ namespace DigBit.conexion
                 sesionDelFiltro = sesiones.ToDictionary(s => s.Id);
             }
 
-            /// <summary>La clase de una sesion: misma terna y dentro de su vigencia (como la asistencia), o null.</summary>
+            /// <summary>
+            /// El ultimo dia que cuenta de una clase: el del periodo o, con un ciclo que
+            /// ya termino o un horario aplicado, el dia siguiente al ultimo de la clase si
+            /// tiene algo registrado ese dia ("Ahora mismo", y no sigue: es lo que cuenta
+            /// su lista, AsistenciaDatos.HastaDeLaLista). Con unas fechas, las fechas.
+            /// </summary>
+            private DateTime HastaDe(ClaseLeida clase)
+            {
+                if ((F.Tipo != TipoPeriodo.CicloPasado && F.Tipo != TipoPeriodo.Plantilla) || !clase.ConRegistroElDiaSiguiente || clase.VigenteHasta > hasta)
+                {
+                    return hasta;
+                }
+
+                DateTime suyo = AsistenciaDatos.UltimoDiaConRegistros(clase);
+                return suyo > hasta ? suyo : hasta;
+            }
+
+            private static string ClaveDeTernaYDia(int docente, int materia, int grupo, DateTime dia)
+            {
+                return docente + "|" + materia + "|" + grupo + "|" + dia.ToString("yyyyMMdd", Inv);
+            }
+
+            /// <summary>La clase de una sesion: misma terna y dentro de su vigencia o, si termino ayer y no sigue, ese dia de mas (como la asistencia), o null.</summary>
             private ClaseLeida ClaseDeLaSesion(SesionLeida sesion)
             {
                 if (!sesion.DocenteId.HasValue || !sesion.MateriaId.HasValue || !sesion.GrupoId.HasValue)
@@ -2892,7 +2919,7 @@ namespace DigBit.conexion
 
                 List<ClaseLeida> mismas;
                 return clasesPorTerna.TryGetValue(sesion.DocenteId.Value + "|" + sesion.MateriaId.Value + "|" + sesion.GrupoId.Value, out mismas)
-                    ? mismas.FirstOrDefault(c => sesion.Fecha >= c.VigenteDesde && sesion.Fecha <= c.VigenteHasta)
+                    ? mismas.FirstOrDefault(c => sesion.Fecha >= c.VigenteDesde && sesion.Fecha <= AsistenciaDatos.UltimoDiaConRegistros(c))
                     : null;
             }
 
@@ -3089,9 +3116,10 @@ namespace DigBit.conexion
             /// </summary>
             private void ContarAsistencia()
             {
-                Func<DiaDeAsistencia, bool> cuenta = d => d.Fecha >= desde && d.Fecha <= hasta && (lab == 0 || d.Laboratorios.Contains(lab));
                 foreach (ClaseLeida clase in clases)
                 {
+                    DateTime hastaDeLaClase = HastaDe(clase);
+                    Func<DiaDeAsistencia, bool> cuenta = d => d.Fecha >= desde && d.Fecha <= hastaDeLaClase && (lab == 0 || d.Laboratorios.Contains(lab));
                     AsistenciaDeLaClase deLaClase = new AsistenciaDeLaClase { Clase = clase };
                     asistencia[clase.Id] = deLaClase;
                     AsistenciaDeClase lista;
@@ -3104,7 +3132,7 @@ namespace DigBit.conexion
                     ContarAsistenciaPorTramo(lista, resumen);
                     deLaClase.Estudiantes = lista.Alumnos.Count;
                     deLaClase.DiasQueCuentan = resumen.PorDia.Count(d => !d.Dia.EnCurso);
-                    deLaClase.AlgunDiaEnElLaboratorio = lab != 0 && lista.Dias.Any(d => d.Fecha >= desde && d.Fecha <= hasta && d.Laboratorios.Contains(lab));
+                    deLaClase.AlgunDiaEnElLaboratorio = lab != 0 && lista.Dias.Any(d => d.Fecha >= desde && d.Fecha <= hastaDeLaClase && d.Laboratorios.Contains(lab));
                     DateTime? primerDia = resumen.PorDia.Count == 0 ? (DateTime?)null : resumen.PorDia.Min(d => d.Dia.Fecha);
                     foreach (AlumnoResumido alumno in resumen.Alumnos)
                     {
@@ -4143,14 +4171,10 @@ namespace DigBit.conexion
                 {
                     foreach (ClaseLeida clase in clases)
                     {
-                        List<AsistenciaDada> deLaClase;
-                        if (!A.DadasPorClase.TryGetValue(clase.Id, out deLaClase))
-                        {
-                            continue;
-                        }
-
-                        foreach (AsistenciaDada dada in deLaClase.Where(d => d.Fecha.Date >= desde && d.Fecha.Date <= hasta
-                            && d.Fecha.Date >= clase.VigenteDesde && d.Fecha.Date <= clase.VigenteHasta && (lab == 0 || d.LaboratorioId == lab)))
+                        // Las mismas que cuenta su lista (con "Ahora mismo", tambien las de ese dia en la clase de antes).
+                        DateTime hastaDeLaClase = HastaDe(clase);
+                        foreach (AsistenciaDada dada in AsistenciaDatos.DadasQueCuentan(clase, A).Where(d => d.Fecha.Date >= desde && d.Fecha.Date <= hastaDeLaClase
+                            && (lab == 0 || d.LaboratorioId == lab)))
                         {
                             Sumar(dadas, dada.ProfesorId, 1);
                             // La misma que se cuenta (la ficha del docente): sin el correo, solo matricula y nombre.

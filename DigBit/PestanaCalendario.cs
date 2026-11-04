@@ -1883,10 +1883,11 @@ namespace DigBit
     /// fue: rojo si alguna clase se quedo sin bitacoras (con cuantas, abajo),
     /// verde si todas las que contaban registraron, gris si sus clases no
     /// contaban o aun no pasan, blanco sin clases. Pulsar cualquier dia elige su
-    /// semana (fila con marco verde). Flechas del teclado: semana; Re Pag / Av
-    /// Pag: mes.
+    /// semana (fila con marco verde). Teclado, con el foco en el: ↑ ↓ la semana;
+    /// ← →, Re Pag / Av Pag y Ctrl+← → el mes (IUsaFlechas: TeclasDeFlechas le
+    /// deja ← y →; sin el foco aqui, ← → son el laboratorio de Faltas).
     /// </summary>
-    internal class MesDeBitacoras : Control
+    internal class MesDeBitacoras : Control, IUsaFlechas
     {
         private const int AltoCabecera = 32;
         private const int AltoDias = 20;
@@ -2157,6 +2158,16 @@ namespace DigBit
             // Las cuatro flechas son del calendario (si no, la izquierda y la derecha
             // sacaban el foco a otro control).
             return keyData == Keys.Up || keyData == Keys.Down || keyData == Keys.Left || keyData == Keys.Right || base.IsInputKey(keyData);
+        }
+
+        /// <summary>
+        /// Con el foco aqui, ← y → son el mes (OnKeyDown) y no el laboratorio: sin
+        /// esto TeclasDeFlechas se las quitaba antes y nunca llegaban. Con Ctrl
+        /// tambien el mes, por TeclasDeFlechas (MoverMes).
+        /// </summary>
+        public bool UsaFlechas(bool conCtrl)
+        {
+            return !conCtrl;
         }
 
         protected override void OnKeyDown(KeyEventArgs e)
