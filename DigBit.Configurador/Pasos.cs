@@ -25,6 +25,15 @@ namespace DigBit.Configurador
         /// </summary>
         private const string ValorCuentaKiosco = "CuentaKiosco";
 
+        /// <summary>
+        /// "1" si esa cuenta es la que el equipo ya tenia. Junto a CuentaKiosco y a la misma hora:
+        /// el desinstalador lo mira para no ofrecer nunca borrarla.
+        /// </summary>
+        private const string ValorCuentaOriginal = "CuentaOriginal";
+
+        /// <summary>Se lo dice a DigBit: que suelte sus directivas al entregar el escritorio.</summary>
+        public const string AjusteLiberarDirectivas = "LiberarDirectivas";
+
         /// <summary>adm, maestro o kiosco.</summary>
         public const string ModoKiosco = "kiosco";
 
@@ -160,6 +169,9 @@ namespace DigBit.Configurador
             public string Laboratorio;
             public string NumeroMaquina;
             public string Cuenta;
+
+            /// <summary>La cuenta es la que el equipo ya tenia: no se crea ni se cambia nada de ella.</summary>
+            public bool Original;
             public bool Memoria;
             public bool Actualizar;
             public string RutaAjustes;
@@ -181,12 +193,22 @@ namespace DigBit.Configurador
             // Antes de escribir nada: lo que haria que todo lo demas sobrara.
             if (kiosco)
             {
-                if (string.IsNullOrEmpty(contrasena))
+                string porQue;
+                if (datos.Original)
                 {
-                    throw new FalloDeInstalacion("Falta la contraseña de la cuenta del laboratorio: hace falta para el inicio de sesión automático.");
+                    // Comprobarla es intentar entrar a Windows: solo al instalar de verdad.
+                    porQue = Sistema.Simular ? null : Cuenta.PorQueNoValeOriginal(datos.Cuenta, contrasena);
+                }
+                else
+                {
+                    if (string.IsNullOrEmpty(contrasena))
+                    {
+                        throw new FalloDeInstalacion("Falta la contraseña de la cuenta del laboratorio: hace falta para el inicio de sesión automático.");
+                    }
+
+                    porQue = Cuenta.PorQueNoVale(datos.Cuenta);
                 }
 
-                string porQue = Cuenta.PorQueNoVale(datos.Cuenta);
                 if (porQue != null)
                 {
                     throw new FalloDeInstalacion(porQue);
@@ -208,7 +230,8 @@ namespace DigBit.Configurador
             Dictionary<string, string> ajustes = new Dictionary<string, string>
             {
                 { "ModoKiosco", kiosco ? "true" : "false" },
-                { "Laboratorio", laboratorio }
+                { "Laboratorio", laboratorio },
+                { AjusteLiberarDirectivas, kiosco && datos.Original ? "true" : "false" }
             };
             if (kiosco && !string.IsNullOrWhiteSpace(datos.NumeroMaquina))
             {
@@ -216,7 +239,8 @@ namespace DigBit.Configurador
             }
 
             Sistema.Hacer("ModoKiosco=" + ajustes["ModoKiosco"] + ", Laboratorio='" + laboratorio + "'"
-                + (ajustes.ContainsKey("NumeroMaquina") ? ", NumeroMaquina='" + ajustes["NumeroMaquina"] + "'" : "") + " en DigBit.exe.config",
+                + (ajustes.ContainsKey("NumeroMaquina") ? ", NumeroMaquina='" + ajustes["NumeroMaquina"] + "'" : "")
+                + ", " + AjusteLiberarDirectivas + "=" + ajustes[AjusteLiberarDirectivas] + " en DigBit.exe.config",
                 () => Archivos.EscribirAjustes(Archivos.ConfigDigBit(datos.Destino), ajustes));
             if (cadena != null)
             {
@@ -227,7 +251,7 @@ namespace DigBit.Configurador
 
             if (kiosco)
             {
-                ConfigurarKiosco(datos, contrasena);
+                ConfigurarKiosco(datos, contrasena ?? "");
             }
 
             Sistema.Hacer("Escribir la marca de instalación", () => Archivos.Marca(datos.Destino));
@@ -242,11 +266,18 @@ namespace DigBit.Configurador
             }
 
             string exeDigBit = Path.Combine(datos.Destino, "DigBit.exe");
-            Sistema.Hacer("Anotar la cuenta del kiosco, para poder deshacerlo aunque esto no termine", () => AnotarCuentaKiosco(datos.Cuenta));
-            Salida.Paso("Cuenta local estándar «" + datos.Cuenta + "»");
-            Sistema.Hacer(Cuenta.Existe(datos.Cuenta) ? "Ya existe: se fija la contraseña indicada, sin caducidad" : "Crear la cuenta (sin privilegios, contraseña sin caducidad)",
-                () => Cuenta.CrearOActualizar(datos.Cuenta, contrasena));
-            Sistema.Hacer("Crear su perfil de Windows si aún no lo tiene", () => Cuenta.CrearPerfil(datos.Cuenta, contrasena));
+            Sistema.Hacer("Anotar la cuenta del kiosco, para poder deshacerlo aunque esto no termine", () => AnotarCuentaKiosco(datos.Cuenta, datos.Original));
+            if (datos.Original)
+            {
+                Salida.Paso("Cuenta «" + datos.Cuenta + "», la que ya tiene el equipo: no se cambia su contraseña ni sus permisos");
+            }
+            else
+            {
+                Salida.Paso("Cuenta local estándar «" + datos.Cuenta + "»");
+                Sistema.Hacer(Cuenta.Existe(datos.Cuenta) ? "Ya existe: se fija la contraseña indicada, sin caducidad" : "Crear la cuenta (sin privilegios, contraseña sin caducidad)",
+                    () => Cuenta.CrearOActualizar(datos.Cuenta, contrasena));
+                Sistema.Hacer("Crear su perfil de Windows si aún no lo tiene", () => Cuenta.CrearPerfil(datos.Cuenta, contrasena));
+            }
 
             Salida.Paso("Shell y directivas en el perfil de la cuenta");
             foreach (Kiosco.ValorUsuario valor in Kiosco.ValoresUsuario(exeDigBit))
@@ -260,7 +291,19 @@ namespace DigBit.Configurador
                 Kiosco.ConRegistroDeLaCuenta(sid, raiz =>
                 {
                     Kiosco.EscribirValores(raiz, Kiosco.ValoresUsuario(exeDigBit));
-                    Kiosco.ProtegerShell(raiz, @"Software\Microsoft\Windows NT\CurrentVersion\Winlogon", sid);
+                    Kiosco.ProtegerShell(raiz, Kiosco.ClaveShell, sid);
+                    if (datos.Original)
+                    {
+                        // Sin esto el kiosco funciona igual, pero el escritorio sale limitado.
+                        try
+                        {
+                            Kiosco.PermitirSoltarDirectivas(raiz, sid);
+                        }
+                        catch (Exception ex)
+                        {
+                            Salida.Aviso("DigBit no podrá quitar los límites del escritorio tras la bitácora: " + ex.Message);
+                        }
+                    }
                 });
             });
 
@@ -291,6 +334,7 @@ namespace DigBit.Configurador
             if (EsKiosco(datos.Modo))
             {
                 string exeVigilante = Path.Combine(datos.Destino, "Vigilante", "DigBit.Vigilante.exe");
+                Sistema.Hacer("Devolver el reinicio automático de DigBit", () => Kiosco.ReinicioDelShell(true));
                 Sistema.Hacer("Arrancar el vigilante", () =>
                 {
                     if (Servicio.Existe())
@@ -397,12 +441,23 @@ namespace DigBit.Configurador
             }
         }
 
-        private static void AnotarCuentaKiosco(string cuenta)
+        private static void AnotarCuentaKiosco(string cuenta, bool original)
         {
             using (RegistryKey equipo = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
             using (RegistryKey clave = equipo.CreateSubKey(RutaRegistro))
             {
                 clave.SetValue(ValorCuentaKiosco, cuenta, RegistryValueKind.String);
+                clave.SetValue(ValorCuentaOriginal, original ? "1" : "0", RegistryValueKind.String);
+            }
+        }
+
+        /// <summary>Si el kiosco de este equipo se quedo en la cuenta que ya tenia.</summary>
+        public static bool CuentaEsOriginal()
+        {
+            using (RegistryKey equipo = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+            using (RegistryKey clave = equipo.OpenSubKey(RutaRegistro))
+            {
+                return clave != null && (clave.GetValue(ValorCuentaOriginal) as string) == "1";
             }
         }
 
@@ -426,6 +481,7 @@ namespace DigBit.Configurador
                 }
             }
 
+            bool original = CuentaEsOriginal();
             Salida.Paso("Deshacer la configuración de este equipo");
             Intentar("Detener DigBit y el vigilante", () => Servicio.DetenerTodo(destino));
             Intentar("Quitar el servicio DigBit.Vigilante", Servicio.Quitar);
@@ -441,11 +497,36 @@ namespace DigBit.Configurador
                     string exeDigBit = Path.Combine(destino, "DigBit.exe");
                     Intentar("Quitar el shell y las directivas de «" + cuenta + "»", () =>
                         Kiosco.ConRegistroDeLaCuenta(Cuenta.Sid(cuenta), raiz => Kiosco.BorrarValores(raiz, Kiosco.ValoresUsuario(exeDigBit))));
+                    if (original)
+                    {
+                        Intentar("Devolverle a «" + cuenta + "» sus permisos sobre su registro", () =>
+                        {
+                            SecurityIdentifier sid = Cuenta.Sid(cuenta);
+                            Kiosco.ConRegistroDeLaCuenta(sid, raiz =>
+                            {
+                                Kiosco.DesprotegerShell(raiz, Kiosco.ClaveShell, sid);
+                                Kiosco.QuitarPermisoDirectivas(raiz, sid);
+                            });
+                        });
+                    }
+
                     if (borrarCuenta)
                     {
-                        Intentar("Borrar la cuenta «" + cuenta + "» y su perfil", () => Cuenta.Borrar(cuenta));
+                        if (SePuedeBorrar(cuenta, original))
+                        {
+                            Intentar("Borrar la cuenta «" + cuenta + "» y su perfil", () => Cuenta.Borrar(cuenta));
+                        }
+                        else
+                        {
+                            Salida.Aviso("La cuenta «" + cuenta + "» no se borra: es la del equipo, o es administradora.");
+                        }
                     }
                 }
+            }
+
+            if (Servicio.ApagoReinicioDelShell)
+            {
+                Intentar("Devolver el reinicio automático del escritorio de Windows", () => Kiosco.ReinicioDelShell(true));
             }
 
             if (borrarDatos)
@@ -460,6 +541,27 @@ namespace DigBit.Configurador
                     equipo.DeleteSubKeyTree(RutaRegistro, false);
                 }
             });
+        }
+
+        /// <summary>
+        /// El Setup no ofrece borrar la cuenta original; esto es por si algo lo pide igual. Borrar
+        /// la cuenta de todos los dias, o la que esta desinstalando, no tiene vuelta: en la duda, no.
+        /// </summary>
+        private static bool SePuedeBorrar(string cuenta, bool original)
+        {
+            if (original || string.Equals(cuenta, Environment.UserName, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            try
+            {
+                return !Cuenta.EsAdministradora(cuenta);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         private static void Intentar(string descripcion, Action accion)

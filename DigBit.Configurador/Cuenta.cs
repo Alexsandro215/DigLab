@@ -2,7 +2,9 @@ using System;
 using System.Diagnostics;
 using System.DirectoryServices.AccountManagement;
 using System.IO;
+using System.Linq;
 using System.Management;
+using System.Runtime.InteropServices;
 using System.Security;
 using System.Security.Principal;
 using System.ServiceProcess;
@@ -10,19 +12,146 @@ using Microsoft.Win32;
 
 namespace DigBit.Configurador
 {
-    /// <summary>La cuenta local estandar del laboratorio.</summary>
+    /// <summary>
+    /// La cuenta del kiosco: una nueva, local y estandar, o la que el equipo ya tenia. Esa la
+    /// pidio el usuario (2026-11-04): los programas y los permisos de los alumnos estan en ella
+    /// y los equipos se reinstalan cada semestre, asi que acepta que tras la bitacora tengan un
+    /// escritorio de administrador. De ella no se cambia nada y nunca se ofrece borrarla.
+    /// </summary>
     internal static class Cuenta
     {
         public const string VarClave = "DIGBIT_CLAVE_CUENTA";
         private const string Administradores = "S-1-5-32-544";
         private const string Usuarios = "S-1-5-32-545";
 
+        // Los grupos de un inicio de sesion con cuenta Microsoft.
+        private const string PrefijoCuentaMicrosoft = "S-1-11-96-";
+
+        private const int InicioInteractivo = 2;
+        private const int ProveedorPorOmision = 0;
+        private const int ErrorContrasena = 1326;
+        private const int ErrorRestriccion = 1327;
+        private const int ErrorSinPermisoDeEntrar = 1385;
+        private const int ErrorDeshabilitada = 1331;
+        private const int ErrorCaducada = 1330;
+        private const int ErrorDebeCambiarla = 1907;
+        private const int ErrorBloqueada = 1909;
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool LogonUserW(string usuario, string dominio, string contrasena, int tipo, int proveedor, out IntPtr token);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(IntPtr handle);
+
         /// <summary>
-        /// Por que no vale esa cuenta para el kiosco, o null si vale. La cuenta del kiosco
-        /// NO puede ser administrador: tras guardar la bitacora, SesionEquipo lanza
-        /// explorer.exe con el token de ESA cuenta y cada alumno se quedaria con un
-        /// escritorio de administrador, en silencio, todo el semestre. Tampoco puede ser la
-        /// cuenta con la que se instala, o te quedas sin escritorio a media instalacion.
+        /// Por que no vale la cuenta original, o null si vale. Sin la contrasena correcta el
+        /// inicio automatico falla en cada arranque y el equipo se queda en la pantalla de
+        /// Windows, por eso se comprueba contra Windows antes de tocar nada.
+        /// </summary>
+        public static string PorQueNoValeOriginal(string cuenta, string contrasena)
+        {
+            if (string.IsNullOrWhiteSpace(cuenta))
+            {
+                return "Falta el nombre de la cuenta.";
+            }
+
+            if (EsDeMicrosoft(cuenta))
+            {
+                return "«" + cuenta + "» inicia sesión con una cuenta de Microsoft, y DigBit no puede dejarla entrando sola. Elige una cuenta nueva o usa una cuenta local.";
+            }
+
+            using (PrincipalContext equipo = new PrincipalContext(ContextType.Machine))
+            using (UserPrincipal usuario = UserPrincipal.FindByIdentity(equipo, IdentityType.SamAccountName, cuenta))
+            {
+                if (usuario == null)
+                {
+                    return "«" + cuenta + "» no es una cuenta local de este equipo.";
+                }
+
+                if (usuario.Enabled == false)
+                {
+                    return "La cuenta «" + cuenta + "» está deshabilitada en Windows.";
+                }
+            }
+
+            return PorQueNoEntra(cuenta, contrasena ?? "");
+        }
+
+        /// <summary>Si Windows la deja entrar con esa contrasena; no abre ninguna sesion ni carga su perfil.</summary>
+        private static string PorQueNoEntra(string cuenta, string contrasena)
+        {
+            IntPtr token;
+            if (LogonUserW(cuenta, Environment.MachineName, contrasena, InicioInteractivo, ProveedorPorOmision, out token))
+            {
+                CloseHandle(token);
+                return null;
+            }
+
+            int codigo = Marshal.GetLastWin32Error();
+            switch (codigo)
+            {
+                case ErrorContrasena:
+                    return contrasena.Length == 0
+                        ? "La cuenta «" + cuenta + "» sí tiene contraseña: escríbela para que pueda entrar sola."
+                        : "Esa no es la contraseña de «" + cuenta + "». Distingue mayúsculas y minúsculas.";
+                case ErrorRestriccion:
+                    // Windows no deja probar una contrasena vacia por aqui, pero solo responde esto
+                    // si de verdad lo es. Entrar solo en la consola con ella si esta permitido.
+                    return contrasena.Length == 0 ? null : "Windows no deja entrar a «" + cuenta + "» ahora (restricción de la cuenta).";
+                case ErrorSinPermisoDeEntrar:
+                    return "La cuenta «" + cuenta + "» no tiene permitido iniciar sesión en este equipo.";
+                case ErrorDeshabilitada:
+                    return "La cuenta «" + cuenta + "» está deshabilitada en Windows.";
+                case ErrorCaducada:
+                case ErrorDebeCambiarla:
+                    return "La contraseña de «" + cuenta + "» caducó o hay que cambiarla: cámbiala en Windows y vuelve a instalar.";
+                case ErrorBloqueada:
+                    return "La cuenta «" + cuenta + "» está bloqueada por demasiados intentos.";
+                default:
+                    return "Windows no dejó comprobar la contraseña de «" + cuenta + "» (código " + codigo + ").";
+            }
+        }
+
+        /// <summary>Solo se puede saber de la cuenta con la que se instala, que es el caso normal.</summary>
+        private static bool EsDeMicrosoft(string cuenta)
+        {
+            if (!string.Equals(cuenta, Environment.UserName, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            using (WindowsIdentity yo = WindowsIdentity.GetCurrent())
+            {
+                return yo.Groups != null && yo.Groups.Any(g => g.Value.StartsWith(PrefijoCuentaMicrosoft, StringComparison.Ordinal));
+            }
+        }
+
+        public static bool EsAdministradora(string cuenta)
+        {
+            using (PrincipalContext equipo = new PrincipalContext(ContextType.Machine))
+            using (UserPrincipal usuario = UserPrincipal.FindByIdentity(equipo, IdentityType.SamAccountName, cuenta))
+            using (GroupPrincipal grupo = GroupPrincipal.FindByIdentity(equipo, IdentityType.Sid, Administradores))
+            {
+                return usuario != null && grupo != null && usuario.IsMemberOf(grupo);
+            }
+        }
+
+        /// <summary>Si Windows le pedira cambiar la contrasena algun dia: ese dia ya no entraria sola.</summary>
+        public static bool ContrasenaCaduca(string cuenta)
+        {
+            using (PrincipalContext equipo = new PrincipalContext(ContextType.Machine))
+            using (UserPrincipal usuario = UserPrincipal.FindByIdentity(equipo, IdentityType.SamAccountName, cuenta))
+            {
+                return usuario != null && !usuario.PasswordNeverExpires;
+            }
+        }
+
+        /// <summary>
+        /// Por que no vale esa cuenta como cuenta aparte del kiosco, o null si vale. NO puede ser
+        /// administrador: tras guardar la bitacora, SesionEquipo lanza explorer.exe con el token de
+        /// ESA cuenta y cada alumno se quedaria con un escritorio de administrador, en silencio,
+        /// todo el semestre; quien lo quiere asi elige la cuenta original, a sabiendas. Tampoco
+        /// puede ser la cuenta con la que se instala, porque este camino le cambia la contrasena.
         /// </summary>
         public static string PorQueNoVale(string cuenta)
         {
@@ -38,19 +167,14 @@ namespace DigBit.Configurador
 
             if (string.Equals(cuenta, Environment.UserName, StringComparison.OrdinalIgnoreCase))
             {
-                return "No se puede usar «" + cuenta + "»: es la cuenta con la que estás instalando. Usa una cuenta estándar aparte.";
+                return "«" + cuenta + "» es la cuenta con la que estás instalando. Para usarla, elige «La que ya tiene el equipo».";
             }
 
             try
             {
-                using (PrincipalContext equipo = new PrincipalContext(ContextType.Machine))
-                using (UserPrincipal usuario = UserPrincipal.FindByIdentity(equipo, IdentityType.SamAccountName, cuenta))
-                using (GroupPrincipal grupo = GroupPrincipal.FindByIdentity(equipo, IdentityType.Sid, Administradores))
+                if (EsAdministradora(cuenta))
                 {
-                    if (usuario != null && grupo != null && usuario.IsMemberOf(grupo))
-                    {
-                        return "La cuenta «" + cuenta + "» es administrador. El kiosco le entrega el escritorio a cada estudiante con esa cuenta, así que todos tendrían permisos de administrador. Usa una cuenta estándar.";
-                    }
+                    return "La cuenta «" + cuenta + "» es administradora y aquí se le cambiaría la contraseña. Para usarla sin cambiarla, elige «La que ya tiene el equipo» desde esa cuenta, o escribe otro nombre para crear una cuenta nueva.";
                 }
             }
             catch (Exception ex)
@@ -124,6 +248,13 @@ namespace DigBit.Configurador
                 Salida.Escribir(usuarios != null ? "BIEN" : "MAL", "encuentra el grupo Usuarios por su SID: " + (usuarios == null ? "" : usuarios.Name));
                 Salida.Escribir(admins != null ? "BIEN" : "MAL", "encuentra el grupo Administradores por su SID: " + (admins == null ? "" : admins.Name));
             }
+
+            // La comprobacion de la contrasena, con una cuenta que no existe: nunca con la de verdad.
+            string respuesta = PorQueNoEntra("digbit_prueba_no_existe", "contrasena-falsa-123");
+            Salida.Escribir(respuesta != null && respuesta.StartsWith("Esa no es la contraseña", StringComparison.Ordinal) ? "BIEN" : "MAL", "LogonUser responde: " + respuesta);
+            Salida.Escribir("INFO", "quien instala tiene cuenta Microsoft: " + EsDeMicrosoft(Environment.UserName));
+            Salida.Escribir(PorQueNoValeOriginal("digbit_prueba_no_existe", "x") != null ? "BIEN" : "MAL", "una cuenta que no existe no vale como original");
+            Salida.Escribir(PorQueNoValeOriginal(" ", "x") != null ? "BIEN" : "MAL", "sin nombre no vale");
         }
 
         /// <summary>La crea si no existe (sin privilegios, contrasena sin caducidad), o le fija la contrasena.</summary>

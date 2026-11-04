@@ -111,14 +111,28 @@ namespace DigBit.Configurador
             }
 
             SecurityIdentifier sid = Cuenta.Sid(cuenta);
+            bool original = Pasos.CuentaEsOriginal();
+            bool sueltaDirectivas = original && string.Equals(Archivos.LeerAjuste(config, Pasos.AjusteLiberarDirectivas), "true", StringComparison.OrdinalIgnoreCase);
             Linea(true, "Cuenta del laboratorio: " + cuenta);
             Linea(Cuenta.Perfil(sid) != null, "Su perfil de Windows está creado");
+            if (original)
+            {
+                AvisarDeLaCuentaOriginal(cuenta, config);
+            }
+
             try
             {
                 Kiosco.ConRegistroDeLaCuenta(sid, raiz =>
                 {
                     foreach (Kiosco.ValorUsuario valor in Kiosco.ValoresUsuario(Path.Combine(destino, "DigBit.exe")))
                     {
+                        // Puede estar suelto con razon: al actualizar desde el escritorio liberado.
+                        // DigBit lo vuelve a poner al arrancar.
+                        if (sueltaDirectivas && Kiosco.QueSeSueltan.Contains(valor.Nombre))
+                        {
+                            continue;
+                        }
+
                         using (RegistryKey clave = raiz.OpenSubKey(valor.Clave))
                         {
                             object leido = clave == null ? null : clave.GetValue(valor.Nombre);
@@ -126,7 +140,18 @@ namespace DigBit.Configurador
                         }
                     }
 
-                    Linea(Kiosco.PermisoDeMas(raiz, @"Software\Microsoft\Windows NT\CurrentVersion\Winlogon", sid) == null, "La cuenta no puede cambiar su propio shell");
+                    Linea(Kiosco.PermisoDeMas(raiz, Kiosco.ClaveShell, sid) == null, "El shell de la cuenta está protegido");
+                    if (sueltaDirectivas)
+                    {
+                        if (Kiosco.PuedeSoltarDirectivas(raiz, sid))
+                        {
+                            Linea(true, "Tras la bitácora, el escritorio queda sin límites");
+                        }
+                        else
+                        {
+                            Salida.Aviso("DigBit no podrá quitar los límites del escritorio tras la bitácora: seguirán sin Administrador de tareas, Win+R ni Panel de control.");
+                        }
+                    }
                 });
             }
             catch (Exception ex)
@@ -139,12 +164,47 @@ namespace DigBit.Configurador
             {
                 Linea(winlogon != null && (winlogon.GetValue("AutoAdminLogon") as string) == "1", "Inicio de sesión automático encendido");
                 Linea(winlogon != null && string.Equals(winlogon.GetValue("DefaultUserName") as string, cuenta, StringComparison.OrdinalIgnoreCase), "Entra sola la cuenta " + cuenta);
-                Linea(winlogon != null && !string.IsNullOrEmpty(winlogon.GetValue("DefaultPassword") as string), "Su contraseña está guardada para entrar sola");
+                if (original && winlogon != null && string.IsNullOrEmpty(winlogon.GetValue("DefaultPassword") as string))
+                {
+                    // La cuenta original puede no tener contrasena, y entra sola igual.
+                    Salida.Aviso("La cuenta " + cuenta + " no tiene contraseña: entra sola sin guardar ninguna.");
+                }
+                else
+                {
+                    Linea(winlogon != null && !string.IsNullOrEmpty(winlogon.GetValue("DefaultPassword") as string), "Su contraseña está guardada para entrar sola");
+                }
+
                 Linea(winlogon != null && (winlogon.GetValue("ForceAutoLogon") as string) == "1", "Vuelve a entrar sola al cerrar la sesión");
             }
 
             Linea(Servicio.Corriendo(), "El vigilante está corriendo");
             Linea(Servicio.EnModoSeguro(), "El vigilante también arranca en modo seguro");
+        }
+
+        /// <summary>Lo que hay que saber de esta decision, para que no sorprenda a quien instala.</summary>
+        private static void AvisarDeLaCuentaOriginal(string cuenta, string config)
+        {
+            try
+            {
+                if (Cuenta.EsAdministradora(cuenta))
+                {
+                    Salida.Aviso("«" + cuenta + "» es administradora: tras su bitácora, quien use el equipo podría instalar programas o desactivar el kiosco.");
+                }
+
+                if (Cuenta.ContrasenaCaduca(cuenta))
+                {
+                    Salida.Aviso("La contraseña de «" + cuenta + "» caduca: el día que Windows pida cambiarla, el equipo dejará de entrar solo.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Salida.Aviso("No se pudo revisar la cuenta «" + cuenta + "»: " + ex.Message);
+            }
+
+            if (string.IsNullOrWhiteSpace(Archivos.LeerAjuste(config, "EmergenciaMemoria")))
+            {
+                Salida.Aviso("Sin memoria de emergencia: si no hay otra cuenta en el equipo, sin bitácora no hay forma de llegar al escritorio.");
+            }
         }
     }
 }

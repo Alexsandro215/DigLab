@@ -19,8 +19,12 @@
   ; Su valor es la carpeta. Una que no existe: las paginas del camino completo, aunque DigBit
   ; este instalado.
   #define Destino VistaPrevia
+  ; Y la pagina de resultados antes de instalar, con datos de muestra: asi su codigo corre de
+  ; verdad, que en la vista previa nunca se llega a instalar.
+  #define PaginaAntesDelResultado "wpReady"
 #else
   #define Destino "C:\DigBit"
+  #define PaginaAntesDelResultado "wpInstalling"
 #endif
 #define MiVersion GetVersionNumbersString(Carga + "\DigBit\DigBit.exe")
 
@@ -106,8 +110,10 @@ var
   CboLaboratorio: TNewComboBox;
   TxtNumero, TxtCuenta: TNewEdit;
   TxtClave, TxtClave2: TPasswordEdit;
+  RbOriginal, RbNueva: TNewRadioButton;
   ChkMemoria: TNewCheckBox;
-  LblMemoria: TNewStaticText;
+  LblMemoria, LblClave: TNewStaticText;
+  CuentaActual: String;
   Actualizando: Boolean;
   ModoPrevio, CuentaPrevia, LaboratorioPrevio: String;
   ConfiguradoBien: Boolean;
@@ -186,6 +192,8 @@ function CuentaElegida: String;
 begin
   if Actualizando then
     Result := CuentaPrevia
+  else if RbOriginal.Checked then
+    Result := CuentaActual
   else
     Result := Trim(TxtCuenta.Text);
 end;
@@ -268,25 +276,52 @@ begin
   Caja.Width := Ancho;
 end;
 
-procedure MemoriaCambiada(Sender: TObject);
+// Cuantas memorias USB hay conectadas, y la serie de la primera.
+function ContarMemorias(var Serie: String): Integer;
 var
   Lineas: TArrayOfString;
-  Cuantas, I: Integer;
+  I: Integer;
+begin
+  Configurador('memorias', '', Lineas);
+  Serie := Renglon(Lineas, 'MEMORIA');
+  Result := 0;
+  for I := 0 to GetArrayLength(Lineas) - 1 do
+    if Pos('MEMORIA ', Lineas[I]) = 1 then
+      Result := Result + 1;
+end;
+
+procedure MemoriaCambiada(Sender: TObject);
+var
+  Cuantas: Integer;
+  Serie: String;
 begin
   LblMemoria.Caption := '';
   if not ChkMemoria.Checked then
     Exit;
-  Configurador('memorias', '', Lineas);
-  Cuantas := 0;
-  for I := 0 to GetArrayLength(Lineas) - 1 do
-    if Pos('MEMORIA ', Lineas[I]) = 1 then
-      Cuantas := Cuantas + 1;
+  Cuantas := ContarMemorias(Serie);
   if Cuantas = 1 then
-    LblMemoria.Caption := 'Se autorizará la memoria conectada: ' + Renglon(Lineas, 'MEMORIA')
+    LblMemoria.Caption := 'Se autorizará la memoria conectada: ' + Serie
   else if Cuantas = 0 then
     LblMemoria.Caption := 'No hay ninguna memoria USB conectada: conéctala antes de seguir.'
   else
     LblMemoria.Caption := 'Hay ' + IntToStr(Cuantas) + ' memorias conectadas: deja solo la que quieras autorizar.';
+end;
+
+// La cuenta original no se crea: la contrasena es la que ya tiene, y se pide una sola vez.
+procedure CuentaCambiada(Sender: TObject);
+begin
+  // Al cambiar de opcion: la de una cuenta no debe probarse contra la otra.
+  if Sender <> nil then
+  begin
+    TxtClave.Text := '';
+    TxtClave2.Text := '';
+  end;
+  TxtCuenta.Enabled := RbNueva.Checked;
+  TxtClave2.Visible := RbNueva.Checked;
+  if RbNueva.Checked then
+    LblClave.Caption := 'Contraseña para la cuenta nueva (la inventas), dos veces:'
+  else
+    LblClave.Caption := 'Contraseña actual de esa cuenta; no cambia (si no tiene, déjala vacía):';
 end;
 
 procedure InitializeWizard;
@@ -327,27 +362,44 @@ begin
   TxtNumero := TNewEdit.Create(PaginaEquipo);
   ColocarCaja(TxtNumero, PaginaEquipo, ScaleY(66), ScaleX(120));
 
-  Etiqueta(PaginaEquipo, 'Cuenta de Windows del laboratorio (se crea si no existe):', ScaleY(96));
+  CuentaActual := ExpandConstant('{username}');
+  Etiqueta(PaginaEquipo, '¿Con qué cuenta de Windows entra este equipo?', ScaleY(96));
+  RbOriginal := TNewRadioButton.Create(PaginaEquipo);
+  RbOriginal.Caption := 'La que ya tiene el equipo, sin crear otra: ' + CuentaActual;
+  ColocarCaja(RbOriginal, PaginaEquipo, ScaleY(114), Ancho);
+  RbOriginal.Height := ScaleY(18);
+  RbNueva := TNewRadioButton.Create(PaginaEquipo);
+  RbNueva.Caption := 'Una cuenta nueva, sin permisos de administrador:';
+  ColocarCaja(RbNueva, PaginaEquipo, ScaleY(135), ScaleX(300));
+  RbNueva.Height := ScaleY(18);
   TxtCuenta := TNewEdit.Create(PaginaEquipo);
   TxtCuenta.Text := 'laboratorio';
-  ColocarCaja(TxtCuenta, PaginaEquipo, ScaleY(114), ScaleX(200));
+  ColocarCaja(TxtCuenta, PaginaEquipo, ScaleY(133), Ancho - ScaleX(305));
+  TxtCuenta.Left := ScaleX(305);
+  // La original por omision: sus programas y permisos estan ahi (decidido el 2026-11-04).
+  RbOriginal.Checked := True;
+  RbOriginal.OnClick := @CuentaCambiada;
+  RbNueva.OnClick := @CuentaCambiada;
 
-  Etiqueta(PaginaEquipo, 'Contraseña de esa cuenta, y otra vez para comprobarla:', ScaleY(144));
+  LblClave := Etiqueta(PaginaEquipo, '', ScaleY(161));
   TxtClave := TPasswordEdit.Create(PaginaEquipo);
-  ColocarCaja(TxtClave, PaginaEquipo, ScaleY(162), ScaleX(200));
+  ColocarCaja(TxtClave, PaginaEquipo, ScaleY(179), ScaleX(200));
   TxtClave2 := TPasswordEdit.Create(PaginaEquipo);
-  ColocarCaja(TxtClave2, PaginaEquipo, ScaleY(162), ScaleX(200));
+  ColocarCaja(TxtClave2, PaginaEquipo, ScaleY(179), ScaleX(200));
   TxtClave2.Left := ScaleX(210);
 
   ChkMemoria := TNewCheckBox.Create(PaginaEquipo);
   ChkMemoria.Caption := 'Autorizar la memoria USB conectada como llave de emergencia';
-  ColocarCaja(ChkMemoria, PaginaEquipo, ScaleY(194), Ancho);
+  ColocarCaja(ChkMemoria, PaginaEquipo, ScaleY(209), Ancho);
   ChkMemoria.Height := ScaleY(18);
+  ChkMemoria.Checked := True;
   ChkMemoria.OnClick := @MemoriaCambiada;
-  LblMemoria := Etiqueta(PaginaEquipo, '', ScaleY(214));
+  LblMemoria := Etiqueta(PaginaEquipo, '', ScaleY(229));
 
-  PaginaResultado := CreateOutputMsgMemoPage(wpInstalling, 'Comprobación del equipo',
-    'Esto es lo que se revisó al terminar.', '', '');
+  // Con algo en el tercer texto: vacio, Inno no crea SubCaptionLabel (es nil) y escribirle da
+  // "Could not call proc". MostrarResultado pone ahi el veredicto.
+  PaginaResultado := CreateOutputMsgMemoPage({#PaginaAntesDelResultado}, 'Comprobación del equipo',
+    'Esto es lo que se revisó al terminar.', 'Comprobando...', '');
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -419,6 +471,42 @@ begin
       '¿Instalar de todos modos?', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
 end;
 
+// La cuenta original: Windows dice si esa es su contrasena, antes de tocar nada; con una mala,
+// el equipo se quedaria en la pantalla de contrasena en cada arranque. Y como su pantalla sera
+// DigBit, sin memoria de emergencia ni otra cuenta no hay otro camino a su escritorio.
+function ComprobarCuentaOriginal: Boolean;
+var
+  Lineas: TArrayOfString;
+  Estado, Serie: String;
+begin
+  Result := False;
+#ifndef VistaPrevia
+  SetEnvironmentVariable(VarClaveCuenta, TxtClave.Text);
+  try
+    Configurador('validar-cuenta', '--original --cuenta ' + AddQuotes(CuentaActual), Lineas);
+  finally
+    SetEnvironmentVariable(VarClaveCuenta, '');
+  end;
+
+  Estado := Renglon(Lineas, 'ESTADO');
+  if Estado <> 'OK' then
+  begin
+    if Estado = '' then
+      Estado := Renglon(Lineas, 'ERROR');
+    MsgBox(Estado, mbError, MB_OK);
+    Exit;
+  end;
+
+#endif
+  if (not ChkMemoria.Checked) or (ContarMemorias(Serie) <> 1) then
+    if MsgBox('No se autorizará ninguna memoria de emergencia.'#13#10#13#10 +
+      'DigBit será la pantalla de «' + CuentaActual + '». Si falla y no hay otra cuenta en el equipo, no habrá cómo llegar a su escritorio.'#13#10#13#10 +
+      '¿Seguir sin memoria de emergencia?', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) <> IDYES then
+      Exit;
+
+  Result := True;
+end;
+
 function ComprobarEquipo: Boolean;
 var
   Lineas: TArrayOfString;
@@ -428,6 +516,12 @@ begin
   if Trim(CboLaboratorio.Text) = '' then
   begin
     MsgBox('Elige el laboratorio donde está este equipo.', mbError, MB_OK);
+    Exit;
+  end;
+
+  if RbOriginal.Checked then
+  begin
+    Result := ComprobarCuentaOriginal;
     Exit;
   end;
 
@@ -489,9 +583,16 @@ begin
         Space + 'Laboratorio: ' + Trim(CboLaboratorio.Text) + NewLine;
       if Trim(TxtNumero.Text) <> '' then
         Texto := Texto + Space + 'Máquina: ' + Trim(TxtNumero.Text) + NewLine;
-      Texto := Texto + Space + 'La cuenta «' + Trim(TxtCuenta.Text) + '» entrará sola y DigBit será su pantalla.' + NewLine +
-        Space + 'Se instala el servicio DigBit Vigilante.' + NewLine +
-        Space + 'Para entrar como administrador: Ctrl+Alt+Supr, Cambiar de usuario.' + NewLine;
+      Texto := Texto + Space + 'La cuenta «' + CuentaElegida + '» entrará sola y DigBit será su pantalla.' + NewLine;
+      if RbOriginal.Checked then
+        Texto := Texto + Space + 'No se crea otra cuenta; su contraseña y sus permisos no cambian.' + NewLine +
+          Space + 'Su contraseña queda guardada en Windows para poder entrar sola.' + NewLine +
+          Space + 'Tras la bitácora, se usa su escritorio normal, con sus permisos.' + NewLine +
+          Space + 'Se instala el servicio DigBit Vigilante.' + NewLine +
+          Space + 'Para llegar al escritorio sin bitácora: la memoria de emergencia.' + NewLine
+      else
+        Texto := Texto + Space + 'Se instala el servicio DigBit Vigilante.' + NewLine +
+          Space + 'Para entrar como administrador: Ctrl+Alt+Supr, Cambiar de usuario.' + NewLine;
     end;
   end;
 
@@ -559,6 +660,45 @@ begin
   PaginaResultado.RichEditViewer.Lines.Text := Texto;
 end;
 
+#ifdef VistaPrevia
+// El resultado bueno y luego uno con de todo, que es el que se queda a la vista.
+procedure MostrarMuestra;
+var
+  Configurar, Revisar: TArrayOfString;
+begin
+  SetArrayLength(Configurar, 1);
+  Configurar[0] := 'PASO Sin avisos';
+  SetArrayLength(Revisar, 1);
+  Revisar[0] := 'BIEN DigBit está en {#Destino}';
+  MostrarResultado(Configurar, Revisar, True);
+  if PaginaResultado.SubCaptionLabel.Caption <> 'Todo quedó bien.' then
+    MsgBox('La vista previa esperaba «Todo quedó bien.»', mbError, MB_OK);
+
+  SetArrayLength(Configurar, 2);
+  Configurar[0] := 'ERROR Un error de muestra al configurar';
+  Configurar[1] := 'AVISO Un aviso de muestra al configurar';
+  SetArrayLength(Revisar, 3);
+  Revisar[0] := 'BIEN Algo que quedó bien';
+  Revisar[1] := 'MAL Algo que hay que revisar';
+  Revisar[2] := 'AVISO Algo que conviene saber';
+  MostrarResultado(Configurar, Revisar, False);
+end;
+#endif
+
+// Cada vez que se llega a la pagina: la memoria pudo conectarse mientras tanto.
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = PaginaEquipo.ID then
+  begin
+    CuentaCambiada(nil);
+    MemoriaCambiada(nil);
+  end;
+#ifdef VistaPrevia
+  if CurPageID = PaginaResultado.ID then
+    MostrarMuestra;
+#endif
+end;
+
 procedure ConfigurarEquipo;
 var
   Lineas, Revision: TArrayOfString;
@@ -577,7 +717,9 @@ begin
     if EsKiosco then
     begin
       SetEnvironmentVariable(VarClaveCuenta, TxtClave.Text);
-      Parametros := Parametros + ' --cuenta ' + AddQuotes(Trim(TxtCuenta.Text)) + ' --laboratorio ' + AddQuotes(Trim(CboLaboratorio.Text));
+      Parametros := Parametros + ' --cuenta ' + AddQuotes(CuentaElegida) + ' --laboratorio ' + AddQuotes(Trim(CboLaboratorio.Text));
+      if RbOriginal.Checked then
+        Parametros := Parametros + ' --original';
       if Trim(TxtNumero.Text) <> '' then
         Parametros := Parametros + ' --numero ' + AddQuotes(Trim(TxtNumero.Text));
       if ChkMemoria.Checked then
@@ -622,7 +764,7 @@ end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  Parametros, Exe, CuentaKiosco: String;
+  Parametros, Exe, CuentaKiosco, Original: String;
   Codigo: Integer;
 begin
   if CurUninstallStep <> usUninstall then
@@ -633,7 +775,10 @@ begin
     'Ahí pueden quedar bitácoras que todavía no llegaron al servidor. Si no estás seguro, responde No.',
     mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
     Parametros := Parametros + ' --borrar-datos';
-  if RegQueryStringValue(HKLM, 'SOFTWARE\DigBit', 'CuentaKiosco', CuentaKiosco) and (CuentaKiosco <> '') then
+  // La cuenta que el equipo ya tenia no se ofrece: no la creo DigBit, y ahi esta todo lo del equipo.
+  if not RegQueryStringValue(HKLM, 'SOFTWARE\DigBit', 'CuentaOriginal', Original) then
+    Original := '';
+  if (Original <> '1') and RegQueryStringValue(HKLM, 'SOFTWARE\DigBit', 'CuentaKiosco', CuentaKiosco) and (CuentaKiosco <> '') then
     if MsgBox('¿Borrar también la cuenta de Windows «' + CuentaKiosco + '» y su perfil?'#13#10#13#10 +
       'Si respondes No, se queda como una cuenta normal, sin DigBit.',
       mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then

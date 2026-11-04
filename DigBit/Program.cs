@@ -56,6 +56,9 @@ namespace DigBit
 
                 Log.Info(CarpetaDatos.Diagnostico);
 
+                // Antes de ensenar nada: si la sesion anterior las dejo sueltas, aqui se ponen.
+                DirectivasKiosco.Bloquear();
+
                 // Que se vea en el log si este equipo tiene salida de emergencia.
                 // Enterarse el dia que hace falta, con el servidor caido y una
                 // clase esperando, es tarde.

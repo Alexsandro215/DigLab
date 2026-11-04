@@ -5,6 +5,7 @@ using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Threading;
 using DigBit.Infraestructura;
+using Microsoft.Win32;
 
 namespace DigBit.Vigilante
 {
@@ -39,6 +40,7 @@ namespace DigBit.Vigilante
         public void Iniciar()
         {
             AsegurarCarpeta();
+            AsegurarReinicioDelShell();
             Log.Info("Vigilante iniciado" + (simular ? " en modo SIMULACION (no cierra sesion ni avisa)" : "") + ". Traspaso: " + SesionActiva.Ruta);
             temporizador = new Timer(estado => Revisar(), null, TimeSpan.Zero, Periodo);
         }
@@ -297,6 +299,36 @@ namespace DigBit.Vigilante
             catch (Exception ex)
             {
                 Log.Aviso("No se pudo preparar " + SesionActiva.Carpeta + " con permiso para Usuarios: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Para actualizar desde la propia cuenta del kiosco, el instalador le pide a Windows que
+        /// no vuelva a abrir DigBit (AutoRestartShell=0) y lo devuelve al terminar. Si esa
+        /// instalacion se cancela a medias, nadie lo devuelve: aqui, al arrancar, se repara.
+        /// </summary>
+        private void AsegurarReinicioDelShell()
+        {
+            if (simular)
+            {
+                return;
+            }
+
+            try
+            {
+                using (RegistryKey equipo = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+                using (RegistryKey winlogon = equipo.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", true))
+                {
+                    if (winlogon != null && Convert.ToString(winlogon.GetValue("AutoRestartShell")) == "0")
+                    {
+                        winlogon.SetValue("AutoRestartShell", 1, RegistryValueKind.DWord);
+                        Log.Aviso("AutoRestartShell estaba apagado (una actualizacion que no termino): se vuelve a encender.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Aviso("No se pudo revisar AutoRestartShell: " + ex.Message);
             }
         }
 

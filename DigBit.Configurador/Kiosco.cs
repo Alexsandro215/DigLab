@@ -20,6 +20,17 @@ namespace DigBit.Configurador
         private const string RutaWinlogon = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon";
         private const string RutaPasswordLess = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device";
         private const string RamaCargada = "DigBitLab";
+        private const string PoliticasSistema = @"Software\Microsoft\Windows\CurrentVersion\Policies\System";
+        private const string PoliticasExplorador = @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+
+        /// <summary>La clave con el shell de la cuenta, relativa a su registro.</summary>
+        public const string ClaveShell = RutaWinlogonUsuario;
+
+        /// <summary>
+        /// En la cuenta original, lo que DigBit quita al entregar el escritorio y vuelve a poner
+        /// al arrancar. Las mismas que DigBit\Infraestructura\DirectivasKiosco.cs.
+        /// </summary>
+        public static readonly string[] QueSeSueltan = { "DisableTaskMgr", "NoRun", "NoControlPanel" };
 
         /// <summary>Un valor en el registro de la cuenta (rutas relativas a su HKU\SID).</summary>
         internal sealed class ValorUsuario
@@ -40,8 +51,8 @@ namespace DigBit.Configurador
 
         public static List<ValorUsuario> ValoresUsuario(string exeDigBit)
         {
-            const string Sistema = @"Software\Microsoft\Windows\CurrentVersion\Policies\System";
-            const string Explorador = @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+            const string Sistema = PoliticasSistema;
+            const string Explorador = PoliticasExplorador;
             const string Escritorio = @"Software\Policies\Microsoft\Windows\Control Panel\Desktop";
             return new List<ValorUsuario>
             {
@@ -191,6 +202,102 @@ namespace DigBit.Configurador
             }
         }
 
+        /// <summary>
+        /// Lo contrario de ProtegerShell, para la cuenta original al desinstalar: es la cuenta de
+        /// todos los dias y vuelve a mandar en su clave, con los permisos que hereda. La regla
+        /// explicita no sobra: un descriptor sin ninguna se escribiria como "todos, control total".
+        /// </summary>
+        public static void DesprotegerShell(RegistryKey raiz, string ruta, SecurityIdentifier sidCuenta)
+        {
+            RegistrySecurity acl = new RegistrySecurity();
+            acl.SetAccessRuleProtection(false, false);
+            acl.AddAccessRule(new RegistryAccessRule(sidCuenta, RegistryRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+            using (RegistryKey clave = raiz.OpenSubKey(ruta, RegistryKeyPermissionCheck.ReadWriteSubTree, RegistryRights.ChangePermissions | RegistryRights.ReadKey))
+            {
+                if (clave != null)
+                {
+                    clave.SetAccessControl(acl);
+                }
+            }
+        }
+
+        /// <summary>
+        /// En la cuenta original, que DigBit pueda soltar y poner sus directivas. Windows protege
+        /// esas claves: ni la propia cuenta las escribe sin elevar, aunque sea administradora.
+        /// Solo escribir valores, y solo en esas dos claves.
+        /// </summary>
+        public static void PermitirSoltarDirectivas(RegistryKey raiz, SecurityIdentifier sidCuenta)
+        {
+            foreach (string ruta in new[] { PoliticasSistema, PoliticasExplorador })
+            {
+                using (RegistryKey clave = raiz.OpenSubKey(ruta, RegistryKeyPermissionCheck.ReadWriteSubTree, RegistryRights.ChangePermissions | RegistryRights.ReadKey))
+                {
+                    RegistrySecurity acl = clave.GetAccessControl(AccessControlSections.Access);
+                    acl.AddAccessRule(new RegistryAccessRule(sidCuenta, RegistryRights.ReadKey | RegistryRights.SetValue, InheritanceFlags.None, PropagationFlags.None, AccessControlType.Allow));
+                    clave.SetAccessControl(acl);
+                }
+            }
+        }
+
+        public static void QuitarPermisoDirectivas(RegistryKey raiz, SecurityIdentifier sidCuenta)
+        {
+            foreach (string ruta in new[] { PoliticasSistema, PoliticasExplorador })
+            {
+                using (RegistryKey clave = raiz.OpenSubKey(ruta, RegistryKeyPermissionCheck.ReadWriteSubTree, RegistryRights.ChangePermissions | RegistryRights.ReadKey))
+                {
+                    if (clave != null)
+                    {
+                        RegistrySecurity acl = clave.GetAccessControl(AccessControlSections.Access);
+                        acl.RemoveAccessRuleAll(new RegistryAccessRule(sidCuenta, RegistryRights.ReadKey, AccessControlType.Allow));
+                        clave.SetAccessControl(acl);
+                    }
+                }
+            }
+        }
+
+        /// <summary>Si la cuenta puede escribir valores en las dos claves, con una regla suya.</summary>
+        public static bool PuedeSoltarDirectivas(RegistryKey raiz, SecurityIdentifier sidCuenta)
+        {
+            foreach (string ruta in new[] { PoliticasSistema, PoliticasExplorador })
+            {
+                using (RegistryKey clave = raiz.OpenSubKey(ruta, RegistryKeyPermissionCheck.ReadSubTree, RegistryRights.ReadPermissions))
+                {
+                    if (clave == null)
+                    {
+                        return false;
+                    }
+
+                    bool tiene = false;
+                    foreach (RegistryAccessRule regla in clave.GetAccessControl().GetAccessRules(true, false, typeof(SecurityIdentifier)))
+                    {
+                        tiene |= regla.AccessControlType == AccessControlType.Allow && regla.IdentityReference.Value == sidCuenta.Value
+                            && (regla.RegistryRights & RegistryRights.SetValue) == RegistryRights.SetValue;
+                    }
+
+                    if (!tiene)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Si Windows vuelve a abrir el shell cuando muere. Se apaga para actualizar o desinstalar
+        /// desde la propia cuenta del kiosco; con DigBit de shell, si no, vuelve a abrirlo y su
+        /// archivo sigue en uso. Vale al momento, sin reiniciar.
+        /// </summary>
+        public static void ReinicioDelShell(bool encendido)
+        {
+            using (RegistryKey equipo = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+            using (RegistryKey winlogon = equipo.CreateSubKey(RutaWinlogon))
+            {
+                winlogon.SetValue("AutoRestartShell", encendido ? 1 : 0, RegistryValueKind.DWord);
+            }
+        }
+
         /// <summary>El permiso de mas que tiene la cuenta sobre la clave (distinto de leer), o null.</summary>
         public static string PermisoDeMas(RegistryKey raiz, string ruta, SecurityIdentifier sidCuenta)
         {
@@ -315,6 +422,30 @@ namespace DigBit.Configurador
                     }
 
                     Salida.Escribir(negado ? "BIEN" : "MAL", "escribir Shell queda negado a la cuenta");
+
+                    // La cuenta original, al desinstalar: vuelve a mandar en su clave.
+                    DesprotegerShell(raiz, RutaWinlogonUsuario, yo.User);
+                    bool escribe = true;
+                    try
+                    {
+                        using (RegistryKey clave = raiz.OpenSubKey(RutaWinlogonUsuario, true))
+                        {
+                            clave.SetValue("Shell", "explorer.exe");
+                        }
+                    }
+                    catch (Exception ex) when (ex is UnauthorizedAccessException || ex is System.Security.SecurityException)
+                    {
+                        escribe = false;
+                    }
+
+                    Salida.Escribir(escribe ? "BIEN" : "MAL", "al desproteger, la cuenta vuelve a poder escribir su clave");
+
+                    // La cuenta original: la regla para soltar directivas, y que se quita sola.
+                    Salida.Escribir(!PuedeSoltarDirectivas(raiz, yo.User) ? "BIEN" : "MAL", "antes de permitir, la cuenta no tiene regla propia para soltar");
+                    PermitirSoltarDirectivas(raiz, yo.User);
+                    Salida.Escribir(PuedeSoltarDirectivas(raiz, yo.User) ? "BIEN" : "MAL", "con la regla, puede escribir valores en las dos claves");
+                    QuitarPermisoDirectivas(raiz, yo.User);
+                    Salida.Escribir(!PuedeSoltarDirectivas(raiz, yo.User) ? "BIEN" : "MAL", "al desinstalar, la regla se va");
 
                     // Para poder borrar la rama: de vuelta el control a quien prueba.
                     using (RegistryKey clave = raiz.OpenSubKey(RutaWinlogonUsuario, RegistryKeyPermissionCheck.ReadWriteSubTree, RegistryRights.ChangePermissions | RegistryRights.ReadPermissions))

@@ -424,6 +424,9 @@ namespace DigBit.Infraestructura
         /// </summary>
         private static void AbrirEscritorioOAvisar()
         {
+            // Aqui pasan la bitacora, el acceso de emergencia y DigBit relanzado con el equipo ya libre.
+            DirectivasKiosco.Soltar();
+
             for (int intento = 1; intento <= IntentosDeEscritorio; intento++)
             {
                 if (LanzarEscritorio(intento))

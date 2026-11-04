@@ -31,6 +31,9 @@ namespace DigBit.Configurador
         private const int EsperaParaVerSiRevive = 3000;
         private const int EsperaParaSoltarRegistro = 6000;
 
+        /// <summary>Si DetenerTodo le pidio a Windows no reabrir DigBit: al desinstalar se devuelve ahi mismo.</summary>
+        public static bool ApagoReinicioDelShell { get; private set; }
+
         public static bool Existe()
         {
             return ServiceController.GetServices().Any(s => string.Equals(s.ServiceName, Nombre, StringComparison.OrdinalIgnoreCase));
@@ -84,6 +87,15 @@ namespace DigBit.Configurador
             if (string.Equals(Archivos.LeerAjuste(Archivos.ConfigDigBit(destino), "ModoKiosco"), "true", StringComparison.OrdinalIgnoreCase))
             {
                 CerrarSesionesConDigBit();
+
+                // Con el kiosco en la cuenta con la que se instala (desde la llave de emergencia
+                // o tras una bitacora) su sesion no se puede cerrar: se cerraria el instalador.
+                if (SesionesConDigBit().Contains(SesionMia()))
+                {
+                    Salida.Escribir("INFO", "DigBit es la pantalla de esta misma sesión: Windows deja de reabrirlo mientras se instala.");
+                    Kiosco.ReinicioDelShell(false);
+                    ApagoReinicioDelShell = true;
+                }
             }
 
             if (Existe())
@@ -163,6 +175,14 @@ namespace DigBit.Configurador
             return habia;
         }
 
+        private static int SesionMia()
+        {
+            using (Process yo = Process.GetCurrentProcess())
+            {
+                return yo.SessionId;
+            }
+        }
+
         /// <summary>Las sesiones de Windows con DigBit corriendo. La de quien instala cuenta.</summary>
         private static List<int> SesionesConDigBit()
         {
@@ -187,12 +207,7 @@ namespace DigBit.Configurador
         /// </summary>
         private static void CerrarSesionesConDigBit()
         {
-            int mia;
-            using (Process yo = Process.GetCurrentProcess())
-            {
-                mia = yo.SessionId;
-            }
-
+            int mia = SesionMia();
             List<int> ajenas = SesionesConDigBit().Where(s => s != mia).ToList();
             if (ajenas.Count == 0)
             {

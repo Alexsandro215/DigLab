@@ -217,6 +217,7 @@
     </Compile>
     <Compile Include="Infraestructura\AppContexto.cs" />
     <Compile Include="Infraestructura\CarpetaDatos.cs" />
+    <Compile Include="Infraestructura\DirectivasKiosco.cs" />
     <Compile Include="Infraestructura\Emergencia.cs" />
     <Compile Include="Infraestructura\EnviadorBitacoras.cs" />
     <Compile Include="Infraestructura\AvisoApagado.cs" />

@@ -33,7 +33,9 @@ la sección siguiente) sigue aquí hasta que este pase la prueba en una VM.
 .\crear_setup.ps1 -Inno 'C:\ruta\a\ISCC.exe'
 ```
 
-Deja `DigBit-Setup.exe` junto a la carpeta del proyecto. Servidor, base, usuario y
+Deja `DigBit-Setup.exe` junto a la carpeta del proyecto. El de
+`instalador\DigBit-Setup.exe` es el armado con este código: si cambias algo, vuelve a
+generarlo y cópialo ahí. Servidor, base, usuario y
 puerto los toma del `connections.config` de `DigBit\bin\Release`, o de `-Servidor`,
 `-Base`, `-Usuario` y `-Puerto`. **La contraseña de la base no va dentro**: se teclea
 y se comprueba al instalar. Si encuentra un secreto real en lo que va a empaquetar,
@@ -45,16 +47,37 @@ no lo arma.
 |---|---|
 | Administración | DigBit como programa normal, con accesos directos |
 | Docente | Igual que Administración |
-| Equipo de laboratorio | Kiosco: la cuenta del laboratorio entra sola, DigBit es su pantalla y corre el vigilante. Al terminar pide reiniciar |
+| Equipo de laboratorio | Kiosco: la cuenta elegida entra sola, DigBit es su pantalla y corre el vigilante. Al terminar pide reiniciar |
+
+**La cuenta del kiosco.** El asistente ofrece dos, y por omisión la primera:
+
+| | La que ya tiene el equipo | Una cuenta nueva |
+|---|---|---|
+| Qué se le hace | Nada: ni contraseña ni permisos cambian | Se crea sin permisos de administrador |
+| Contraseña | La que ya tiene; Windows la comprueba antes de instalar (vacía si no tiene) | La inventas |
+| Tras la bitácora | Su escritorio normal, con sus programas y permisos | Limitado |
+| Para llegar al escritorio sin bitácora | **La memoria de emergencia** (o otra cuenta, si hay) | `Ctrl+Alt+Supr`, **Cambiar de usuario** |
+| Al desinstalar | Vuelve a como estaba; nunca se ofrece borrarla | Pregunta si borrarla |
+
+Con la que ya tiene el equipo, y si es administradora, cualquiera que registre su
+bitácora puede instalar programas o desactivar el kiosco. Se aceptó porque esos
+equipos se reinstalan cada semestre. Sus programas y archivos los comparten todos los
+que usen el equipo. Antes de la bitácora sigue bloqueada; al liberar el equipo, DigBit
+quita los límites de Administrador de tareas, `Win+R` y Panel de control, y los vuelve
+a poner al arrancar. No se quitan los de bloquear el equipo ni cambiar la contraseña:
+cualquiera de los dos impediría que vuelva a entrar sola. Una cuenta de Microsoft no se
+puede usar así: el asistente lo rechaza.
 
 **Instalar encima** actualiza: el asistente se salta las preguntas y conserva la
 conexión, los ajustes y los datos. En un kiosco cierra la sesión del laboratorio si
 está abierta (matar DigBit no basta: Windows lo vuelve a abrir), así que nadie debe
-estar usando el equipo; al terminar pide reiniciar.
+estar usando el equipo; al terminar pide reiniciar. Con la cuenta que ya tenía el
+equipo se actualiza desde su propio escritorio (entra con la memoria de emergencia) y
+esa sesión no se cierra.
 
 **Desinstalar** deshace el kiosco (inicio automático, shell y directivas de la
 cuenta, vigilante) y borra `C:\DigBit`. Pregunta aparte si borrar los datos locales
-y la cuenta del laboratorio; en las dos, la respuesta por omisión es No.
+y, si se creó una cuenta nueva, esa cuenta; en las dos, la respuesta por omisión es No.
 
 **Microsoft Defender:** en los tres tipos se excluyen solo `DigBit.exe` y, en un
 kiosco, `DigBit.Vigilante.exe`, porque Defender los puede confundir con un virus y un
@@ -532,6 +555,10 @@ anfitrión se queda con la real.
 
 También sirve mantener `Mayús` pulsada durante el arranque para saltar el inicio
 automático.
+
+Eso solo sirve si hay **otra** cuenta. Si el kiosco usa la única cuenta del equipo,
+entrar con ella abre DigBit: el camino es la **memoria de emergencia**, que abre su
+escritorio hasta reiniciar.
 
 ## Deshacerlo
 

@@ -16,13 +16,14 @@ namespace DigBit.Configurador
     ///   probar                    la conexion del entorno: ESTADO y los LAB
     ///   estado                    lo que hay instalado
     ///   memorias                  las memorias USB conectadas
-    ///   validar-cuenta --cuenta   si vale para el kiosco: ESTADO OK o el motivo
+    ///   validar-cuenta --cuenta   si vale para el kiosco: ESTADO OK o el motivo. Con --original,
+    ///                             la que ya tiene el equipo, comprobando su contrasena
     ///   preparar                  antes de copiar: detener, Defender, guardar ajustes
     ///   configurar                despues de copiar
     ///   diagnostico               si quedo bien
     ///   revertir                  al desinstalar
     ///   prueba-registro           solo desarrollo: en una rama propia de HKCU
-    /// Opciones: --destino --modo --cuenta --laboratorio --numero --memoria --actualizar
+    /// Opciones: --destino --modo --cuenta --original --laboratorio --numero --memoria --actualizar
     /// --ajustes --borrar-cuenta --borrar-datos --simular --salida
     /// </summary>
     internal static class Program
@@ -34,7 +35,8 @@ namespace DigBit.Configurador
             string orden = args.Length > 0 ? args[0].ToLowerInvariant() : "";
             bool escribe = orden == "preparar" || orden == "configurar" || orden == "revertir";
             Sistema.Decidir(opciones.ContainsKey("simular"));
-            Salida.Preparar(Opcion(opciones, "salida"), escribe && !Sistema.Simular);
+            // El diagnostico solo lee, pero va al log: es lo que se pide cuando algo no quedo bien.
+            Salida.Preparar(Opcion(opciones, "salida"), (escribe || orden == "diagnostico") && !Sistema.Simular);
 
             // MySql.Data y lo suyo viajan junto al .exe, pero al desinstalar solo queda el
             // .exe, y esa orden no los pide.
@@ -89,7 +91,18 @@ namespace DigBit.Configurador
                     Pasos.Memorias();
                     return 0;
                 case "validar-cuenta":
-                    string porQue = Cuenta.PorQueNoVale(cuenta);
+                    string porQue;
+                    if (opciones.ContainsKey("original"))
+                    {
+                        string claveCuenta = Environment.GetEnvironmentVariable(Cuenta.VarClave);
+                        Salida.Secreto(claveCuenta);
+                        porQue = Cuenta.PorQueNoValeOriginal(cuenta, claveCuenta);
+                    }
+                    else
+                    {
+                        porQue = Cuenta.PorQueNoVale(cuenta);
+                    }
+
                     Salida.Escribir("ESTADO", porQue ?? "OK");
                     return 0;
                 case "preparar":
@@ -101,6 +114,7 @@ namespace DigBit.Configurador
                         Destino = destino,
                         Modo = modo,
                         Cuenta = cuenta,
+                        Original = opciones.ContainsKey("original"),
                         Laboratorio = Opcion(opciones, "laboratorio"),
                         NumeroMaquina = Opcion(opciones, "numero"),
                         Memoria = opciones.ContainsKey("memoria"),
