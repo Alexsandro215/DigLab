@@ -3574,7 +3574,7 @@ namespace DigBit.conexion
                         continue;
                     }
 
-                    FilaLaboratorio fila = FilaDe(a, id, NombreDeLaboratorio(L, id) + (conocido && !leido.Activo ? " (desactivado)" : ""), false);
+                    FilaLaboratorio fila = FilaDe(a, id, NombreDeLaboratorio(L, id) + (conocido && !leido.Activo ? " (deshabilitado)" : ""), false);
                     fila.Activo = activo;
                     fila.RegistraDesde = conocido ? leido.EmpezoEl : null;
                     fila.RegistraDesdeTexto = fila.RegistraDesde.HasValue ? Fecha(fila.RegistraDesde.Value) : a.Bitacoras > 0 ? "Solo uso libre" : "Aún no";
@@ -3748,7 +3748,7 @@ namespace DigBit.conexion
                         continue;
                     }
 
-                    UsoDeLaboratorio uso = UsoDe(a, id, NombreDeLaboratorio(L, id) + (conocido && !leido.Activo ? " (desactivado)" : ""));
+                    UsoDeLaboratorio uso = UsoDe(a, id, NombreDeLaboratorio(L, id) + (conocido && !leido.Activo ? " (deshabilitado)" : ""));
                     uso.AunNo = conocido && !leido.EmpezoEl.HasValue;
                     g.Laboratorios.Add(uso);
                 }
@@ -4358,6 +4358,11 @@ namespace DigBit.conexion
             /// <summary>Por que una clase "no cuenta" (EstadoEnCalendario.NoContaba), con las reglas de HorariosDatos.EstadoDe.</summary>
             private string PorQueNoCuenta(ClaseDelCalendario c)
             {
+                if (LaboratoriosDeshabilitados.Cubre(L.Calendario.PeriodosDeshabilitados, c.LaboratorioId, c.Fecha + c.Inicio, c.Fecha + c.Fin))
+                {
+                    return "Ese día el laboratorio estaba deshabilitado: no cuenta.";
+                }
+
                 DateTime empezo;
                 bool conDigBit = L.Calendario.EmpezoEl.TryGetValue(c.LaboratorioId, out empezo);
                 if (!L.Calendario.ContarTodos && (!conDigBit || c.Fecha < empezo))
@@ -4392,7 +4397,7 @@ namespace DigBit.conexion
                     R.OpcionesLaboratorio.Add(new OpcionCombo
                     {
                         Id = laboratorio.Id,
-                        Texto = laboratorio.Nombre + (!laboratorio.Activo ? " (desactivado)" : !laboratorio.EmpezoEl.HasValue ? " (aún no registra sus clases)" : "")
+                        Texto = laboratorio.Nombre + (!laboratorio.Activo ? " (deshabilitado)" : !laboratorio.EmpezoEl.HasValue ? " (aún no registra sus clases)" : "")
                     });
                 }
 

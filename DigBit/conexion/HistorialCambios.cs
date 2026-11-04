@@ -422,9 +422,9 @@ namespace DigBit.conexion
                         case AccionDeCambio.Quitar:
                             return "Laboratorio borrado";
                         case AccionDeCambio.Activar:
-                            return "Laboratorio reactivado";
+                            return "Laboratorio habilitado";
                         case AccionDeCambio.Desactivar:
-                            return "Laboratorio desactivado";
+                            return "Laboratorio deshabilitado";
                         default:
                             return "Laboratorio renombrado";
                     }

@@ -509,7 +509,7 @@ namespace DigBit
             int desactivados = todos.Count(l => !l.Activo && nuevos.ContainsKey(l.Id));
             if (desactivados > 0)
             {
-                partes.Add("También " + (desactivados == 1 ? "un laboratorio desactivado." : desactivados + " laboratorios desactivados."));
+                partes.Add("También " + (desactivados == 1 ? "un laboratorio deshabilitado." : desactivados + " laboratorios deshabilitados."));
             }
 
             return string.Join(" ", partes);

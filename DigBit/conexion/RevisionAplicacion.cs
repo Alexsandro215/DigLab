@@ -151,15 +151,17 @@ namespace DigBit.conexion
                         FiltroClases.DeBaja));
             }
 
-            // 3. Laboratorios desactivados (db/08).
+            // 3. Laboratorios deshabilitados (db/08): no detienen la plantilla. Es justo
+            // lo que se hace al instalar en un solo laboratorio: el horario se conserva
+            // y corre cuando se habilite.
             if (leido.ConLaboratoriosDesactivables)
             {
                 renglones.Add(revision.EnLaboratorioDesactivado == 0
-                    ? Verde("Todos sus laboratorios están activos.")
-                    : Rojo((revision.EnLaboratorioDesactivado == 1 ? "1 clase tiene" : revision.EnLaboratorioDesactivado + " clases tienen")
-                        + (revision.LaboratoriosDesactivados.Count == 1 ? " horas en un laboratorio desactivado (" : " horas en laboratorios desactivados (")
+                    ? Verde("Todos sus laboratorios están habilitados.")
+                    : Ambar((revision.EnLaboratorioDesactivado == 1 ? "1 clase tiene" : revision.EnLaboratorioDesactivado + " clases tienen")
+                        + (revision.LaboratoriosDesactivados.Count == 1 ? " horas en un laboratorio deshabilitado (" : " horas en laboratorios deshabilitados (")
                         + RevisionCiclo.Enumerar(revision.LaboratoriosDesactivados)
-                        + (revision.EnLaboratorioDesactivado == 1 ? "): cámbiale el horario." : "): cámbiales el horario."), FiltroClases.LaboratorioDesactivado));
+                        + "): se guardan, pero no corren hasta habilitarlo.", FiltroClases.LaboratorioDesactivado));
             }
 
             // 4. Choques (la misma persona docente o el mismo grupo a la misma hora en

@@ -388,7 +388,7 @@ namespace DigBit.conexion
                     List<string> apagados = carga.Franjas.Where(f => !f.LaboratorioActivo).Select(f => f.Laboratorio).Distinct().ToList();
                     foreach (string laboratorio in apagados)
                     {
-                        avisos.Add(Rojo("El " + EstiloHorarios.NombreLaboratorio(laboratorio) + " está desactivado: cámbiale el horario."));
+                        avisos.Add(Ambar("El " + EstiloHorarios.NombreLaboratorio(laboratorio) + " está deshabilitado: estas horas no corren hasta habilitarlo."));
                         if (desactivados.Add(laboratorio))
                         {
                             revision.LaboratoriosDesactivados.Add(EstiloHorarios.NombreLaboratorio(laboratorio));
@@ -493,7 +493,7 @@ namespace DigBit.conexion
                 case FiltroClases.DeBaja:
                     return "De docentes de baja";
                 case FiltroClases.LaboratorioDesactivado:
-                    return "En un laboratorio desactivado";
+                    return "En un laboratorio deshabilitado";
                 case FiltroClases.Choques:
                     return "Con choque";
                 case FiltroClases.Repetidas:

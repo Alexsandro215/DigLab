@@ -1942,7 +1942,7 @@ namespace DigBit
             if (!cboLabHorario.Items.OfType<OpcionCombo>().Any(o => o.Id == laboratorio))
             {
                 FranjaInfo una = franjas.First(f => f.LaboratorioId == laboratorio);
-                EstadoClases("Sus horas están en " + una.Laboratorio + ", que está desactivado: actívalo en Laboratorios para verlo en Horario semanal.", true);
+                EstadoClases("Sus horas están en " + una.Laboratorio + ", que está deshabilitado: habilítalo en Laboratorios para verlo en Horario semanal.", true);
                 return;
             }
 

@@ -191,6 +191,7 @@
     <Compile Include="Infraestructura\Permisos.cs" />
     <Compile Include="conexion\ReglasCuenta.cs" />
     <Compile Include="conexion\LaboratoriosDatos.cs" />
+    <Compile Include="conexion\LaboratoriosDeshabilitados.cs" />
     <Compile Include="conexion\ProfesoresDatos.cs" />
     <Compile Include="conexion\UsuariosDatos.cs" />
     <Compile Include="conexion\Esquema.cs" />

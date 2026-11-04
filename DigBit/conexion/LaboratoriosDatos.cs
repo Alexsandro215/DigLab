@@ -528,7 +528,7 @@ namespace DigBit.conexion
                     comando.Parameters.AddWithValue("@Id", id);
                     if (comando.ExecuteNonQuery() == 0)
                     {
-                        throw new ErrorDeDatos("Ese laboratorio ya tiene horario o sesiones, así que no se puede borrar; desactívalo.");
+                        throw new ErrorDeDatos("Ese laboratorio ya tiene horario o sesiones, así que no se puede borrar; deshabilítalo.");
                     }
                 }
 
@@ -548,87 +548,119 @@ namespace DigBit.conexion
             Log.Info("Laboratorio id " + id + " borrado (no tenia uso) por " + Quien() + ".");
         }
 
-        /// <summary>Desactiva un laboratorio con historial. No se permite con franjas vigentes.</summary>
+        /// <summary>Quitar un laboratorio con historial y sin clases vigentes: queda deshabilitado.</summary>
         public void Desactivar(int id)
         {
-            CambiarEstado(id, false);
+            Permisos.Exigir("Deshabilitar un laboratorio");
+            EnUnaTransaccion((conexion, transaccion) => EnEstado(conexion, transaccion, id, false, true));
+            Log.Info("Deshabilitado el laboratorio id " + id + " por " + Quien() + ".");
         }
 
         public void Reactivar(int id)
         {
-            CambiarEstado(id, true);
+            CambiarHabilitados(new int[0], new[] { id });
         }
 
-        private void CambiarEstado(int id, bool activo)
+        /// <summary>
+        /// Deshabilita unos y habilita otros, todo o nada. Deshabilitar aqui SI deja
+        /// clases vigentes: su horario se conserva y vuelve tal cual (LaboratoriosDeshabilitados).
+        /// </summary>
+        public void CambiarHabilitados(ICollection<int> deshabilitar, ICollection<int> habilitar)
         {
-            // Cubre Desactivar y Reactivar.
-            Permisos.Exigir(activo ? "Reactivar un laboratorio" : "Desactivar un laboratorio");
+            Permisos.Exigir("Habilitar o deshabilitar laboratorios");
+            EnUnaTransaccion((conexion, transaccion) =>
+            {
+                foreach (int id in deshabilitar)
+                {
+                    EnEstado(conexion, transaccion, id, false, false);
+                }
+
+                foreach (int id in habilitar)
+                {
+                    EnEstado(conexion, transaccion, id, true, false);
+                }
+            });
+            Log.Info("Laboratorios por " + Quien() + ": deshabilitados [" + string.Join(", ", deshabilitar) + "], habilitados [" + string.Join(", ", habilitar) + "].");
+        }
+
+        private void EnUnaTransaccion(Action<MySqlConnection, MySqlTransaction> accion)
+        {
             using (MySqlConnection conexion = mconexion.GetConexion())
             using (MySqlTransaction transaccion = conexion.BeginTransaction())
             {
                 if (!Esquema.LaboratoriosDesactivables(conexion, transaccion))
                 {
-                    throw new ErrorDeDatos("La base de datos todavía no permite desactivar laboratorios: falta aplicar db/08_migracion_bajas.sql. "
+                    throw new ErrorDeDatos("La base de datos todavía no permite deshabilitar laboratorios: falta aplicar db/08_migracion_bajas.sql. "
                         + "Pide a quien administra el servidor que la aplique.");
                 }
 
-                // Para el historial (db/21): como estaba, para anotar solo si cambia.
-                string nombre = null;
-                bool? estaba = null;
-                if (HistorialCambios.Activo(conexion, transaccion))
-                {
-                    using (MySqlCommand comando = new MySqlCommand(
-                        "SELECT nombre_laboratorio, activo FROM laboratorios WHERE idlaboratorios = @Id", conexion, transaccion))
-                    {
-                        comando.Parameters.AddWithValue("@Id", id);
-                        using (MySqlDataReader reader = comando.ExecuteReader())
-                        {
-                            if (reader.Read())
-                            {
-                                nombre = Convert.ToString(reader["nombre_laboratorio"], CultureInfo.InvariantCulture);
-                                estaba = Convert.ToInt32(reader["activo"], CultureInfo.InvariantCulture) == 1;
-                            }
-                        }
-                    }
-                }
-
-                // Una franja terminada (db/20) de una clase que sigue no lo impide:
-                // es historia, como las sesiones.
-                using (MySqlCommand comando = new MySqlCommand(activo
-                    ? "UPDATE laboratorios SET activo = 1 WHERE idlaboratorios = @Id"
-                    : @"UPDATE laboratorios l SET l.activo = 0
-                         WHERE l.idlaboratorios = @Id
-                           AND NOT EXISTS (SELECT 1 FROM horarios h INNER JOIN clases c ON c.idclases = h.clases_idclases
-                                            WHERE h.laboratorios_idlaboratorios = @Id
-                                              AND " + FranjaSinTerminar(Esquema.VigenciaDeFranjas(conexion, transaccion)) + ")", conexion, transaccion))
-                {
-                    comando.Parameters.AddWithValue("@Id", id);
-                    if (comando.ExecuteNonQuery() == 0 && !activo)
-                    {
-                        throw new ErrorDeDatos("Ese laboratorio tiene clases vigentes en el horario: muévelas o quítalas en Horarios antes de desactivarlo.");
-                    }
-                }
-
-                if (estaba.HasValue && estaba.Value != activo)
-                {
-                    HistorialCambios.Anotar(conexion, transaccion, new CambioPorAnotar
-                    {
-                        Tipo = TipoDeCambio.Laboratorio,
-                        Accion = activo ? AccionDeCambio.Activar : AccionDeCambio.Desactivar,
-                        Tabla = "laboratorios",
-                        RegistroId = id,
-                        LaboratorioId = id,
-                        Descripcion = "«" + nombre + (activo ? "» vuelve a salir en el panel y en Horarios."
-                            : "» ya no sale en el panel ni en Horarios; su historial se conserva."),
-                        Antes = HistorialCambios.Datos("Nombre", nombre, "Activo", HistorialCambios.SiNo(estaba.Value)),
-                        Despues = HistorialCambios.Datos("Nombre", nombre, "Activo", HistorialCambios.SiNo(activo))
-                    });
-                }
-
+                accion(conexion, transaccion);
                 transaccion.Commit();
             }
+        }
 
-            Log.Info((activo ? "Reactivado" : "Desactivado") + " el laboratorio id " + id + " por " + Quien() + ".");
+        private static void EnEstado(MySqlConnection conexion, MySqlTransaction transaccion, int id, bool activo, bool soloSinClases)
+        {
+            // Como estaba: solo se anota si cambia.
+            string nombre = null;
+            bool? estaba = null;
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT nombre_laboratorio, activo FROM laboratorios WHERE idlaboratorios = @Id", conexion, transaccion))
+            {
+                comando.Parameters.AddWithValue("@Id", id);
+                using (MySqlDataReader reader = comando.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        nombre = Convert.ToString(reader["nombre_laboratorio"], CultureInfo.InvariantCulture);
+                        estaba = Convert.ToInt32(reader["activo"], CultureInfo.InvariantCulture) == 1;
+                    }
+                }
+            }
+
+            // Una franja terminada (db/20) de una clase que sigue no lo impide:
+            // es historia, como las sesiones.
+            using (MySqlCommand comando = new MySqlCommand(!soloSinClases
+                ? "UPDATE laboratorios SET activo = @Activo WHERE idlaboratorios = @Id"
+                : @"UPDATE laboratorios l SET l.activo = @Activo
+                     WHERE l.idlaboratorios = @Id
+                       AND NOT EXISTS (SELECT 1 FROM horarios h INNER JOIN clases c ON c.idclases = h.clases_idclases
+                                        WHERE h.laboratorios_idlaboratorios = @Id
+                                          AND " + FranjaSinTerminar(Esquema.VigenciaDeFranjas(conexion, transaccion)) + ")", conexion, transaccion))
+            {
+                comando.Parameters.AddWithValue("@Id", id);
+                comando.Parameters.AddWithValue("@Activo", activo ? 1 : 0);
+                if (comando.ExecuteNonQuery() == 0 && soloSinClases)
+                {
+                    throw new ErrorDeDatos("Ese laboratorio tiene clases vigentes en el horario: para quitarlo, muévelas o quítalas en Horarios.");
+                }
+            }
+
+            if (!estaba.HasValue || estaba.Value == activo)
+            {
+                return;
+            }
+
+            using (MySqlCommand comando = new MySqlCommand("SELECT NOW()", conexion, transaccion))
+            {
+                LaboratoriosDeshabilitados.Anotar(conexion, transaccion, id, !activo, Convert.ToDateTime(comando.ExecuteScalar(), CultureInfo.InvariantCulture));
+            }
+
+            if (HistorialCambios.Activo(conexion, transaccion))
+            {
+                HistorialCambios.Anotar(conexion, transaccion, new CambioPorAnotar
+                {
+                    Tipo = TipoDeCambio.Laboratorio,
+                    Accion = activo ? AccionDeCambio.Activar : AccionDeCambio.Desactivar,
+                    Tabla = "laboratorios",
+                    RegistroId = id,
+                    LaboratorioId = id,
+                    Descripcion = "«" + nombre + (activo ? "» se habilita: sus clases vuelven a correr."
+                        : "» se deshabilita: conserva su horario y su historial, pero sus clases no corren."),
+                    Antes = HistorialCambios.Datos("Nombre", nombre, "Habilitado", HistorialCambios.SiNo(estaba.Value)),
+                    Despues = HistorialCambios.Datos("Nombre", nombre, "Habilitado", HistorialCambios.SiNo(activo))
+                });
+            }
         }
 
         /// <summary>

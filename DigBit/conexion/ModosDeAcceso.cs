@@ -912,6 +912,8 @@ namespace DigBit.conexion
         public bool ConAvisosDeRed;
         /// <summary>Sin codigos y con db/14: sin clase abierta, el alumno registra uso libre.</summary>
         public bool ConUsoLibre;
+        /// <summary>Este laboratorio esta deshabilitado (LaboratoriosDeshabilitados): aqui no se registra nada.</summary>
+        public bool Deshabilitado;
         /// <summary>
         /// Los equipos que registraron bitacoras aqui hace poco, para marcarlos en
         /// el paso 3 (Consultas.EquiposDelLaboratorio). Null si no se leyeron.

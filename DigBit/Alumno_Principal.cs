@@ -113,6 +113,8 @@ namespace DigBit
         // Ya se aplico el modo leido una vez (del servidor o de la copia): hasta
         // entonces, el Fijo de arriba es solo el valor de partida.
         private bool modoLeido;
+        // Este laboratorio esta deshabilitado (LaboratoriosDeshabilitados): lo dijo la ultima lectura.
+        private bool laboratorioDeshabilitado;
         // "Los docentes no ven los codigos" (CodigosSoloResponsables), lo ultimo
         // leido con la generacion de codigos: el codigo de la clase lo da la
         // persona responsable del laboratorio, no le aparece a su docente.
@@ -223,6 +225,8 @@ namespace DigBit
             public bool ConAvisosDeRed;
             /// <summary>Sin codigos y con db/14: sin clase abierta, uso libre.</summary>
             public bool ConUsoLibre;
+            /// <summary>Este laboratorio esta deshabilitado: aqui no se registra nada.</summary>
+            public bool Deshabilitado;
             /// <summary>Los equipos del laboratorio para marcar en el paso 3; null si no se leyeron.</summary>
             public List<string> Equipos;
             /// <summary>Lo personal de cada profesor de la agenda (db/19), por profesor; null si no se leyo.</summary>
@@ -1421,7 +1425,7 @@ namespace DigBit
         private bool SinNadaQueRegistrar()
         {
             return !registrado && codigoAceptado == null
-                && (!LaboratorioEquipo.Resuelto || (!PideCodigo && pnlClases.Controls.Count == 0));
+                && (!LaboratorioEquipo.Resuelto || laboratorioDeshabilitado || (!PideCodigo && pnlClases.Controls.Count == 0));
         }
 
         /// <summary>El motivo del bloque "Ahora no puedes registrar..." (SinNadaQueRegistrar).</summary>
@@ -1431,6 +1435,11 @@ namespace DigBit
             {
                 return "Este equipo no tiene laboratorio asignado. Avisa a la persona responsable del laboratorio: "
                     + "sin eso no se puede registrar la bitácora.";
+            }
+
+            if (laboratorioDeshabilitado)
+            {
+                return LaboratoriosDeshabilitados.Mensaje;
             }
 
             // La siguiente clase, o por que no hay ninguna (TextoProxima).
@@ -2824,6 +2833,7 @@ namespace DigBit
                     local.Agenda = LaboratorioEquipo.Resuelto ? copia.AgendaDelDia(local.Ahora.Date) : new List<SesionAgenda>();
                     local.ConAvisosDeRed = copia.ConAvisosDeRed;
                     local.ConUsoLibre = copia.ConUsoLibre;
+                    local.Deshabilitado = copia.Deshabilitado;
                     local.Equipos = copia.Equipos;
                 }
                 catch (Exception ex)
@@ -2857,6 +2867,7 @@ namespace DigBit
                     datos.Agenda = situacion.Agenda;
                     datos.ConAvisosDeRed = situacion.ConAvisosDeRed;
                     datos.ConUsoLibre = situacion.ConUsoLibre;
+                    datos.Deshabilitado = situacion.Deshabilitado;
                     datos.Equipos = situacion.Equipos;
                     LeerPersonal(datos);
                 }
@@ -2994,9 +3005,24 @@ namespace DigBit
                 return;
             }
 
+            // Deshabilitado: arriba solo el laboratorio y el equipo; el motivo, una vez
+            // abajo. Si lo habilitan, la siguiente lectura sigue por lo de siempre.
+            bool seHabilito = laboratorioDeshabilitado && !datos.Deshabilitado;
+            laboratorioDeshabilitado = datos.Deshabilitado;
+            if (laboratorioDeshabilitado)
+            {
+                OcultarFicha();
+                lblClaseTitulo.Text = LaboratorioEquipo.Nombre + ", equipo " + LaboratorioEquipo.NumeroMaquina;
+                lblClaseTitulo.ForeColor = LetraAviso;
+                lblClaseDetalle.Text = "";
+                pnlClase.BackColor = FondoAviso;
+                Colocar();
+                return;
+            }
+
             // El modo manda el paso 1; si cambio (o entro o salio el modo sin
-            // conexion), se rehace sin el error de antes.
-            bool cambio = datos.Modo != modo || SinConexion.Activo != modoSinConexion;
+            // conexion), o acaban de habilitar el laboratorio, se rehace sin el error de antes.
+            bool cambio = seHabilito || datos.Modo != modo || SinConexion.Activo != modoSinConexion;
             modo = datos.Modo;
             modoSinConexion = SinConexion.Activo;
             modoLeido = true;

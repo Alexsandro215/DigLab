@@ -28,7 +28,9 @@ namespace DigBit.conexion
         /// <summary>Sin codigo: hay varias clases abiertas y el alumno tiene que elegir (Opciones).</summary>
         ElegirClase,
         /// <summary>El laboratorio cambio de modo: hay que rehacer el paso 1.</summary>
-        ModoCambiado
+        ModoCambiado,
+        /// <summary>Este laboratorio esta deshabilitado: aqui no se registra nada.</summary>
+        LaboratorioDeshabilitado
     }
 
     public class ResultadoCodigo
@@ -415,6 +417,8 @@ namespace DigBit.conexion
         public bool ContarTodos;
         /// <summary>La base tiene las asistencias que da el profesor (db/22) y esta cuenta las ve.</summary>
         public bool ConDadas;
+        /// <summary>Cuando estuvo deshabilitado cada laboratorio: esas clases no se podian dar con DigBit y no cuentan.</summary>
+        public List<PeriodoDeshabilitado> PeriodosDeshabilitados = new List<PeriodoDeshabilitado>();
     }
 
     /// <summary>Una sesion extra que es lo que le quedo a una clase recortada (HorariosDatos.AplicarExcepcion).</summary>
@@ -592,6 +596,8 @@ namespace DigBit.conexion
         public Dictionary<int, string> Laboratorios = new Dictionary<int, string>();
         /// <summary>Su horario semanal de ahora en adelante (HorariosDatos.ObtenerFranjasDeProfesor), para decir cual es su proxima clase otro dia.</summary>
         public List<FranjaInfo> Franjas = new List<FranjaInfo>();
+        /// <summary>Tiene horario, pero todo en laboratorios deshabilitados: hoy no hay codigo ni registros.</summary>
+        public bool SoloDeshabilitados;
         /// <summary>El modo de acceso de cada laboratorio (db/11); los que falten, Fijo.</summary>
         public Dictionary<int, ModoCodigo> Modos = new Dictionary<int, ModoCodigo>();
         /// <summary>Por que no se pudo abrir alguna de sus clases (generacion de codigos), o null.</summary>
@@ -1382,6 +1388,15 @@ namespace DigBit.conexion
         /// las de hace poco). Sin las franjas que ya terminaron (db/20); sin la
         /// 20, todas las de sus clases activas, como antes.
         /// </summary>
+        /// <summary>Los laboratorios que hoy estan deshabilitados.</summary>
+        public HashSet<int> LaboratoriosDeshabilitadosHoy()
+        {
+            using (MySqlConnection conexion = mconexion.GetConexion())
+            {
+                return LaboratoriosDeshabilitados.Ids(conexion);
+            }
+        }
+
         public List<FranjaInfo> ObtenerFranjasDeProfesor(int idProfesor)
         {
             return LeerFranjas(conVigencia =>
@@ -4388,6 +4403,9 @@ namespace DigBit.conexion
             // db/20 tambien la vigencia de la franja: VigenciaFranjas.SeDa).
             string profesorUtil = conBajas ? "u.activo = 1" : "1 = 1";
             bool conVigencia = Esquema.VigenciaDeFranjas(conexion);
+            // Lo de un laboratorio deshabilitado no corre: ni para el alumno ni para su docente.
+            string franjaHabilitada = LaboratoriosDeshabilitados.SinDeshabilitados(conexion, "h.laboratorios_idlaboratorios");
+            string extraHabilitada = LaboratoriosDeshabilitados.SinDeshabilitados(conexion, "x.laboratorios_idlaboratorios");
 
             List<SesionAgenda> lista = new List<SesionAgenda>();
             using (MySqlCommand comando = new MySqlCommand(@"
@@ -4406,7 +4424,7 @@ namespace DigBit.conexion
                 INNER JOIN materias m ON m.id_materia = c.materias_id_materia
                 LEFT JOIN horario_excepciones x ON x.tipo = 'cancelada' AND x.horarios_idhorarios = h.idhorarios AND x.fecha = @Fecha
                 WHERE " + filtroFranja + @"h.dia_semana = WEEKDAY(@Fecha) + 1
-                  AND " + VigenciaFranjas.SeDa(conVigencia, "@Fecha") + profesorActivo + @"
+                  AND " + VigenciaFranjas.SeDa(conVigencia, "@Fecha") + profesorActivo + franjaHabilitada + @"
                 UNION ALL
                 SELECT 1, NULL, x.idhorario_excepciones, c.idclases, c.codigo,
                        c.usuarios_idusuarios,
@@ -4420,7 +4438,7 @@ namespace DigBit.conexion
                 INNER JOIN usuarios u ON u.idusuarios = c.usuarios_idusuarios
                 INNER JOIN grupos g   ON g.idgrupos = c.grupos_idgrupos
                 INNER JOIN materias m ON m.id_materia = c.materias_id_materia
-                WHERE x.tipo = 'extra'" + filtroExtra + @" AND x.fecha = @Fecha" + extraVigente + profesorActivo + @"
+                WHERE x.tipo = 'extra'" + filtroExtra + @" AND x.fecha = @Fecha" + extraVigente + profesorActivo + extraHabilitada + @"
                 ORDER BY " + orden, conexion))
             {
                 if (idLaboratorio.HasValue)
@@ -4824,6 +4842,7 @@ namespace DigBit.conexion
                 }
 
                 calendario.EmpezoEl = LeerEmpezoEl(conexion);
+                calendario.PeriodosDeshabilitados = LaboratoriosDeshabilitados.LeerPeriodos(conexion);
 
                 // Utilizable: el profesor no estaba dado de baja ese dia (db/08: lo
                 // de antes de su baja si cuenta).
@@ -5056,7 +5075,8 @@ namespace DigBit.conexion
                 Ahora = panorama.AhoraServidor,
                 Desde = ayer,
                 Hasta = hoy,
-                EmpezoEl = EmpezoElReciente(conexion)
+                EmpezoEl = EmpezoElReciente(conexion),
+                PeriodosDeshabilitados = LaboratoriosDeshabilitados.LeerPeriodos(conexion)
             };
             foreach (KeyValuePair<int, ModoCodigo> modo in panorama.Modos.Where(m => m.Value != ModoCodigo.Fijo))
             {
@@ -5436,13 +5456,14 @@ namespace DigBit.conexion
             }
 
             // No cuenta: no se podia dar, la extra se puso cuando ya habia pasado (un
-            // resto no: es lo que le quedo a su clase al recortarla), o el
-            // laboratorio aun no registraba con DigBit.
+            // resto no: es lo que le quedo a su clase al recortarla), el laboratorio
+            // aun no registraba con DigBit, o estaba deshabilitado.
             DateTime empezo;
             bool extraTardia = clase.EsExtra && !clase.EsResto && clase.CreadaEn.HasValue && clase.CreadaEn.Value >= clase.Fecha + clase.Fin;
             bool antesDeDigBit = !calendario.ContarTodos
                 && (!calendario.EmpezoEl.TryGetValue(clase.LaboratorioId, out empezo) || clase.Fecha < empezo);
-            if (!clase.Utilizable || extraTardia || antesDeDigBit)
+            bool deshabilitado = LaboratoriosDeshabilitados.Cubre(calendario.PeriodosDeshabilitados, clase.LaboratorioId, clase.Fecha + clase.Inicio, clase.Fecha + clase.Fin);
+            if (!clase.Utilizable || extraTardia || antesDeDigBit || deshabilitado)
             {
                 return EstadoEnCalendario.NoContaba;
             }
@@ -5506,15 +5527,10 @@ namespace DigBit.conexion
                 panorama.Laboratorios[laboratorio.Id] = laboratorio.Texto;
             }
 
-            panorama.Franjas = ObtenerFranjasDeProfesor(panorama.ProfesorId);
-            foreach (FranjaInfo franja in panorama.Franjas)
-            {
-                // Un laboratorio desactivado no esta en la lista de arriba.
-                if (!panorama.Laboratorios.ContainsKey(franja.LaboratorioId))
-                {
-                    panorama.Laboratorios[franja.LaboratorioId] = franja.Laboratorio;
-                }
-            }
+            // Las de un laboratorio deshabilitado (no esta en la lista de arriba) no corren.
+            List<FranjaInfo> franjas = ObtenerFranjasDeProfesor(panorama.ProfesorId);
+            panorama.Franjas = franjas.Where(f => panorama.Laboratorios.ContainsKey(f.LaboratorioId)).ToList();
+            panorama.SoloDeshabilitados = franjas.Count > 0 && panorama.Franjas.Count == 0;
 
             if (!panorama.CodigoPorProfesor)
             {
@@ -5671,6 +5687,8 @@ namespace DigBit.conexion
             string profesorUtil = Esquema.TieneBajas(conexion) ? "u.activo = 1" : "1 = 1";
             bool conVigencia = Esquema.VigenciaDeFranjas(conexion);
             string numeros = string.Join(" UNION ALL ", Enumerable.Range(0, dias).Select(n => "SELECT " + n.ToString(CultureInfo.InvariantCulture) + " AS n"));
+            string franjaHabilitada = LaboratoriosDeshabilitados.SinDeshabilitados(conexion, "h.laboratorios_idlaboratorios");
+            string extraHabilitada = LaboratoriosDeshabilitados.SinDeshabilitados(conexion, "x.laboratorios_idlaboratorios");
             using (MySqlCommand comando = new MySqlCommand(@"
                 SELECT d.fecha
                 FROM (SELECT DATE_ADD(DATE(@Desde), INTERVAL k.n DAY) AS fecha FROM (" + numeros + @") k) d
@@ -5680,14 +5698,14 @@ namespace DigBit.conexion
                               INNER JOIN grupos g   ON g.idgrupos = c.grupos_idgrupos
                               INNER JOIN materias m ON m.id_materia = c.materias_id_materia
                               WHERE c.usuarios_idusuarios = @Profesor AND h.dia_semana = WEEKDAY(d.fecha) + 1
-                                AND " + VigenciaFranjas.SeDa(conVigencia, "d.fecha") + " AND " + profesorUtil + @")
+                                AND " + VigenciaFranjas.SeDa(conVigencia, "d.fecha") + " AND " + profesorUtil + franjaHabilitada + @")
                    OR EXISTS (SELECT 1 FROM horario_excepciones x
                               INNER JOIN clases c   ON c.idclases = x.clases_idclases
                               INNER JOIN usuarios u ON u.idusuarios = c.usuarios_idusuarios
                               INNER JOIN grupos g   ON g.idgrupos = c.grupos_idgrupos
                               INNER JOIN materias m ON m.id_materia = c.materias_id_materia
                               WHERE x.tipo = 'extra' AND x.fecha = d.fecha AND c.usuarios_idusuarios = @Profesor
-                                AND c.activa = 1 AND d.fecha BETWEEN c.vigente_desde AND c.vigente_hasta AND " + profesorUtil + @")
+                                AND c.activa = 1 AND d.fecha BETWEEN c.vigente_desde AND c.vigente_hasta AND " + profesorUtil + extraHabilitada + @")
                 ORDER BY d.fecha", conexion))
             {
                 comando.Parameters.AddWithValue("@Desde", desde.Date);
@@ -5766,6 +5784,10 @@ namespace DigBit.conexion
             using (MySqlConnection conexion = mconexion.GetConexion())
             {
                 modo = ModosDeAcceso.Leer(conexion, idLaboratorio);
+                if (LaboratoriosDeshabilitados.Esta(conexion, idLaboratorio))
+                {
+                    return RechazoDeshabilitado(modo);
+                }
             }
 
             ResultadoCodigo resultado = modo == ModoCodigo.Renovable
@@ -5773,6 +5795,13 @@ namespace DigBit.conexion
                 : ResolverCodigoFijo(codigo, idLaboratorio, idAlumno, matricula, modo);
             resultado.Modo = modo;
             return resultado;
+        }
+
+        private static ResultadoCodigo RechazoDeshabilitado(ModoCodigo modo)
+        {
+            ResultadoCodigo rechazo = Rechazo(MotivoCodigo.LaboratorioDeshabilitado, LaboratoriosDeshabilitados.Mensaje);
+            rechazo.Modo = modo;
+            return rechazo;
         }
 
         /// <summary>El codigo fijo del profesor (lo de siempre).</summary>
@@ -6200,6 +6229,11 @@ namespace DigBit.conexion
             using (MySqlConnection conexion = mconexion.GetConexion())
             {
                 modo = ModosDeAcceso.Leer(conexion, idLaboratorio);
+                if (LaboratoriosDeshabilitados.Esta(conexion, idLaboratorio))
+                {
+                    return RechazoDeshabilitado(modo);
+                }
+
                 if (modo != ModoCodigo.SinCodigo)
                 {
                     return new ResultadoCodigo
@@ -6286,6 +6320,12 @@ namespace DigBit.conexion
             using (MySqlConnection conexion = mconexion.GetConexion())
             {
                 modo = ModosDeAcceso.Leer(conexion, idLaboratorio);
+                // Sin esto, con la agenda vacia todo el dia pareceria tiempo libre.
+                if (LaboratoriosDeshabilitados.Esta(conexion, idLaboratorio))
+                {
+                    return RechazoDeshabilitado(modo);
+                }
+
                 if (modo != ModoCodigo.SinCodigo)
                 {
                     return new ResultadoCodigo
@@ -6493,7 +6533,8 @@ namespace DigBit.conexion
                     ModosDeAcceso.LeerAjustes(conexion);
                 }
 
-                situacion.ConUsoLibre = situacion.Modo == ModoCodigo.SinCodigo && Esquema.UsoLibre(conexion);
+                situacion.Deshabilitado = LaboratoriosDeshabilitados.Esta(conexion, idLaboratorio);
+                situacion.ConUsoLibre = !situacion.Deshabilitado && situacion.Modo == ModoCodigo.SinCodigo && Esquema.UsoLibre(conexion);
                 situacion.ConAvisosDeRed = Esquema.EquiposSinInternet(conexion);
                 if (situacion.ConAvisosDeRed)
                 {

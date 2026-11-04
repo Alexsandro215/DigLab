@@ -20,6 +20,63 @@ DigBit pasa su sesión a la cuenta de MySQL de solo lectura `digbit_consulta`.
 Basta aplicar una vez `db\18_encargados.sql` **con root** en el servidor (ver
 «Migrar una base que ya existe»).
 
+## El instalador: `DigBit-Setup.exe`
+
+Un asistente normal de Windows: doble clic, permiso de administrador y siguiente,
+siguiente. En el equipo no hace falta PowerShell. Queda en **Agregar o quitar
+programas** y siempre instala en `C:\DigBit`. El anterior (`DigBit-Instalador.exe`,
+la sección siguiente) sigue aquí hasta que este pase la prueba en una VM.
+
+**Generarlo** (en el equipo de desarrollo, con Inno Setup 7):
+
+```powershell
+.\crear_setup.ps1 -Inno 'C:\ruta\a\ISCC.exe'
+```
+
+Deja `DigBit-Setup.exe` junto a la carpeta del proyecto. Servidor, base, usuario y
+puerto los toma del `connections.config` de `DigBit\bin\Release`, o de `-Servidor`,
+`-Base`, `-Usuario` y `-Puerto`. **La contraseña de la base no va dentro**: se teclea
+y se comprueba al instalar. Si encuentra un secreto real en lo que va a empaquetar,
+no lo arma.
+
+**Tipos de equipo:**
+
+| Tipo | Qué queda |
+|---|---|
+| Administración | DigBit como programa normal, con accesos directos |
+| Docente | Igual que Administración |
+| Equipo de laboratorio | Kiosco: la cuenta del laboratorio entra sola, DigBit es su pantalla y corre el vigilante. Al terminar pide reiniciar |
+
+**Instalar encima** actualiza: el asistente se salta las preguntas y conserva la
+conexión, los ajustes y los datos. En un kiosco cierra la sesión del laboratorio si
+está abierta (matar DigBit no basta: Windows lo vuelve a abrir), así que nadie debe
+estar usando el equipo; al terminar pide reiniciar.
+
+**Desinstalar** deshace el kiosco (inicio automático, shell y directivas de la
+cuenta, vigilante) y borra `C:\DigBit`. Pregunta aparte si borrar los datos locales
+y la cuenta del laboratorio; en las dos, la respuesta por omisión es No.
+
+**Microsoft Defender:** en los tres tipos se excluyen solo `DigBit.exe` y, en un
+kiosco, `DigBit.Vigilante.exe`, porque Defender los puede confundir con un virus y un
+kiosco arrancaría con la pantalla negra. Se avisa antes de instalar y se quita al
+desinstalar.
+
+**Sin firma digital**, Windows avisa «Editor desconocido»: *Más información →
+Ejecutar de todos modos*. Con un certificado: `-Certificado ruta.pfx` y su clave en
+la variable `DIGBIT_PFX_CLAVE`.
+
+**Si algo falla**, la última página dice qué. El detalle queda en
+`C:\ProgramData\DigBit\logs\instalacion-*.log` (sin contraseñas). Repetir la
+instalación no rompe nada.
+
+**Instalar en un solo laboratorio:** en DigBit, *Laboratorios → Habilitar o
+deshabilitar...* deja marcado solo ese. Los demás conservan su horario de la plantilla
+actual, sin armar otra, pero no corren: sus docentes no ven esas clases ni su código,
+sus equipos no aceptan registros y esos días no cuentan faltas ni alertas. Un equipo se
+puede preparar antes de habilitar su laboratorio: el instalador lo ofrece igual en la
+lista, y hasta entonces el equipo dice que está deshabilitado. Al habilitarlo, en
+menos de un minuto empieza a aceptar registros, sin tocar el equipo.
+
 ## Con la base de la escuela: `DigBit-Instalador.exe`, un solo archivo
 
 Cuando la base ya existe en un servidor (la del TESCHI está en `sql.teschi.edu.mx`)

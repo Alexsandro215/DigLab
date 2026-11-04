@@ -711,7 +711,7 @@ namespace DigBit
         /// <summary>Sin laboratorio elegido: la lista no se pudo leer, o no hay ninguno activo.</summary>
         private string SinLaboratorio()
         {
-            return laboratoriosConError ? "No se pudieron leer los laboratorios: pulsa Actualizar." : "No hay laboratorios activos.";
+            return laboratoriosConError ? "No se pudieron leer los laboratorios: pulsa Actualizar." : "No hay laboratorios habilitados.";
         }
 
         /// <summary>Desde cuando registra el laboratorio con DigBit y que pasa con lo de antes (segun la casilla).</summary>
@@ -996,6 +996,11 @@ namespace DigBit
             if (calendario == null)
             {
                 return "sin datos";
+            }
+
+            if (LaboratoriosDeshabilitados.Cubre(calendario.PeriodosDeshabilitados, c.LaboratorioId, c.Fecha + c.Inicio, c.Fecha + c.Fin))
+            {
+                return "el laboratorio estaba deshabilitado";
             }
 
             DateTime empezo;

@@ -194,6 +194,12 @@ namespace DigBit.conexion
         public bool ConUsoLibre;
 
         /// <summary>
+        /// Estaba deshabilitado cuando se hizo la copia (LaboratoriosDeshabilitados): sin
+        /// conexion tampoco se registra. Las copias de antes no lo traen: entonces no.
+        /// </summary>
+        public bool Deshabilitado;
+
+        /// <summary>
         /// Los equipos que registraron bitacoras en este laboratorio hace poco, para
         /// marcarlos en el paso 3 sin conexion (Consultas.EquiposDelLaboratorio).
         /// Una copia de antes no la trae: entonces el alumno escribe el numero.
@@ -258,7 +264,8 @@ namespace DigBit.conexion
                 cache.Desfase = cache.Generado - localAntes;
                 cache.ConAvisosDeRed = Esquema.EquiposSinInternet(conexion);
                 cache.Modo = ModosDeAcceso.Leer(conexion, idLaboratorio);
-                cache.ConUsoLibre = cache.Modo == ModoCodigo.SinCodigo && Esquema.UsoLibre(conexion);
+                cache.Deshabilitado = LaboratoriosDeshabilitados.Esta(conexion, idLaboratorio);
+                cache.ConUsoLibre = !cache.Deshabilitado && cache.Modo == ModoCodigo.SinCodigo && Esquema.UsoLibre(conexion);
                 if (cache.ConAvisosDeRed)
                 {
                     try
@@ -404,6 +411,7 @@ namespace DigBit.conexion
                 // Opcional, como avisosDeRed: la version anterior lo ignora (version sigue en 1).
                 new XAttribute("modoCodigo", ModosDeAcceso.Valor(Modo)),
                 new XAttribute("usoLibre", ConUsoLibre),
+                new XAttribute("deshabilitado", Deshabilitado),
                 new XElement("clases", Clases.Select(c => new XElement("clase",
                     new XAttribute("id", c.Id), new XAttribute("codigo", c.Codigo),
                     new XAttribute("desde", c.VigenteDesde.ToString(Fmt, CultureInfo.InvariantCulture)),
@@ -467,7 +475,8 @@ namespace DigBit.conexion
                     // Ni el modo: entonces es el codigo fijo, lo que habia.
                     Modo = ModosDeAcceso.Desde((string)raiz.Attribute("modoCodigo")),
                     // Ni el uso libre (db/14): entonces no lo hay.
-                    ConUsoLibre = (bool?)raiz.Attribute("usoLibre") ?? false
+                    ConUsoLibre = (bool?)raiz.Attribute("usoLibre") ?? false,
+                    Deshabilitado = (bool?)raiz.Attribute("deshabilitado") ?? false
                 };
 
                 cache.Clases = raiz.Element("clases").Elements("clase").Select(e => new ClaseCache
@@ -572,6 +581,10 @@ namespace DigBit.conexion
         {
             int dia = ((int)fecha.DayOfWeek + 6) % 7 + 1;
             List<SesionAgenda> lista = new List<SesionAgenda>();
+            if (Deshabilitado)
+            {
+                return lista;
+            }
 
             foreach (FranjaCache f in Franjas.Where(f => f.DiaSemana == dia))
             {
@@ -610,6 +623,11 @@ namespace DigBit.conexion
             };
         }
 
+        private ResultadoCodigo RechazoDeshabilitado()
+        {
+            return new ResultadoCodigo { Motivo = MotivoCodigo.LaboratorioDeshabilitado, Modo = Modo, Mensaje = LaboratoriosDeshabilitados.Mensaje };
+        }
+
         public SesionAgenda ClaseEnCurso(DateTime ahora)
         {
             return ReglasCodigo.Abiertas(AgendaDelDia(ahora.Date), ahora.TimeOfDay).FirstOrDefault();
@@ -632,6 +650,11 @@ namespace DigBit.conexion
         public ResultadoCodigo ResolverCodigo(string codigo, string matricula, out SesionLocal sesionLocal)
         {
             sesionLocal = null;
+            if (Deshabilitado)
+            {
+                return RechazoDeshabilitado();
+            }
+
             if (Modo == ModoCodigo.Renovable)
             {
                 return new ResultadoCodigo
@@ -683,6 +706,11 @@ namespace DigBit.conexion
         public ResultadoCodigo ResolverClase(int? franjaId, int? excepcionId, string matricula, out SesionLocal sesionLocal)
         {
             sesionLocal = null;
+            if (Deshabilitado)
+            {
+                return RechazoDeshabilitado();
+            }
+
             if (Modo == ModoCodigo.Fijo)
             {
                 return new ResultadoCodigo { Motivo = MotivoCodigo.ModoCambiado, Modo = Modo, Mensaje = "En este laboratorio hace falta el código de tu docente." };
@@ -719,6 +747,11 @@ namespace DigBit.conexion
         public ResultadoCodigo ResolverUsoLibre(string matricula, out SesionLocal sesionLocal)
         {
             sesionLocal = null;
+            if (Deshabilitado)
+            {
+                return RechazoDeshabilitado();
+            }
+
             if (Modo != ModoCodigo.SinCodigo)
             {
                 return new ResultadoCodigo

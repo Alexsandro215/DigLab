@@ -42,6 +42,8 @@ namespace DigBit
         private HashSet<int> sinCodigoFijo = new HashSet<int>();
         // Laboratorios sin codigos (db/11): sin nada que pedir a la persona responsable.
         private HashSet<int> sinCodigos = new HashSet<int>();
+        // Lo de estos laboratorios no corre: el docente no lo ve en su horario.
+        private HashSet<int> deshabilitados = new HashSet<int>();
         // El horario se leyo bien antes de abrirse: al abrir, la ventana se ajusta
         // a el (solo entonces; despues manda el tamano que le de quien la usa).
         private bool leidoAlAbrir;
@@ -378,6 +380,9 @@ namespace DigBit
                 leidaEnUtc = DateTime.UtcNow;
                 clases = datos.ObtenerClasesDeProfesor(idProfesor);
                 franjasDeClase.Clear();
+                // Lo de un laboratorio deshabilitado no corre: el docente no lo ve. La ficha
+                // del docente (ocultarCodigos), todo: es para consultar lo que tiene asignado.
+                deshabilitados = ocultarCodigos ? new HashSet<int>() : datos.LaboratoriosDeshabilitadosHoy();
 
                 // Su color, el mismo que le ve el administrador en Horarios y en el panel.
                 RepartoDeColores reparto = datos.DatosDeColores();
@@ -480,7 +485,7 @@ namespace DigBit
             // Solo las excepciones de sus clases: cancelaciones y sesiones extra.
             HashSet<int> misClases = new HashSet<int>(clases.Select(c => c.Id));
             List<ExcepcionInfo> excepciones = datos.ObtenerExcepciones(lunes, lunes.AddDays(6), 0)
-                .Where(x => misClases.Contains(x.ClaseId))
+                .Where(x => misClases.Contains(x.ClaseId) && !deshabilitados.Contains(x.LaboratorioId))
                 .ToList();
             foreach (ExcepcionInfo x in excepciones)
             {
@@ -582,7 +587,7 @@ namespace DigBit
                 List<FranjaInfo> suyas;
                 if (!franjasDeClase.TryGetValue(clase.Id, out suyas))
                 {
-                    suyas = datos.ObtenerFranjasDeClase(clase.Id);
+                    suyas = datos.ObtenerFranjasDeClase(clase.Id).Where(f => !deshabilitados.Contains(f.LaboratorioId)).ToList();
                     foreach (FranjaInfo franja in suyas)
                     {
                         franja.Codigo = TarjetaCodigo.Mayusculas(franja.Codigo);

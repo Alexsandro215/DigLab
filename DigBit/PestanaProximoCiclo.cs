@@ -2786,7 +2786,7 @@ namespace DigBit
                 // Lo dice la base (FranjaCiclo.LaboratorioActivo), no la lista de activos:
                 // si esa no se pudo leer, no todos salen como desactivados.
                 bool desactivado = conHoras ? franjas.Any(f => !f.LaboratorioActivo) : !activos.Contains(par.Key);
-                string nombre = par.Value + (desactivado ? " (desactivado)" : "");
+                string nombre = par.Value + (desactivado ? " (deshabilitado)" : "");
                 string texto = nombre + ": " + (horas == 0 ? "sin horas" : RevisionCiclo.TextoHoras(horas))
                     + (choques == 0 ? "" : choques == 1 ? ", 1 choque" : ", " + choques + " choques")
                     + (encimadas ? ", clases encimadas" : "");

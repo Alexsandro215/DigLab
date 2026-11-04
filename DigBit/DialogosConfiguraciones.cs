@@ -1489,13 +1489,13 @@ namespace DigBit
                 nombreDeLaboratorio[l.Id] = l.Texto;
             }
 
-            // Si la clase ya tiene horas en un laboratorio desactivado, sale con su nombre (la revision lo marca).
+            // Si la clase ya tiene horas en un laboratorio deshabilitado, sale con su nombre (la revision lo marca).
             if (carga != null)
             {
                 foreach (FranjaCiclo f in carga.Franjas.Where(f => !nombreDeLaboratorio.ContainsKey(f.LaboratorioId)))
                 {
                     nombreDeLaboratorio[f.LaboratorioId] = f.Laboratorio;
-                    laboratorios.Add(new OpcionCombo { Id = f.LaboratorioId, Texto = EstiloHorarios.NombreLaboratorio(f.Laboratorio) + " (desactivado)" });
+                    laboratorios.Add(new OpcionCombo { Id = f.LaboratorioId, Texto = EstiloHorarios.NombreLaboratorio(f.Laboratorio) + " (deshabilitado)" });
                 }
             }
         }

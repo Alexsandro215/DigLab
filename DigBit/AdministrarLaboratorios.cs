@@ -13,9 +13,11 @@ namespace DigBit
     /// Seccion Laboratorios del administrador: la lista con su uso (clases en el
     /// horario, sesiones, equipos que registraron hace poco) y un buscador, dar de
     /// alta, cambiar el nombre, ver su horario, sus codigos y quitarlo. Quitar decide que hacer: uno que
-    /// nunca se uso se borra; uno con historial se desactiva; uno con clases
-    /// vigentes no se deja quitar hasta mover o quitar esas clases. En solo
-    /// consulta (el encargado de laboratorio) solo se busca y se ve su horario.
+    /// nunca se uso se borra; uno con historial se deshabilita; uno con clases
+    /// vigentes no se deja quitar hasta mover o quitar esas clases. "Habilitar o
+    /// deshabilitar..." apaga varios a la vez, aunque tengan clases, conservando su
+    /// horario (LaboratoriosDeshabilitados). En solo consulta (el encargado de
+    /// laboratorio) solo se busca y se ve su horario.
     /// </summary>
     public class AdministrarLaboratorios : PantallaAdmin
     {
@@ -30,6 +32,7 @@ namespace DigBit
         private readonly Button btnHorario;
         private readonly Button btnQuitar;
         private readonly Button btnCodigos;
+        private readonly Button btnHabilitar;
 
         public AdministrarLaboratorios()
             // La responsable no instala equipos: a ella, que hay aqui (sin instrucciones de instalacion).
@@ -45,6 +48,16 @@ namespace DigBit
             // Con muchos laboratorios, el que se busca (por cualquier parte del nombre).
             txtBuscar = CrearBuscador(new Point(Margen, 112), 330);
             CrearLista(156);
+            if (!soloConsulta)
+            {
+                // En la fila del buscador y no abajo: abajo ya no cabe sin tapar el resumen.
+                btnHabilitar = EstiloHorarios.CrearBoton("Habilitar o deshabilitar...", new Point(ClientSize.Width - Margen - 240, 108), new Size(240, 38));
+                btnHabilitar.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+                btnHabilitar.Click += (s, e) => HabilitarODeshabilitar();
+                ayuda.SetToolTip(btnHabilitar, "Para que un laboratorio no corra todavía, conservando su horario: sin código, sin registros y sin faltas.");
+                Controls.Add(btnHabilitar);
+            }
+
             grid.Columns.Add("nombre", "Laboratorio");
             grid.Columns.Add("codigos", "Códigos");
             grid.Columns.Add("clases", "Franjas en el horario");
@@ -155,7 +168,7 @@ namespace DigBit
 
         private void Aplicar(string seleccionar)
         {
-            // Los desactivados, al final.
+            // Los deshabilitados, al final.
             List<LaboratorioInfo> ordenados = laboratorios
                 .Where(l => EstiloAdmin.Coincide(EstiloAdmin.Normalizar(l.Nombre), txtBuscar.Text))
                 .OrderBy(l => !l.Activo).ThenBy(l => l.Nombre).ToList();
@@ -168,11 +181,11 @@ namespace DigBit
                     l.Sesiones,
                     EstiloAdmin.Fecha(l.UltimaSesion),
                     l.EquiposRecientes,
-                    l.Activo ? "En uso" : "Desactivado"
+                    l.Activo ? "En uso" : "Deshabilitado"
                 },
                 l => !l.Activo, l => l.Nombre, seleccionar);
 
-            int desactivados = laboratorios.Count(l => !l.Activo);
+            int deshabilitados = laboratorios.Count(l => !l.Activo);
             // En medio de la lista vacia, por que lo esta (no un rectangulo blanco).
             ListaDigBit.PonerTextoVacio(grid, laboratorios.Count == 0 ? "Todavía no hay laboratorios."
                 : "Ningún laboratorio coincide con la búsqueda. Borra la búsqueda.");
@@ -180,10 +193,10 @@ namespace DigBit
                 ? "Todavía no hay laboratorios."
                 : ordenados.Count < laboratorios.Count
                 ? "Se ven " + ordenados.Count + " de " + laboratorios.Count + " laboratorios."
-                : (laboratorios.Count - desactivados) + ((laboratorios.Count - desactivados) == 1 ? " laboratorio en uso" : " laboratorios en uso")
-                  + (desactivados > 0 ? " y " + desactivados + (desactivados == 1 ? " desactivado" : " desactivados") : "");
+                : (laboratorios.Count - deshabilitados) + ((laboratorios.Count - deshabilitados) == 1 ? " laboratorio en uso" : " laboratorios en uso")
+                  + (deshabilitados > 0 ? " y " + deshabilitados + (deshabilitados == 1 ? " deshabilitado" : " deshabilitados") : "");
             // En solo consulta no hay "Quitar": la nota no le dice nada.
-            NotaFija = soloConsulta || datos.DesactivacionDisponible ? "" : "Para desactivar falta la migración 08 en la base.";
+            NotaFija = soloConsulta || datos.DesactivacionDisponible ? "" : "Para deshabilitar falta la migración 08 en la base.";
             // Ya se sabe si la base tiene los modos (db/11): el boton de Codigos.
             ActualizarBotones();
         }
@@ -212,7 +225,12 @@ namespace DigBit
             if (btnQuitar != null)
             {
                 btnQuitar.Enabled = laboratorio != null;
-                btnQuitar.Text = laboratorio != null && !laboratorio.Activo ? "Reactivar" : "Quitar";
+                btnQuitar.Text = laboratorio != null && !laboratorio.Activo ? "Habilitar" : "Quitar";
+            }
+
+            if (btnHabilitar != null)
+            {
+                btnHabilitar.Enabled = datos.DesactivacionDisponible && laboratorios.Count > 0;
             }
         }
 
@@ -289,7 +307,7 @@ namespace DigBit
         }
 
         /// <summary>
-        /// El horario del elegido, si esta en uso: Horarios no tiene los desactivados.
+        /// El horario del elegido, si esta en uso: Horarios no tiene los deshabilitados.
         /// Por eso con ellos "Ver su horario" se apaga y el doble clic de solo
         /// consulta no hace nada.
         /// </summary>
@@ -302,9 +320,25 @@ namespace DigBit
             }
         }
 
+        /// <summary>Casillas con todos los laboratorios: marcados los que corren.</summary>
+        private void HabilitarODeshabilitar()
+        {
+            if (Permisos.Bloquear(this, "Habilitar o deshabilitar laboratorios")) return;
+
+            using (DialogoHabilitarLaboratorios dialogo = new DialogoHabilitarLaboratorios(datos, laboratorios))
+            {
+                if (dialogo.ShowDialog(this) == DialogResult.OK)
+                {
+                    LaboratorioInfo elegido = Seleccionado<LaboratorioInfo>();
+                    Recargar(elegido == null ? null : elegido.Nombre);
+                    Avisar(dialogo.Resumen);
+                }
+            }
+        }
+
         private void QuitarOReactivar()
         {
-            if (Permisos.Bloquear(this, "Quitar o reactivar un laboratorio")) return;
+            if (Permisos.Bloquear(this, "Quitar o habilitar un laboratorio")) return;
 
             LaboratorioInfo laboratorio = Seleccionado<LaboratorioInfo>();
             if (laboratorio == null)
@@ -318,7 +352,7 @@ namespace DigBit
                 {
                     datos.Reactivar(laboratorio.Id);
                     Recargar(laboratorio.Nombre);
-                    Avisar(laboratorio.Nombre + " vuelve a estar en uso: sale en el panel y en Horarios.");
+                    Avisar(laboratorio.Nombre + " ya está habilitado: sale en el panel y en Horarios, y sus clases vuelven a correr.");
                     return;
                 }
 
@@ -328,7 +362,8 @@ namespace DigBit
                     if (MessageBox.Show(this,
                         laboratorio.Nombre + " tiene " + laboratorio.FranjasVigentes
                         + (laboratorio.FranjasVigentes == 1 ? " franja" : " franjas") + " de clases vigentes en el horario.\n\n"
-                        + "Muévelas a otro laboratorio o quítalas en Horarios, y después vuelve a quitarlo.\n\n¿Abrir su horario ahora?",
+                        + "Muévelas a otro laboratorio o quítalas en Horarios, y después vuelve a quitarlo. "
+                        + "Si solo quieres que no corra por ahora, usa «Habilitar o deshabilitar...»: conserva su horario.\n\n¿Abrir su horario ahora?",
                         "Quitar laboratorio", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
                     {
                         VerHorarioSeleccionado();
@@ -355,22 +390,22 @@ namespace DigBit
                 if (!datos.DesactivacionDisponible)
                 {
                     MessageBox.Show(this,
-                        laboratorio.Nombre + " tiene historial (" + laboratorio.Sesiones + " sesiones), así que no se borra: se desactiva. "
+                        laboratorio.Nombre + " tiene historial (" + laboratorio.Sesiones + " sesiones), así que no se borra: se deshabilita. "
                         + "Para eso falta aplicar db/08_migracion_bajas.sql en la base de datos: pide a quien administra el servidor que la aplique.",
                         "Quitar laboratorio", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
 
                 if (DialogoConfirmacion.Preguntar(this, "Quitar laboratorio",
-                    "¿Desactivar " + laboratorio.Nombre + "?",
+                    "¿Deshabilitar " + laboratorio.Nombre + "?",
                     "Tiene historial (" + laboratorio.Sesiones + (laboratorio.Sesiones == 1 ? " sesión" : " sesiones")
                     + "), así que no se borra: deja de salir en el panel y en Horarios, y sus bitácoras se conservan en los informes. "
-                    + "Puedes reactivarlo cuando quieras.",
-                    "Desactivar"))
+                    + "Puedes habilitarlo cuando quieras.",
+                    "Deshabilitar"))
                 {
                     datos.Desactivar(laboratorio.Id);
                     Recargar(laboratorio.Nombre);
-                    Avisar("Se desactivó " + laboratorio.Nombre + ".");
+                    Avisar("Se deshabilitó " + laboratorio.Nombre + ".");
                 }
             }
             catch (ErrorDeDatos ex)
@@ -379,8 +414,141 @@ namespace DigBit
             }
             catch (Exception ex)
             {
-                AvisoDeFalloAdmin.Mostrar(this, "Quitar o reactivar el laboratorio " + laboratorio.Nombre, ex, "No se pudo cambiar el laboratorio", Text);
+                AvisoDeFalloAdmin.Mostrar(this, "Quitar o habilitar el laboratorio " + laboratorio.Nombre, ex, "No se pudo cambiar el laboratorio", Text);
             }
+        }
+    }
+
+    /// <summary>
+    /// Que laboratorios corren: marcados, los habilitados. Para instalar DigBit en uno solo sin
+    /// armar otra plantilla: los demas conservan su horario y no generan nada hasta habilitarlos.
+    /// </summary>
+    internal class DialogoHabilitarLaboratorios : Form
+    {
+        private readonly LaboratoriosDatos datos;
+        private readonly List<LaboratorioInfo> laboratorios;
+        private readonly CheckedListBox lista;
+        private readonly Label lblError;
+
+        public DialogoHabilitarLaboratorios(LaboratoriosDatos datos, IEnumerable<LaboratorioInfo> laboratorios)
+        {
+            this.datos = datos;
+            this.laboratorios = laboratorios.OrderBy(l => l.Nombre).ToList();
+            EstiloHorarios.PrepararDialogo(this, "Habilitar o deshabilitar", new Size(600, 548));
+            Controls.Add(EstiloAdmin.TituloDialogo("Habilitar o deshabilitar laboratorios", 552));
+            Controls.Add(new Label
+            {
+                AutoSize = false,
+                Font = new DrawingFont("Century Gothic", 10F),
+                ForeColor = Color.FromArgb(80, 80, 80),
+                Location = new Point(24, 58),
+                Size = new Size(552, 24),
+                Text = "Marca los laboratorios donde ya se usa DigBit."
+            });
+
+            lista = new CheckedListBox
+            {
+                CheckOnClick = true,
+                Font = new DrawingFont("Century Gothic", 10F),
+                IntegralHeight = false,
+                Location = new Point(24, 88),
+                Size = new Size(552, 220)
+            };
+            foreach (LaboratorioInfo laboratorio in this.laboratorios)
+            {
+                lista.Items.Add(laboratorio.Nombre + "  (" + laboratorio.FranjasVigentes + (laboratorio.FranjasVigentes == 1 ? " franja)" : " franjas)"), laboratorio.Activo);
+            }
+
+            Controls.Add(lista);
+            Controls.Add(new Label
+            {
+                AutoSize = false,
+                Font = new DrawingFont("Century Gothic", 10F, FontStyle.Bold),
+                ForeColor = EstiloAdmin.TextoOscuro,
+                Location = new Point(24, 322),
+                Size = new Size(552, 24),
+                Text = "Los que quedan sin marcar:"
+            });
+            Controls.Add(new Label
+            {
+                AutoSize = false,
+                Font = new DrawingFont("Century Gothic", 9.5F),
+                ForeColor = Color.FromArgb(80, 80, 80),
+                Location = new Point(24, 348),
+                Size = new Size(552, 88),
+                Text = "•  Conservan su horario, que vuelve tal cual al habilitarlos.\n"
+                    + "•  Sus docentes no ven esas clases ni su código.\n"
+                    + "•  Sus equipos no aceptan registros.\n"
+                    + "•  Esos días no cuentan faltas ni alertas, tampoco después de habilitarlos."
+            });
+
+            lblError = EstiloAdmin.LineaError(new Point(24, 440), 552, 44);
+            Controls.Add(lblError);
+            EstiloAdmin.BotonesDialogo(this, "Guardar", Guardar);
+            ActiveControl = lista;
+        }
+
+        /// <summary>Que cambio, para el aviso de la pantalla.</summary>
+        public string Resumen { get; private set; }
+
+        private void Guardar()
+        {
+            if (Permisos.Bloquear(this, "Habilitar o deshabilitar laboratorios")) return;
+
+            List<LaboratorioInfo> apagar = laboratorios.Where((l, i) => l.Activo && !lista.GetItemChecked(i)).ToList();
+            List<LaboratorioInfo> encender = laboratorios.Where((l, i) => !l.Activo && lista.GetItemChecked(i)).ToList();
+            if (apagar.Count == 0 && encender.Count == 0)
+            {
+                DialogResult = DialogResult.Cancel;
+                return;
+            }
+
+            List<string> partes = new List<string>();
+            if (apagar.Count > 0)
+            {
+                partes.Add("Se deshabilita" + (apagar.Count == 1 ? " " : "n ") + Nombres(apagar) + ": desde ahora no corre" + (apagar.Count == 1 ? "" : "n") + ".");
+            }
+
+            if (encender.Count > 0)
+            {
+                partes.Add("Se habilita" + (encender.Count == 1 ? " " : "n ") + Nombres(encender) + ": sus clases corren desde ahora.");
+            }
+
+            if (apagar.Count == laboratorios.Count)
+            {
+                partes.Add("No queda ningún laboratorio en uso.");
+            }
+
+            if (!DialogoConfirmacion.Preguntar(this, "Habilitar o deshabilitar", "¿Guardar estos cambios?", string.Join(" ", partes), "Guardar", false))
+            {
+                return;
+            }
+
+            try
+            {
+                datos.CambiarHabilitados(apagar.Select(l => l.Id).ToList(), encender.Select(l => l.Id).ToList());
+                // Corto: cabe en la linea de abajo de la pantalla; el detalle ya se confirmo.
+                Resumen = "Guardado: " + string.Join(" y ", new[]
+                {
+                    apagar.Count == 0 ? null : apagar.Count + (apagar.Count == 1 ? " deshabilitado" : " deshabilitados"),
+                    encender.Count == 0 ? null : encender.Count + (encender.Count == 1 ? " habilitado" : " habilitados")
+                }.Where(p => p != null)) + ".";
+                DialogResult = DialogResult.OK;
+            }
+            catch (ErrorDeDatos ex)
+            {
+                lblError.Text = ex.Message;
+            }
+            catch (Exception ex)
+            {
+                Infraestructura.Log.Error("Habilitar o deshabilitar laboratorios", ex);
+                lblError.Text = AvisoDeFalloAdmin.Texto("No se pudo guardar", ex);
+            }
+        }
+
+        private static string Nombres(List<LaboratorioInfo> lista)
+        {
+            return RevisionCiclo.Enumerar(lista.Select(l => l.Nombre).ToList());
         }
     }
 

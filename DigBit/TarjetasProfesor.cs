@@ -669,6 +669,13 @@ namespace DigBit
                 return;
             }
 
+            // Todo su horario esta en laboratorios deshabilitados: sin codigo que dictar.
+            if (panorama.SoloDeshabilitados)
+            {
+                Texto(g, "Tus clases son en laboratorios deshabilitados en DigBit: por ahora no hay código ni registros.", fuenteTexto, Color.Gray, interior, ref y, true);
+                return;
+            }
+
             List<SesionAgenda> abiertas;
             SesionAgenda proxima;
             SesionAgenda relevante;

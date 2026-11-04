@@ -65,70 +65,76 @@ namespace DigBit.conexion
         {
             using (MySqlConnection conexion = new Conexion().GetConexion())
             {
-                if (!Esquema.Ajustes(conexion))
+                return Leer(conexion, null, claves);
+            }
+        }
+
+        /// <summary>Leer en una conexion (y transaccion) que ya se tiene.</summary>
+        internal static Dictionary<string, string> Leer(MySqlConnection conexion, MySqlTransaction transaccion, params string[] claves)
+        {
+            if (!Esquema.Ajustes(conexion, transaccion))
+            {
+                return null;
+            }
+
+            Dictionary<string, string> valores = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (claves.Length == 0)
+            {
+                return valores;
+            }
+
+            // Cada clave con sus posibles trozos.
+            List<string> buscadas = new List<string>();
+            foreach (string clave in claves)
+            {
+                buscadas.Add(clave);
+                for (int trozo = 2; trozo <= TrozosMaximos; trozo++)
                 {
-                    return null;
+                    buscadas.Add(Trozo(clave, trozo));
+                }
+            }
+
+            Dictionary<string, string> leidos = new Dictionary<string, string>(StringComparer.Ordinal);
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT clave, valor FROM configuracion WHERE clave IN ("
+                + string.Join(", ", buscadas.Select((c, i) => "@C" + i)) + ")", conexion, transaccion))
+            {
+                for (int i = 0; i < buscadas.Count; i++)
+                {
+                    comando.Parameters.AddWithValue("@C" + i, buscadas[i]);
                 }
 
-                Dictionary<string, string> valores = new Dictionary<string, string>(StringComparer.Ordinal);
-                if (claves.Length == 0)
+                using (MySqlDataReader lector = comando.ExecuteReader())
                 {
-                    return valores;
-                }
-
-                // Cada clave con sus posibles trozos.
-                List<string> buscadas = new List<string>();
-                foreach (string clave in claves)
-                {
-                    buscadas.Add(clave);
-                    for (int trozo = 2; trozo <= TrozosMaximos; trozo++)
+                    while (lector.Read())
                     {
-                        buscadas.Add(Trozo(clave, trozo));
-                    }
-                }
-
-                Dictionary<string, string> leidos = new Dictionary<string, string>(StringComparer.Ordinal);
-                using (MySqlCommand comando = new MySqlCommand(
-                    "SELECT clave, valor FROM configuracion WHERE clave IN ("
-                    + string.Join(", ", buscadas.Select((c, i) => "@C" + i)) + ")", conexion))
-                {
-                    for (int i = 0; i < buscadas.Count; i++)
-                    {
-                        comando.Parameters.AddWithValue("@C" + i, buscadas[i]);
-                    }
-
-                    using (MySqlDataReader lector = comando.ExecuteReader())
-                    {
-                        while (lector.Read())
+                        if (!lector.IsDBNull(1))
                         {
-                            if (!lector.IsDBNull(1))
-                            {
-                                leidos[lector.GetString(0)] = lector.GetString(1);
-                            }
+                            leidos[lector.GetString(0)] = lector.GetString(1);
                         }
                     }
                 }
+            }
 
-                foreach (string clave in claves)
+            foreach (string clave in claves)
+            {
+                string valor;
+                if (!leidos.TryGetValue(clave, out valor))
                 {
-                    string valor;
-                    if (!leidos.TryGetValue(clave, out valor))
-                    {
-                        continue;
-                    }
-
-                    // Los trozos seguidos; uno que falta corta ahi (no deberia pasar: se guardan juntos).
-                    string resto;
-                    for (int trozo = 2; trozo <= TrozosMaximos && leidos.TryGetValue(Trozo(clave, trozo), out resto); trozo++)
-                    {
-                        valor += resto;
-                    }
-
-                    valores[clave] = valor;
+                    continue;
                 }
 
-                return valores;
+                // Los trozos seguidos; uno que falta corta ahi (no deberia pasar: se guardan juntos).
+                string resto;
+                for (int trozo = 2; trozo <= TrozosMaximos && leidos.TryGetValue(Trozo(clave, trozo), out resto); trozo++)
+                {
+                    valor += resto;
+                }
+
+                valores[clave] = valor;
             }
+
+            return valores;
         }
 
         /// <summary>
@@ -160,21 +166,7 @@ namespace DigBit.conexion
 
                 foreach (KeyValuePair<string, string> par in valores)
                 {
-                    List<string> trozos = Partir((par.Value ?? "").Trim());
-                    for (int trozo = 1; trozo <= TrozosMaximos; trozo++)
-                    {
-                        string clave = trozo == 1 ? par.Key : Trozo(par.Key, trozo);
-                        bool queda = trozo <= trozos.Count;
-                        using (MySqlCommand comando = new MySqlCommand(queda
-                            ? "INSERT INTO configuracion (clave, valor) VALUES (@Clave, @Valor) ON DUPLICATE KEY UPDATE valor = VALUES(valor)"
-                            : "DELETE FROM configuracion WHERE clave = @Clave",
-                            conexion, transaccion))
-                        {
-                            comando.Parameters.AddWithValue("@Clave", clave);
-                            comando.Parameters.AddWithValue("@Valor", queda ? trozos[trozo - 1] : "");
-                            comando.ExecuteNonQuery();
-                        }
-                    }
+                    GuardarEn(conexion, transaccion, par.Key, par.Value);
                 }
 
                 transaccion.Commit();
@@ -183,6 +175,26 @@ namespace DigBit.conexion
             // Solo los nombres: la clave de la API no va al log.
             Log.Info("Ajustes guardados: " + string.Join(", ", valores.Select(p => p.Key + (string.IsNullOrWhiteSpace(p.Value) ? " (borrado)"
                 : p.Value.Trim().Length > LargoTrozo ? " (" + Partir(p.Value.Trim()).Count + " trozos)" : ""))) + ".");
+        }
+
+        /// <summary>Un ajuste, en la transaccion de quien llama (que ya comprobo el permiso y que hay tabla).</summary>
+        internal static void GuardarEn(MySqlConnection conexion, MySqlTransaction transaccion, string claveDelAjuste, string valor)
+        {
+            List<string> trozos = Partir((valor ?? "").Trim());
+            for (int trozo = 1; trozo <= TrozosMaximos; trozo++)
+            {
+                string clave = trozo == 1 ? claveDelAjuste : Trozo(claveDelAjuste, trozo);
+                bool queda = trozo <= trozos.Count;
+                using (MySqlCommand comando = new MySqlCommand(queda
+                    ? "INSERT INTO configuracion (clave, valor) VALUES (@Clave, @Valor) ON DUPLICATE KEY UPDATE valor = VALUES(valor)"
+                    : "DELETE FROM configuracion WHERE clave = @Clave",
+                    conexion, transaccion))
+                {
+                    comando.Parameters.AddWithValue("@Clave", clave);
+                    comando.Parameters.AddWithValue("@Valor", queda ? trozos[trozo - 1] : "");
+                    comando.ExecuteNonQuery();
+                }
+            }
         }
 
         /// <summary>"aviso_privacidad_texto#2": la clave del trozo 2 en adelante.</summary>
