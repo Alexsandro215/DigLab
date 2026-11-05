@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Datos de prueba para desarrollo local
+-- DigLab 2.0 - Datos de prueba para desarrollo local
 -- =============================================================================
 -- NO USAR EN PRODUCCION: las contrasenas de abajo son publicas y el hash es MD5.
 --
@@ -65,7 +65,7 @@ INSERT INTO materias (id_materia, nombre_materia, idcarreras) VALUES
     (11, 'Taller de Titulacion', 1);
 
 -- Cuatro laboratorios, como en el TESCHI. El equipo de desarrollo se configura
--- como 'Laboratorio de Computo 1' (appSettings Laboratorio o DIGBIT_LABORATORIO).
+-- como 'Laboratorio de Computo 1' (appSettings Laboratorio o DIGLAB_LABORATORIO).
 INSERT INTO laboratorios (idlaboratorios, nombre_laboratorio) VALUES
     (1, 'Laboratorio de Computo 1'),
     (2, 'Laboratorio de Computo 2'),
@@ -96,7 +96,7 @@ VALUES
     (3, 'EMP001',   'Marta',   'Velazco',  'Nunez',   'marta.velazco@teschi.edu.mx',   '70cf5c0095d91b8f2b9798700651df25', 2),
     (4, 'EMP002',   'Jorge',   'Salinas',  'Cruz',    'jorge.salinas@teschi.edu.mx',   '70cf5c0095d91b8f2b9798700651df25', 2),
     -- MD5('admin123') = 0192023a7bbd73250516f069df18b500
-    (5, 'ADMIN001', 'Administrador', 'DigBit', '',    'sistemas@teschi.edu.mx',        '0192023a7bbd73250516f069df18b500', 3),
+    (5, 'ADMIN001', 'Administrador', 'DigLab', '',    'sistemas@teschi.edu.mx',        '0192023a7bbd73250516f069df18b500', 3),
     (6, 'EMP003',   'Laura',   'Cardenas', 'Rios',    'laura.cardenas@teschi.edu.mx',  '70cf5c0095d91b8f2b9798700651df25', 2),
     (7, 'EMP004',   'Ricardo', 'Pena',     'Soto',    'ricardo.pena@teschi.edu.mx',    '70cf5c0095d91b8f2b9798700651df25', 2),
     (8, 'EMP005',   'Sofia',   'Montes',   'Diaz',    'sofia.montes@teschi.edu.mx',    '70cf5c0095d91b8f2b9798700651df25', 2),

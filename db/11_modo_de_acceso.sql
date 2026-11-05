@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: como entran los alumnos a sus clases
+-- DigLab 2.0 - Migracion: como entran los alumnos a sus clases
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas.
@@ -12,7 +12,7 @@
 --   'renovable'   "generacion de codigos": un codigo distinto por clase y dia,
 --                 generado al empezar cada semana a partir de un secreto en
 --                 configuracion (db/13). Solo el administrador los ve todos; el
---                 profesor ve el de su clase al entrar a DigBit durante ella
+--                 profesor ve el de su clase al entrar a DigLab durante ella
 --                 (desde 15 minutos antes), y solo vale para esa clase.
 --   'sin_codigo'  "sin codigos": el alumno inicia sesion y llena su bitacora;
 --                 con una sola clase en ese laboratorio a esa hora se elige
@@ -30,7 +30,7 @@
 --
 -- ORDEN: aplicarla no cambia nada (todo queda en 'fijo'). No saques un
 -- laboratorio de 'fijo' hasta que TODOS sus equipos y las computadoras de sus
--- profesores tengan DigBit 1.1 (deploy\diagnostico_equipo.ps1 lo dice): una
+-- profesores tengan DigLab 1.1 (deploy\diagnostico_equipo.ps1 lo dice): una
 -- version anterior no conoce los modos y seguiria aceptando el codigo fijo.
 --
 -- Solo anade una columna a una tabla de pocas filas: es inmediato, tambien en

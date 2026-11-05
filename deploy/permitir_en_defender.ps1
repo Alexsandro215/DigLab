@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    Hace que Microsoft Defender deje de tratar a DigBit como malware, y recupera
+    Hace que Microsoft Defender deje de tratar a DigLab como malware, y recupera
     lo que ya haya puesto en cuarentena.
 
 .DESCRIPTION
-    Defender detecta a DigBit como "Trojan:Win32/Bearfoos.A!ml" y lo pone en
+    Defender detecta a DigLab como "Trojan:Win32/Bearfoos.A!ml" y lo pone en
     cuarentena. Es un FALSO POSITIVO, pero no es caprichoso: el sufijo !ml
     significa que lo decidio un modelo de aprendizaje automatico, y lo que ve es
     un ejecutable SIN FIRMAR que se registra a si mismo como shell de Winlogon,
@@ -13,7 +13,7 @@
     aqui es intencionado.
 
     Este guion hace tres cosas:
-      1. Excluye la carpeta de DigBit y sus dos ejecutables.
+      1. Excluye la carpeta de DigLab y sus dos ejecutables.
       2. Recupera de la cuarentena lo que ya se haya llevado.
       3. Comprueba que el ejecutable volvio a su sitio.
 
@@ -28,12 +28,12 @@
 
 .EXAMPLE
     .\permitir_en_defender.ps1
-    .\permitir_en_defender.ps1 -Destino D:\DigBit
+    .\permitir_en_defender.ps1 -Destino D:\DigLab
     .\permitir_en_defender.ps1 -Quitar
 #>
 [CmdletBinding()]
 param(
-    [string]$Destino = 'C:\DigBit',
+    [string]$Destino = 'C:\DigLab',
     [string]$Amenaza = 'Trojan:Win32/Bearfoos.A!ml',
 
     # Quita las exclusiones. Defender volvera a vigilar esa carpeta y, si el
@@ -56,8 +56,8 @@ if (-not (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) {
 }
 
 $Destino   = [IO.Path]::GetFullPath($Destino)
-$exeDigBit = Join-Path $Destino 'DigBit.exe'
-$exeVigila = Join-Path $Destino 'Vigilante\DigBit.Vigilante.exe'
+$exeDigLab = Join-Path $Destino 'DigLab.exe'
+$exeVigila = Join-Path $Destino 'Vigilante\DigLab.Vigilante.exe'
 
 # --- Quitar --------------------------------------------------------------------
 if ($Quitar) {
@@ -66,11 +66,11 @@ if ($Quitar) {
         try { Remove-MpPreference -ExclusionPath $ruta -ErrorAction Stop; Write-Host "   quitada la carpeta $ruta" }
         catch { Write-Host "   no habia exclusion para $ruta" }
     }
-    foreach ($exe in @($exeDigBit, $exeVigila)) {
+    foreach ($exe in @($exeDigLab, $exeVigila)) {
         try { Remove-MpPreference -ExclusionProcess $exe -ErrorAction Stop; Write-Host "   quitado el proceso $exe" }
         catch { Write-Host "   no habia exclusion para $exe" }
     }
-    Write-Warning 'Defender vuelve a vigilar esa carpeta. Mientras DigBit no este firmado, es probable que lo ponga en cuarentena otra vez.'
+    Write-Warning 'Defender vuelve a vigilar esa carpeta. Mientras DigLab no este firmado, es probable que lo ponga en cuarentena otra vez.'
     return
 }
 
@@ -78,7 +78,7 @@ if ($Quitar) {
 Paso "1. Excluir $Destino en Defender"
 Add-MpPreference -ExclusionPath $Destino
 Write-Host "   carpeta excluida: $Destino"
-foreach ($exe in @($exeDigBit, $exeVigila)) {
+foreach ($exe in @($exeDigLab, $exeVigila)) {
     Add-MpPreference -ExclusionProcess $exe
     Write-Host "   proceso excluido: $exe"
 }
@@ -122,13 +122,13 @@ else {
 
 # --- 3. Comprobar ----------------------------------------------------------------
 Paso '3. Comprobar que el ejecutable esta en su sitio'
-if (Test-Path $exeDigBit) {
-    $i = Get-Item $exeDigBit
-    Write-Host ("   {0}  {1:N0} bytes  {2}" -f $exeDigBit, $i.Length, $i.LastWriteTime) -ForegroundColor Green
+if (Test-Path $exeDigLab) {
+    $i = Get-Item $exeDigLab
+    Write-Host ("   {0}  {1:N0} bytes  {2}" -f $exeDigLab, $i.Length, $i.LastWriteTime) -ForegroundColor Green
 }
 else {
-    Write-Host "   $exeDigBit NO esta." -ForegroundColor Red
-    Write-Host '   Recupera desde Seguridad de Windows o vuelve a copiarlo con deploy\actualizar_digbit.ps1.' -ForegroundColor Red
+    Write-Host "   $exeDigLab NO esta." -ForegroundColor Red
+    Write-Host '   Recupera desde Seguridad de Windows o vuelve a copiarlo con deploy\actualizar_diglab.ps1.' -ForegroundColor Red
 }
 
 Write-Host ''

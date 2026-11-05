@@ -1,15 +1,15 @@
 <?php
-// DigBit - API de recuperacion de contrasena (ver LEEME.md). PHP 7.2 o posterior.
+// DigLab - API de recuperacion de contrasena (ver LEEME.md). PHP 7.2 o posterior.
 //
-// La llama DigBit desde "Olvidaste tu contrasena?" del inicio de sesion, por
-// POST (formulario o JSON) y con la cabecera X-DigBit-Clave:
+// La llama DigLab desde "Olvidaste tu contrasena?" del inicio de sesion, por
+// POST (formulario o JSON) y con la cabecera X-DigLab-Clave:
 //   accion=solicitar  matricula                       -> manda un codigo de 6 cifras a su correo
 //   accion=confirmar  matricula, codigo, contrasena   -> si el codigo vale, pone la contrasena nueva
 //   accion=probar                                     -> (Ajustes del administrador) base y correo listos; no manda nada
 // Responde JSON: {"ok": true|false, "mensaje": "...", ...}. El mensaje esta
-// escrito para el alumno: DigBit lo ensena tal cual.
+// escrito para el alumno: DigLab lo ensena tal cual.
 
-define('DIGBIT_API', true);
+define('DIGLAB_API', true);
 // Dias que se guarda cada solicitud (con la matricula, la IP y el equipo de quien
 // pidio): los limites solo miran la ultima hora y el ultimo dia. Es el plazo que
 // debe decir el aviso de privacidad.
@@ -20,27 +20,27 @@ require __DIR__ . '/lib/correo.php';
 // La contrasena del correo y la de la base no deben salir en ningun error.
 ini_set('display_errors', '0');
 set_exception_handler(function ($e) {
-    error_log('DigBit API: ' . get_class($e) . ': ' . $e->getMessage());
+    error_log('DigLab API: ' . get_class($e) . ': ' . $e->getMessage());
     responder(500, false, 'El servicio de recuperación tuvo un problema y no pudo atenderte. Inténtalo en un momento; '
         . 'si sigue, avisa a la persona responsable del laboratorio.');
 });
 
-// DigBit no sigue redirecciones: esto solo lo ve quien abre la direccion en el navegador.
+// DigLab no sigue redirecciones: esto solo lo ve quien abre la direccion en el navegador.
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-    responder(405, false, 'Esta es la API de recuperación de contraseña de DigBit: solo atiende a DigBit, por POST.');
+    responder(405, false, 'Esta es la API de recuperación de contraseña de DigLab: solo atiende a DigLab, por POST.');
 }
 
 $c = cfg();
 // Con el secreto de ejemplo cualquiera que lea este codigo podria calcular los
 // codigos guardados: no se atiende hasta que se cambie.
 if (strlen((string)$c['secreto']) < 24 || stripos((string)$c['secreto'], 'CAMBIA') !== false) {
-    error_log('DigBit API: el secreto de config.php sigue siendo el de ejemplo o es muy corto.');
+    error_log('DigLab API: el secreto de config.php sigue siendo el de ejemplo o es muy corto.');
     responder(500, false, 'El servicio de recuperación no está configurado. Avisa a la persona responsable del laboratorio.');
 }
 
 // La clave de ejemplo tampoco: es la que cualquiera probaria primero.
 if (stripos((string)$c['clave_api'], 'CAMBIA') !== false) {
-    error_log('DigBit API: la clave_api de config.php sigue siendo la de ejemplo.');
+    error_log('DigLab API: la clave_api de config.php sigue siendo la de ejemplo.');
     responder(500, false, 'El servicio de recuperación no está configurado. Avisa a la persona responsable del laboratorio.');
 }
 
@@ -48,9 +48,9 @@ if (!empty($c['solo_https']) && !es_https()) {
     responder(403, false, 'El servicio de recuperación solo atiende por https.');
 }
 
-$clave = isset($_SERVER['HTTP_X_DIGBIT_CLAVE']) ? (string)$_SERVER['HTTP_X_DIGBIT_CLAVE'] : '';
+$clave = isset($_SERVER['HTTP_X_DIGLAB_CLAVE']) ? (string)$_SERVER['HTTP_X_DIGLAB_CLAVE'] : '';
 if ((string)$c['clave_api'] !== '' && !hash_equals((string)$c['clave_api'], $clave)) {
-    // DigBit busca "autorizado" en este mensaje (Ajustes, Probar): no cambiar esa palabra.
+    // DigLab busca "autorizado" en este mensaje (Ajustes, Probar): no cambiar esa palabra.
     responder(403, false, 'Este equipo no está autorizado para recuperar contraseñas. Avisa a la persona responsable del laboratorio.');
 }
 
@@ -72,9 +72,9 @@ if ($accion === 'solicitar') {
     confirmar($matricula, trim(texto($datos, 'codigo', 12)), texto($datos, 'contrasena', 600));
 }
 
-// Solo con un DigBit de otra version que la API (o alguien que no es DigBit).
-responder(400, false, 'El servicio de recuperación no reconoce lo que pidió este equipo: DigBit y el servicio no son de la misma versión. '
-    . 'Avisa a la administración de DigBit.');
+// Solo con un DigLab de otra version que la API (o alguien que no es DigLab).
+responder(400, false, 'El servicio de recuperación no reconoce lo que pidió este equipo: DigLab y el servicio no son de la misma versión. '
+    . 'Avisa a la administración de DigLab.');
 
 // ---------------------------------------------------------------------------
 
@@ -91,7 +91,7 @@ function buscar_usuario($matricula)
 }
 
 /**
- * El boton "Probar" de Ajustes en DigBit: si llega aqui, la direccion y la
+ * El boton "Probar" de Ajustes en DigLab: si llega aqui, la direccion y la
  * clave son buenas. Comprueba la base (y los permisos que usan solicitar y
  * confirmar) y que la cuenta de correo deja entrar, sin mandar ningun correo.
  * Tambien borra las solicitudes viejas, como solicitar: sin permiso para eso
@@ -126,7 +126,7 @@ function probar()
         limitar_pruebas();
         anotar_sin_codigo(null, '(prueba)');
     } catch (PDOException $e) {
-        error_log('DigBit API (probar): ' . $e->getMessage());
+        error_log('DigLab API (probar): ' . $e->getMessage());
         responder(500, false, 'La API responde y la clave es correcta, pero no puede usar la base: ' . problema_de_base($e));
     }
 
@@ -147,7 +147,7 @@ function probar()
     } catch (Throwable $e) {
         // Lo que contesto el servidor de correo (a veces en ingles) va al registro;
         // a quien prueba, la causa y que revisar.
-        error_log('DigBit API (probar): ' . $e->getMessage());
+        error_log('DigLab API (probar): ' . $e->getMessage());
         // Corto: en Ajustes caben 4 lineas, tras "El servicio contesto: ".
         responder(502, false, 'La API y la base están listas, pero el correo ' . $cuenta . ' falló: ' . explicar_fallo_correo($e));
     }
@@ -166,14 +166,14 @@ function limite($clave, $porOmision)
 }
 
 /**
- * El equipo que pide, o '' si no lo dice. DigBit manda "numero @ laboratorio"
- * codificado como en una direccion (X-DigBit-Equipo: 12%20%40%20Sistemas...):
+ * El equipo que pide, o '' si no lo dice. DigLab manda "numero @ laboratorio"
+ * codificado como en una direccion (X-DigLab-Equipo: 12%20%40%20Sistemas...):
  * se guarda legible, con sus acentos, y solo con letras, cifras y los signos
  * de los nombres de equipo y laboratorio.
  */
 function equipo_cliente()
 {
-    $equipo = isset($_SERVER['HTTP_X_DIGBIT_EQUIPO']) ? rawurldecode((string)$_SERVER['HTTP_X_DIGBIT_EQUIPO']) : '';
+    $equipo = isset($_SERVER['HTTP_X_DIGLAB_EQUIPO']) ? rawurldecode((string)$_SERVER['HTTP_X_DIGLAB_EQUIPO']) : '';
     $limpio = preg_replace(array('/[^\p{L}\p{N} @._\-#()\/]/u', '/[\x{10000}-\x{10FFFF}]/u'), '', $equipo);
     if ($limpio === null) {
         // No es UTF-8 valido: solo lo ASCII imprimible.
@@ -212,7 +212,7 @@ function limitar_pruebas()
  * unos 500 correos al dia desde una cuenta normal; pasado eso deja de enviar y
  * puede bloquearla). Solo cuentan los codigos que salieron. Si se acabo alguno
  * pero la cuenta tiene un codigo que todavia vale, se le dice que use ese (con
- * el correo en la respuesta, DigBit pasa a escribirlo).
+ * el correo en la respuesta, DigLab pasa a escribirlo).
  */
 function comprobar_cupos($id, $correo)
 {
@@ -236,7 +236,7 @@ function comprobar_cupos($id, $correo)
         $motivo = 'ip';
     } elseif ($enLaHora >= limite('correos_por_hora', 100) || $enElDia >= limite('correos_por_dia', 400)) {
         $motivo = 'todos';
-        error_log('DigBit API: se llego al tope de correos (' . $enLaHora . ' en una hora, ' . $enElDia . ' en un dia).');
+        error_log('DigLab API: se llego al tope de correos (' . $enLaHora . ' en una hora, ' . $enElDia . ' en un dia).');
     } else {
         return;
     }
@@ -256,7 +256,7 @@ function comprobar_cupos($id, $correo)
         $cuando = valor("SELECT DATE_FORMAT(MIN(creado_en) + INTERVAL 1 HOUR + INTERVAL 59 SECOND, '%H:%i') FROM recuperacion_contrasena
             WHERE usuario_id = ? AND codigo_hash IS NOT NULL AND creado_en > NOW() - INTERVAL 1 HOUR", array($id));
         responder(429, false, 'Ya te enviamos ' . $porCuenta . ' códigos en la última hora y ya no vale ninguno. '
-            . 'Podrás pedir otro a las ' . $cuando . ', o pide a la administración de DigBit que te ponga una contraseña nueva.');
+            . 'Podrás pedir otro a las ' . $cuando . ', o pide a la administración de DigLab que te ponga una contraseña nueva.');
     }
 
     if ($motivo === 'equipo') {
@@ -267,7 +267,7 @@ function comprobar_cupos($id, $correo)
         responder(429, false, 'Se pidieron demasiados códigos desde esta red en la última hora. Espera un rato o avisa a la persona responsable del laboratorio.');
     }
 
-    responder(429, false, 'Ahora se están pidiendo demasiados códigos. Inténtalo más tarde o pide a la administración de DigBit que te ponga una contraseña nueva.');
+    responder(429, false, 'Ahora se están pidiendo demasiados códigos. Inténtalo más tarde o pide a la administración de DigLab que te ponga una contraseña nueva.');
 }
 
 /**
@@ -279,14 +279,14 @@ function comprobar_cupos($id, $correo)
  */
 function tomar_candado()
 {
-    if ((int)valor("SELECT GET_LOCK('digbit_recuperar', 3)") !== 1) {
+    if ((int)valor("SELECT GET_LOCK('diglab_recuperar', 3)") !== 1) {
         responder(503, false, 'El servicio de recuperación está ocupado. Inténtalo en unos segundos.');
     }
 }
 
 function soltar_candado()
 {
-    valor("SELECT RELEASE_LOCK('digbit_recuperar')");
+    valor("SELECT RELEASE_LOCK('diglab_recuperar')");
 }
 
 /** Deja constancia de una peticion sin codigo (para los limites). */
@@ -306,13 +306,13 @@ function anotar_sin_codigo($idUsuario, $matricula)
 function borrar_antiguas()
 {
     // Conectar, fuera: si la base no contesta, la peticion falla como siempre (y
-    // no se espera dos veces a la conexion, que DigBit corta a los 20 segundos).
+    // no se espera dos veces a la conexion, que DigLab corta a los 20 segundos).
     bd();
     try {
         // Por el indice de creado_en, y sin LIMIT: borra lo mismo en una replica.
         ejecutar('DELETE FROM recuperacion_contrasena WHERE creado_en < NOW() - INTERVAL ' . (int)DIAS_SOLICITUDES . ' DAY');
     } catch (PDOException $e) {
-        error_log('DigBit API: no se pudieron borrar las solicitudes de mas de ' . DIAS_SOLICITUDES . ' dias: ' . $e->getMessage());
+        error_log('DigLab API: no se pudieron borrar las solicitudes de mas de ' . DIAS_SOLICITUDES . ' dias: ' . $e->getMessage());
         return codigo_mysql($e) !== 1142;
     }
 
@@ -347,8 +347,8 @@ function solicitar($matricula)
         limitar_fallidas();
         anotar_sin_codigo($id, $matricula);
         responder(409, false, $correo === ''
-            ? 'Tu cuenta no tiene un correo registrado. Pide a la administración de DigBit que lo agregue o que te ponga una contraseña nueva.'
-            : 'El correo de tu cuenta (' . ocultar_correo($correo) . ') no es válido. Pide a la administración de DigBit que lo corrija '
+            ? 'Tu cuenta no tiene un correo registrado. Pide a la administración de DigLab que lo agregue o que te ponga una contraseña nueva.'
+            : 'El correo de tu cuenta (' . ocultar_correo($correo) . ') no es válido. Pide a la administración de DigLab que lo corrija '
                 . 'o que te ponga una contraseña nueva.');
     }
 
@@ -376,7 +376,7 @@ function solicitar($matricula)
         // Sin correo, ese codigo no le sirve a nadie (ni cuenta para su limite),
         // y el del correo anterior, si lo hay, sigue valiendo.
         ejecutar('UPDATE recuperacion_contrasena SET usado_en = NOW(), codigo_hash = NULL WHERE idrecuperacion = ?', array($idCodigo));
-        error_log('DigBit API: no se pudo enviar el codigo a ' . ocultar_correo($correo) . ': ' . $e->getMessage());
+        error_log('DigLab API: no se pudo enviar el codigo a ' . ocultar_correo($correo) . ': ' . $e->getMessage());
         responder(502, false, 'No se pudo enviar el correo con tu código. Inténtalo en unos minutos; si sigue, avisa a la persona '
             . 'responsable del laboratorio.');
     }
@@ -397,11 +397,11 @@ function confirmar($matricula, $codigo, $contrasena)
         responder(400, false, 'El código son las 6 cifras del correo.');
     }
 
-    // Las mismas reglas, en el mismo orden, que DigBit (conexion/ReglasCuenta.cs):
-    // de 6 a 128 caracteres contados como DigBit, y no solo espacios (con solo
+    // Las mismas reglas, en el mismo orden, que DigLab (conexion/ReglasCuenta.cs):
+    // de 6 a 128 caracteres contados como DigLab, y no solo espacios (con solo
     // espacios el inicio de sesion cree que el campo esta vacio). Su texto de
     // guia ya no estorba (es una marca de agua), asi que esa palabra se admite.
-    $largo = largo_como_digbit($contrasena);
+    $largo = largo_como_diglab($contrasena);
     if ($largo < 6) {
         responder(400, false, 'La contraseña nueva debe tener al menos 6 caracteres.');
     }
@@ -479,6 +479,6 @@ function confirmar($matricula, $codigo, $contrasena)
         throw $e;
     }
 
-    error_log('DigBit API: contrasena cambiada con codigo por correo para el usuario ' . $id . ' desde ' . ip_cliente() . '.');
+    error_log('DigLab API: contrasena cambiada con codigo por correo para el usuario ' . $id . ' desde ' . ip_cliente() . '.');
     responder(200, true, 'Listo: ya puedes entrar con tu contraseña nueva.');
 }

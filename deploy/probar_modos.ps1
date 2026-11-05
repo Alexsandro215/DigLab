@@ -4,7 +4,7 @@
     DESARROLLO.
 
 .DESCRIPTION
-    Carga DigBit.exe por reflexion y recorre el codigo unico de cada profesor,
+    Carga DigLab.exe por reflexion y recorre el codigo unico de cada profesor,
     la generacion de codigos (uno por clase y dia, generado al empezar la
     semana: lo ve el administrador, el profesor lo recibe al abrir su clase y
     el alumno entra con el aunque nadie la haya abierto) y sin codigos (el
@@ -30,20 +30,20 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
 
-    # Otro DigBit.exe; por defecto, el de DigBit\bin\<Configuration>.
+    # Otro DigLab.exe; por defecto, el de DigLab\bin\<Configuration>.
     [string]$Exe
 )
 
 $ErrorActionPreference = 'Stop'
 if ($CadenaConexion -match 'teschi\.edu\.mx') { throw 'Esta prueba escribe en la base: nunca contra la de la escuela.' }
-if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "..\DigBit\bin\$Configuration\DigBit.exe" }
+if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "..\DigLab\bin\$Configuration\DigLab.exe" }
 $Exe = (Resolve-Path $Exe).Path
 $script:carpeta = Split-Path $Exe
 
-$env:DIGBIT_CONNECTION_STRING = $CadenaConexion
+$env:DIGLAB_CONNECTION_STRING = $CadenaConexion
 # La copia local del horario y el log de la prueba, fuera de la carpeta de datos real.
-$env:DIGBIT_CARPETA_DATOS = Join-Path $env:TEMP 'digbit_probar_modos'
-New-Item -ItemType Directory -Force $env:DIGBIT_CARPETA_DATOS | Out-Null
+$env:DIGLAB_CARPETA_DATOS = Join-Path $env:TEMP 'diglab_probar_modos'
+New-Item -ItemType Directory -Force $env:DIGLAB_CARPETA_DATOS | Out-Null
 
 [AppDomain]::CurrentDomain.add_AssemblyResolve({
     param($origen, $pedido)
@@ -55,7 +55,7 @@ $app = [Reflection.Assembly]::LoadFrom($Exe)
 $null = [Reflection.Assembly]::LoadFrom((Join-Path $script:carpeta 'MySql.Data.dll'))
 $bf = [Reflection.BindingFlags]'Public,NonPublic,Instance,Static'
 function T([string]$n) { $app.GetType($n, $true) }
-$tHd = T 'DigBit.conexion.HorariosDatos'
+$tHd = T 'DigLab.conexion.HorariosDatos'
 $hd = [Activator]::CreateInstance($tHd, $true)
 function M([string]$nombre) { $tHd.GetMethod($nombre, $bf) }
 
@@ -105,7 +105,7 @@ function DevolverConFecha {
 }
 
 function Limpiar {
-    # Con db/21, lo que la prueba cambia con las funciones de DigBit queda en el
+    # Con db/21, lo que la prueba cambia con las funciones de DigLab queda en el
     # historial de cambios: se borra con lo demas (solo lo de sus laboratorios y clases).
     if ([int](Uno "SELECT COUNT(1) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'historial_cambios'") -gt 0) {
         $null = Sql @"
@@ -173,7 +173,7 @@ function Resolver([string]$codigo, [int]$lab) { (M 'ResolverCodigo').Invoke($hd,
 # Los campos int? y TimeSpan se ponen por reflexion: el adaptador de PowerShell no sabe.
 function Poner($objeto, [string]$campo, $valor) { $objeto.GetType().GetField($campo).SetValue($objeto, $valor) }
 function Entrada([int]$franja, [int]$prof, [int]$clase) {
-    $e = [Activator]::CreateInstance((T 'DigBit.conexion.SesionAgenda'))
+    $e = [Activator]::CreateInstance((T 'DigLab.conexion.SesionAgenda'))
     $f = $fr.Rows | Where-Object { [int]$_[0] -eq $franja } | Select-Object -First 1
     Poner $e 'EsExtra' $false; Poner $e 'FranjaId' ([int]$franja); Poner $e 'ProfesorId' $prof; Poner $e 'ClaseId' $clase
     Poner $e 'LaboratorioId' $X; Poner $e 'Inicio' ([TimeSpan]$f[1]); Poner $e 'Fin' ([TimeSpan]$f[2])
@@ -266,14 +266,14 @@ try {
     Modo $X 'renovable'
     $null = Sql "INSERT INTO horarios (clases_idclases, laboratorios_idlaboratorios, dia_semana, hora_inicio, hora_fin) VALUES ($cB, $X, WEEKDAY(CURDATE()) + 1, SUBTIME(CURTIME(), '00:01:00'), ADDTIME(CURTIME(), '00:30:00'))"
     $FE = [int](Uno "SELECT MAX(idhorarios) FROM horarios WHERE laboratorios_idlaboratorios = $X")
-    $sl = [Activator]::CreateInstance((T 'DigBit.conexion.SesionLocal'))
+    $sl = [Activator]::CreateInstance((T 'DigLab.conexion.SesionLocal'))
     Poner $sl 'Codigo' 'TSTCB'; Poner $sl 'ClaseId' $cB; Poner $sl 'FranjaId' ([int]$FE); Poner $sl 'Fecha' ([DateTime](Uno "SELECT CURDATE()"))
     Poner $sl 'Inicio' ([TimeSpan](Uno "SELECT hora_inicio FROM horarios WHERE idhorarios = $FE")); Poner $sl 'Fin' ([TimeSpan](Uno "SELECT hora_fin FROM horarios WHERE idhorarios = $FE"))
     Poner $sl 'LaboratorioId' $X; Poner $sl 'MateriaId' $materia; Poner $sl 'GrupoId' $grupo; Poner $sl 'ProfesorId' $profB
     # El que le toca, antes de que exista su sesion (despues, el administrador ve el de la sesion).
     $generadoE = [string](M 'CodigosGeneradosDe').Invoke($hd, @($X, $hoy, $hoy)).DeFranja($FE, $hoy)
-    $conexion = [Activator]::CreateInstance((T 'DigBit.Conexion'), $true).GetConexion()
-    try { $null = (T 'DigBit.conexion.ColaBitacoras').GetMethod('ObtenerOCrearSesion', $bf).Invoke($null, @($conexion, $sl)) } finally { $conexion.Dispose() }
+    $conexion = [Activator]::CreateInstance((T 'DigLab.Conexion'), $true).GetConexion()
+    try { $null = (T 'DigLab.conexion.ColaBitacoras').GetMethod('ObtenerOCrearSesion', $bf).Invoke($null, @($conexion, $sl)) } finally { $conexion.Dispose() }
     $codigoE = CodigoDe $FE
     Ver ("crea la sesion de un laboratorio con generacion de codigos con el generado ('" + $codigoE + "', no 'TSTCB')") ($codigoE -match '^[0-9]{5}$' -and $codigoE -eq $generadoE)
 
@@ -310,12 +310,12 @@ INSERT INTO horarios (clases_idclases, laboratorios_idlaboratorios, dia_semana, 
 "@
     $FZ1 = [int](Uno "SELECT MIN(idhorarios) FROM horarios WHERE laboratorios_idlaboratorios = $Z")
     $FZ2 = [int](Uno "SELECT MAX(idhorarios) FROM horarios WHERE laboratorios_idlaboratorios = $Z")
-    $tLab = T 'DigBit.conexion.LaboratoriosDatos'
+    $tLab = T 'DigLab.conexion.LaboratoriosDatos'
     $labs = [Activator]::CreateInstance($tLab, $true)
     # Con el objeto de verdad: New-Object lo devuelve envuelto y Invoke no lo convierte.
     $soloZ = [System.Collections.Generic.List[int]]::new()
     $soloZ.Add($Z)
-    $argumentos = [object[]]@($soloZ.PSObject.BaseObject, [Enum]::Parse((T 'DigBit.conexion.ModoCodigo'), 'Renovable'))
+    $argumentos = [object[]]@($soloZ.PSObject.BaseObject, [Enum]::Parse((T 'DigLab.conexion.ModoCodigo'), 'Renovable'))
     $null = $tLab.GetMethod('CambiarModo').Invoke($labs, $argumentos)
     Ver ("al pasar Z a renovable, la clase ya empezada recibe su sesion con el codigo fijo ('" + (CodigoDe $FZ1) + "') y la que aun no empieza no (" + (Sesiones $FZ2) + " sesiones)") ((CodigoDe $FZ1) -ceq 'TSTCA' -and (Sesiones $FZ2) -eq 0)
     $r = Resolver 'TSTCA' $Z
@@ -389,7 +389,7 @@ VALUES ('TSTPROFC','Carla','Modos','Prueba','x',2,'TSTCC');
     Ver ("la administracion la ve como no utilizable (" + $enPanel.Utilizable + "), el panel docente no la ve (" + $enProfesor + "), no se intenta abrir (" + $abierta + ") y no hay aviso ('" + $p.AvisoApertura + "')") ($enPanel -ne $null -and -not $enPanel.Utilizable -and $enProfesor -eq 0 -and $abierta -eq 0 -and [string]::IsNullOrEmpty($p.AvisoApertura))
 
     Write-Host "`n== Copia local del horario ==" -ForegroundColor Cyan
-    $tCache = T 'DigBit.conexion.CacheHorario'
+    $tCache = T 'DigLab.conexion.CacheHorario'
     $cache = $tCache.GetMethod('Actualizar', $bf).Invoke($null, @($X))
     Ver ("guarda el modo del laboratorio (" + $cache.Modo + ")") ($cache.Modo.ToString() -eq 'Renovable')
     $sal = $null

@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: cada profesor personaliza sus clases
+-- DigLab 2.0 - Migracion: cada profesor personaliza sus clases
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas.
@@ -20,7 +20,7 @@
 -- profesores, necesita leer, insertar, cambiar y borrar en la tabla nueva; se
 -- le dan aqui si quien ejecuta esto puede dar permisos (root). digbit_admin ya
 -- puede todo en la base. digbit_consulta (db/18) NO: el encargado nunca ve
--- las pantallas del profesor, y DigBit no lo deja entrar si esa cuenta puede
+-- las pantallas del profesor, y DigLab no lo deja entrar si esa cuenta puede
 -- escribir algo.
 --
 -- ORDEN: da igual. En los equipos con la version que la usa, el panel, Mi
@@ -51,9 +51,9 @@ CREATE TABLE IF NOT EXISTS personalizacion_clases (
     -- Como la llama el profesor. NULL = el nombre de la materia. La aplicacion
     -- quita lo que el utf8 de 3 bytes no guarda (emojis).
     nombre_corto    VARCHAR(24)  NULL,
-    -- PNG o JPEG de 128 x 128 que ya recorto DigBit, de 60 000 bytes como mucho.
+    -- PNG o JPEG de 128 x 128 que ya recorto DigLab, de 60 000 bytes como mucho.
     -- MEDIUMBLOB y no BLOB: un BLOB admite 65 535 bytes y, con el sql_mode vacio
-    -- de la escuela, lo que sobrara se cortaria sin error. DigBit ademas
+    -- de la escuela, lo que sobrara se cortaria sin error. DigLab ademas
     -- comprueba LENGTH(imagen) despues de guardar. NULL = las iniciales.
     imagen          MEDIUMBLOB   NULL,
     -- SHA1 de la imagen, calculado por el servidor sobre lo guardado. Se lee en

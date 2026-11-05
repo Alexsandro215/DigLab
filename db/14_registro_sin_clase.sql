@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: bitacoras sin clase ("uso libre", modo sin codigos)
+-- DigLab 2.0 - Migracion: bitacoras sin clase ("uso libre", modo sin codigos)
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas.
@@ -29,10 +29,10 @@
 --
 -- PERMISOS: ninguno nuevo. digbit_equipo (db/07) ya puede crear sesiones.
 --
--- ORDEN: aplicarla no cambia nada para nadie. Los equipos con DigBit 1.1 la
+-- ORDEN: aplicarla no cambia nada para nadie. Los equipos con DigLab 1.1 la
 -- notan solos: desde entonces, en un laboratorio sin codigos y sin clase, el
 -- alumno registra uso libre (antes no podia registrar). Una version anterior
--- de DigBit no lee sesiones sin profesor: actualiza los equipos del
+-- de DigLab no lee sesiones sin profesor: actualiza los equipos del
 -- administrador y de los laboratorios antes de pasar uno a "sin codigos".
 --
 -- Repetible: lo que ya esta, lo dice y no lo toca.

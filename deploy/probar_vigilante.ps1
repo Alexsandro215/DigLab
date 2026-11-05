@@ -4,12 +4,12 @@
     cerrar ninguna sesion de verdad.
 
 .DESCRIPTION
-    Escribe el archivo de traspaso (%ProgramData%\DigBit\sesion_activa.txt) a
+    Escribe el archivo de traspaso (%ProgramData%\DigLab\sesion_activa.txt) a
     mano para seis escenarios y muestra lo que el vigilante registro en cada
     uno. Tarda unos cuatro minutos. No necesita permisos de administrador.
 
 .EXAMPLE
-    .\probar_vigilante.ps1                        # usa DigBit.Vigilante\bin\Debug
+    .\probar_vigilante.ps1                        # usa DigLab.Vigilante\bin\Debug
     .\probar_vigilante.ps1 -Configuration Release
 #>
 [CmdletBinding()]
@@ -19,8 +19,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$exe     = Join-Path $PSScriptRoot "..\DigBit.Vigilante\bin\$Configuration\DigBit.Vigilante.exe"
-$carpeta = Join-Path $env:ProgramData 'DigBit'
+$exe     = Join-Path $PSScriptRoot "..\DigLab.Vigilante\bin\$Configuration\DigLab.Vigilante.exe"
+$carpeta = Join-Path $env:ProgramData 'DigLab'
 $ruta    = Join-Path $carpeta 'sesion_activa.txt'
 $log     = Join-Path $carpeta ('logs\vigilante-' + (Get-Date -Format 'yyyyMMdd') + '.log')
 
@@ -67,7 +67,7 @@ function Escenario([string]$nombre, [scriptblock]$cuerpo) {
 
 $inicio = (Get-Date).AddMinutes(-30)
 
-Escenario 'A: vigente, fin en 25 s, DigBit ausente (latido viejo) -> aviso + cierre simulado' {
+Escenario 'A: vigente, fin en 25 s, DigLab ausente (latido viejo) -> aviso + cierre simulado' {
     Escribir -fin (Get-Date).AddSeconds(25) -latido (Get-Date).AddMinutes(-3) -arranque (Arranque) -inicio $inicio
     Correr 40
 }

@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: horas que faltan por asignar en el horario en uso
+-- DigLab 2.0 - Migracion: horas que faltan por asignar en el horario en uso
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas: la tabla ya esta, y el permiso de digbit_consulta lo da la 18,
@@ -38,14 +38,14 @@
 --   digbit_equipo (db/07): nada. Los equipos de los laboratorios y de los
 --     profesores no cambian el horario.
 --
--- ORDEN: da igual. Sin ella DigBit funciona como antes (conexion/Esquema.cs):
+-- ORDEN: da igual. Sin ella DigLab funciona como antes (conexion/Esquema.cs):
 -- sin reemplazo ni pastilla. Crea una tabla nueva y no toca ninguna otra: se
--- puede aplicar en horario de clase. Solo la usa el DigBit de la
+-- puede aplicar en horario de clase. Solo la usa el DigLab de la
 -- administracion: no hace falta actualizar los equipos.
 --
 -- MariaDB 5.5 (la de la escuela): las fechas no llevan DEFAULT (alli no se
--- admite DEFAULT CURRENT_TIMESTAMP en un DATETIME); las pone DigBit con NOW()
--- del servidor, en la zona de DigBit (-06:00), como las demas.
+-- admite DEFAULT CURRENT_TIMESTAMP en un DATETIME); las pone DigLab con NOW()
+-- del servidor, en la zona de DigLab (-06:00), como las demas.
 --
 -- Repetible: lo que ya esta, lo deja como esta.
 --
@@ -58,7 +58,7 @@ USE teschi_otru;
 CREATE TABLE IF NOT EXISTS horas_por_asignar (
     idhoras_por_asignar  INT           NOT NULL AUTO_INCREMENT,
     -- La clase (clases.idclases) a la que le faltan horas. Sin claves foraneas,
-    -- como el historial: el renglon no se borra con nada (DigBit solo ensena
+    -- como el historial: el renglon no se borra con nada (DigLab solo ensena
     -- las de clases activas que no han terminado).
     clases_idclases      INT           NOT NULL,
     -- Lo que falta, en minutos (baja al ponerle horas a la clase), y lo que

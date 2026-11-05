@@ -1,4 +1,4 @@
-# DigBit - API de recuperacion: desde el navegador solo se abre recuperar.php.
+# DigLab - API de recuperacion: desde el navegador solo se abre recuperar.php.
 # Todo lo demas queda cerrado, tambien lo que alguien deje aqui despues: una
 # copia de config.php (config.php.bak, config.php~, config.php.txt...) llevaria
 # las contrasenas de la base y del correo. Lista blanca, no lista negra.
@@ -23,4 +23,4 @@
 
 # Opcional, y mejor: config.php fuera de la carpeta publica. Quita el "# " y pon
 # su ruta completa (en el hosting suele ser /home/<usuario>/...):
-# SetEnv DIGBIT_API_CONFIG /home/usuario/digbit_config.php
+# SetEnv DIGLAB_API_CONFIG /home/usuario/diglab_config.php

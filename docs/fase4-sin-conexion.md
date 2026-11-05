@@ -39,7 +39,7 @@ siempre, en segundo plano: EnviadorBitacoras sube la cola en cuanto puede
 
 ### `conexion\CacheHorario.cs` — copia local del horario
 
-`%LOCALAPPDATA%\DigBit\horario_local.xml`. Contiene, para el laboratorio del
+`%LOCALAPPDATA%\DigLab\horario_local.xml`. Contiene, para el laboratorio del
 equipo: las clases activas (código, vigencia, profesor, grupo, materia), las
 franjas del laboratorio, las excepciones de ayer a 14 días vista (canceladas
 de franjas del laboratorio y extras en él), la lista de alumnos (solo id y
@@ -70,7 +70,7 @@ copia de antes no lo trae y entonces no se ofrece).
 ### `conexion\ColaBitacoras.cs` — bitácoras pendientes
 
 `bitacoras_pendientes.xml`, en la carpeta de datos (la que sobrevive a Deep
-Freeze) o en `%LOCALAPPDATA%\DigBit`. `Encolar` guarda la bitácora con su
+Freeze) o en `%LOCALAPPDATA%\DigLab`. `Encolar` guarda la bitácora con su
 `SesionLocal`; `YaRegistrada(clave, matrícula)` sostiene la regla de una por
 alumno y sesión mientras no hay servidor; `Sincronizar()` recorre la cola con
 el servidor a la vista: busca al alumno por matrícula, usa la sesión que ya
@@ -107,7 +107,7 @@ reintenta después en vez de darlo por vacío y machacarlo.
 
 ### `Infraestructura\EnviadorBitacoras.cs` — el envío en segundo plano
 
-Un hilo propio, desde que arranca DigBit hasta que se cierra, también con la
+Un hilo propio, desde que arranca DigLab hasta que se cierra, también con la
 conexión bien: una bitácora puede quedar en la cola porque la red se cayó justo
 al guardar. Tras un fallo espera 15 s, 30 s, 1, 2 y 5 minutos (con ±20 % al azar,
 para que 30 equipos no reintenten a la vez); con la cola vacía, mira cada 5
@@ -115,7 +115,7 @@ minutos. `Encolar` y los avisos de red de Windows (`NetworkChange`) lo
 despiertan. Las conexiones de envío tienen 15 s de límite por orden, y tras un
 fallo global se vacía el pool de conexiones para no reutilizar una muerta.
 
-Antes de apagar desde DigBit (`AvisoApagado`), si quedan bitácoras se intenta
+Antes de apagar desde DigLab (`AvisoApagado`), si quedan bitácoras se intenta
 enviarlas 10 s; si no se puede, se avisa: con la carpeta de datos están a salvo
 y se enviarán al encender, sin ella (Deep Freeze) se perderían.
 
@@ -178,14 +178,14 @@ nunca. `TextoAviso()` es la franja naranja del login.
 ## Pruebas
 
 Con el MySQL portátil: se generó la copia, se apagó el servidor, se resolvieron
-códigos y se encolaron bitácoras con la copia, DigBit arrancó hasta el login en
+códigos y se encolaron bitácoras con la copia, DigLab arrancó hasta el login en
 modo sin conexión, se volvió a encender el servidor, la cola subió, las
 bitácoras quedaron marcadas y una repetida se descartó como duplicada. Los
 guiones están en el scratchpad de la sesión (`probar_sin_conexion_1.ps1` y
 `_2.ps1`); requieren apagar y encender el servidor, por eso no van en `deploy\`.
 
 El 2026-10-04, con el enviador en segundo plano, contra MySQL 8 y contra una
-copia de la base de la escuela en MariaDB 5.5.68 (cargando DigBit.exe desde un
+copia de la base de la escuela en MariaDB 5.5.68 (cargando DigLab.exe desde un
 programa de pruebas, sin pulsar botones): guardar en línea con aviso de equipos
 sin internet; red caída justo al guardar, simulada con un puerto cerrado (se
 encola con su sesión y llega con `registrado_sin_conexion = 0`); una cola escrita
@@ -194,7 +194,7 @@ enviador con el servidor "caído" (otra vez el puerto cerrado) y subiendo en
 cuanto vuelve; y `AvisoApagado.PuedeApagar` con y sin servidor, con la carpeta de
 datos persistente.
 
-Ese mismo día, DigBit.exe arrancando de verdad con una bitácora pendiente: el
+Ese mismo día, DigLab.exe arrancando de verdad con una bitácora pendiente: el
 enviador la subió en menos de un segundo, pero el hilo de la pantalla se quedó
 colgado en "Probando conexion". Era un interbloqueo de MySql.Data 8.2: `Open()`
 espera el semáforo global de los pools capturando el contexto de WinForms, y si

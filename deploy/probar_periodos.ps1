@@ -6,7 +6,7 @@
     base LOCAL de pruebas (127.0.0.1, puerto 3317 o 3318). Nunca contra la de la escuela.
 
 .DESCRIPTION
-    Carga DigBit.exe y MySql.Data.dll por reflexion, sin ensenar ninguna ventana. Nunca escribe
+    Carga DigLab.exe y MySql.Data.dll por reflexion, sin ensenar ninguna ventana. Nunca escribe
     nombres ni matriculas en la salida: van como huella (8 letras de su SHA-256).
 
       -Modo Foto -Salida <archivo> [-Comparar <otro>]
@@ -14,7 +14,7 @@
             los 30 dias y cinco fechas (de la semana, de septiembre, de julio, de 400 dias y
             las de "Este ciclo"), leidos desde cero y desde la cache, con todos los filtros en
             "Todos", cada laboratorio, 3 docentes y 3 grupos (y un docente que no existe). Con
-            -Comparar, dice en que difiere de otro volcado (p. ej. del DigBit de antes): solo
+            -Comparar, dice en que difiere de otro volcado (p. ej. del DigLab de antes): solo
             lo que existe en los dos.
       -Modo Ciclos [-Tsv <carpeta>]
             Sin base: la regla de los ciclos con los casos de la especificacion (y los c_*.tsv
@@ -38,7 +38,7 @@
             Solo lee con la cuenta de solo consulta (digbit_consulta, db/18).
 
 .EXAMPLE
-    .\probar_periodos.ps1 -Modo Foto -Exe ..\antes\DigBit.exe -Salida antes_otru.tsv -CadenaConexion 'Database=teschi_otru;Server=127.0.0.1;Port=3317;User Id=root;Password='
+    .\probar_periodos.ps1 -Modo Foto -Exe ..\antes\DigLab.exe -Salida antes_otru.tsv -CadenaConexion 'Database=teschi_otru;Server=127.0.0.1;Port=3317;User Id=root;Password='
 #>
 [CmdletBinding()]
 param(
@@ -46,12 +46,12 @@ param(
     [ValidateSet('Foto', 'Ciclos', 'Copia', 'Ciclo', 'Pdf', 'Fechas', 'Consulta')]
     [string]$Modo,
 
-    [string]$CadenaConexion = $env:DIGBIT_CONNECTION_STRING,
+    [string]$CadenaConexion = $env:DIGLAB_CONNECTION_STRING,
 
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
 
-    # Otro DigBit.exe; por defecto, el de DigBit\bin\<Configuration>.
+    # Otro DigLab.exe; por defecto, el de DigLab\bin\<Configuration>.
     [string]$Exe,
 
     [string]$Salida,
@@ -70,7 +70,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 function Revisar-Cadena([string]$cadena) {
-    if ([string]::IsNullOrWhiteSpace($cadena)) { throw 'Falta -CadenaConexion (o DIGBIT_CONNECTION_STRING).' }
+    if ([string]::IsNullOrWhiteSpace($cadena)) { throw 'Falta -CadenaConexion (o DIGLAB_CONNECTION_STRING).' }
     if ($cadena -match 'teschi\.edu\.mx') { throw 'Nunca contra la base de la escuela.' }
     if ($cadena -notmatch '(?i)(^|;)\s*(Server|Host|Data Source)\s*=\s*127\.0\.0\.1\s*(;|$)' -or $cadena -notmatch '(?i)(^|;)\s*Port\s*=\s*(3317|3318)\s*(;|$)') {
         throw 'Solo las bases locales de pruebas: Server=127.0.0.1 y Port=3317 o 3318.'
@@ -83,7 +83,7 @@ function Base-De([string]$cadena) {
 }
 
 if ($Modo -ne 'Ciclos' -or -not [string]::IsNullOrWhiteSpace($CadenaConexion)) { Revisar-Cadena $CadenaConexion }
-if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "..\DigBit\bin\$Configuration\DigBit.exe" }
+if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "..\DigLab\bin\$Configuration\DigLab.exe" }
 $Exe = (Resolve-Path $Exe).Path
 $script:carpeta = Split-Path $Exe
 
@@ -176,11 +176,11 @@ if ($Modo -eq 'Copia') {
 # ---------------------------------------------------------------------------
 # Lo demas, por reflexion desde C# (C# 5: Add-Type de Windows PowerShell).
 # ---------------------------------------------------------------------------
-$env:DIGBIT_CONNECTION_STRING = $CadenaConexion
-$env:DIGBIT_MODO_KIOSCO = 'false'
-$datos = Join-Path $env:TEMP ('digbit_probar_periodos_' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+$env:DIGLAB_CONNECTION_STRING = $CadenaConexion
+$env:DIGLAB_MODO_KIOSCO = 'false'
+$datos = Join-Path $env:TEMP ('diglab_probar_periodos_' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force $datos | Out-Null
-$env:DIGBIT_CARPETA_DATOS = $datos
+$env:DIGLAB_CARPETA_DATOS = $datos
 
 $codigo = @'
 using System;
@@ -219,8 +219,8 @@ public static class ProbarPeriodos
             return File.Exists(ruta) ? Assembly.LoadFrom(ruta) : null;
         };
         asm = Assembly.LoadFrom(exe);
-        T("DigBit.Infraestructura.Log").GetMethod("Configurar", TI).Invoke(null, new object[] { datos, "periodos" });
-        Type du = T("DigBit.conexion.Datos_User");
+        T("DigLab.Infraestructura.Log").GetMethod("Configurar", TI).Invoke(null, new object[] { datos, "periodos" });
+        Type du = T("DigLab.conexion.Datos_User");
         du.GetMethod("SetUser", TI).Invoke(null, new object[] { "ADMPRUEBA" });
         du.GetProperty("TipoUsuario", TI).SetValue(null, 3, null);
     }
@@ -275,10 +275,10 @@ public static class ProbarPeriodos
         throw new Exception("No hay metodo " + n + "(" + a.Length + ")");
     }
 
-    private static Type Datos { get { return T("DigBit.conexion.EstadisticasDatos"); } }
-    private static Type Periodo { get { return T("DigBit.conexion.PeriodoElegido"); } }
+    private static Type Datos { get { return T("DigLab.conexion.EstadisticasDatos"); } }
+    private static Type Periodo { get { return T("DigLab.conexion.PeriodoElegido"); } }
 
-    private static object De(string tipo) { return Periodo.GetMethod("De", TI).Invoke(null, new object[] { Enum.Parse(T("DigBit.conexion.TipoPeriodo"), tipo) }); }
+    private static object De(string tipo) { return Periodo.GetMethod("De", TI).Invoke(null, new object[] { Enum.Parse(T("DigLab.conexion.TipoPeriodo"), tipo) }); }
     private static object EntreFechas(DateTime a, DateTime b) { return Periodo.GetMethod("EntreFechas", TI).Invoke(null, new object[] { a, b }); }
     private static object DesdeHastaHoy(DateTime a) { return Periodo.GetMethod("DesdeHastaHoy", TI).Invoke(null, new object[] { a }); }
     private static object DelCiclo(object c) { return Periodo.GetMethod("DelCiclo", TI).Invoke(null, new object[] { c }); }
@@ -322,7 +322,7 @@ public static class ProbarPeriodos
         }
     }
 
-    /// <summary>Las lineas del log de DigBit de esta prueba que dicen eso.</summary>
+    /// <summary>Las lineas del log de DigLab de esta prueba que dicen eso.</summary>
     private static List<string> LineasDelLog(string contiene)
     {
         List<string> lineas = new List<string>();
@@ -621,7 +621,7 @@ public static class ProbarPeriodos
 
     private static IList ClasesLeidas(List<Clase> todas)
     {
-        Type tClase = T("DigBit.conexion.ClaseLeida");
+        Type tClase = T("DigLab.conexion.ClaseLeida");
         IList lista = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(tClase));
         foreach (Clase c in todas)
         {
@@ -649,7 +649,7 @@ public static class ProbarPeriodos
         return string.Join(",", partes);
     }
 
-    /// <summary>Como CiclosJuez.Mostrar, con ArmarCiclos y CicloEnCursoDe de DigBit.</summary>
+    /// <summary>Como CiclosJuez.Mostrar, con ArmarCiclos y CicloEnCursoDe de DigLab.</summary>
     private static string Mostrar(List<Clase> todas, DateTime hoy)
     {
         IList clases = ClasesLeidas(todas);
@@ -746,7 +746,7 @@ public static class ProbarPeriodos
 
     private static object NuevoCiclo(string nombre, bool aplicado, bool repetido, string desde, string hasta)
     {
-        object c = Activator.CreateInstance(T("DigBit.conexion.CicloEscolar"), true);
+        object c = Activator.CreateInstance(T("DigLab.conexion.CicloEscolar"), true);
         Set(c, "Nombre", nombre);
         Set(c, "NombreAplicado", aplicado);
         Set(c, "NombreRepetido", repetido);
@@ -759,8 +759,8 @@ public static class ProbarPeriodos
     /// <summary>Una lectura vacia con ese hoy (para Resolver y los textos, sin base).</summary>
     private static object LecturaDe(DateTime hoy, DateTime? cicloDesde)
     {
-        object l = Activator.CreateInstance(T("DigBit.conexion.LecturaEstadisticas"), true);
-        object a = Activator.CreateInstance(T("DigBit.conexion.LecturaDeAsistencia"), true);
+        object l = Activator.CreateInstance(T("DigLab.conexion.LecturaEstadisticas"), true);
+        object a = Activator.CreateInstance(T("DigLab.conexion.LecturaDeAsistencia"), true);
         Set(a, "AhoraServidor", hoy.AddHours(10));
         Set(a, "DesdeLectura", hoy.AddDays(-30));
         Set(a, "HastaLectura", hoy);
@@ -861,7 +861,7 @@ public static class ProbarPeriodos
 
     private static object Sql(string sql)
     {
-        object conexion = Call(Activator.CreateInstance(T("DigBit.Conexion"), true), "GetConexion");
+        object conexion = Call(Activator.CreateInstance(T("DigLab.Conexion"), true), "GetConexion");
         try
         {
             Type tCmd = conexion.GetType().Assembly.GetType("MySql.Data.MySqlClient.MySqlCommand");
@@ -876,7 +876,7 @@ public static class ProbarPeriodos
 
     private static Delegate EntreDias(DateTime desde, DateTime hasta)
     {
-        Type tDia = T("DigBit.conexion.DiaDeAsistencia");
+        Type tDia = T("DigLab.conexion.DiaDeAsistencia");
         ParameterExpression d = Expression.Parameter(tDia, "d");
         Expression fecha = Expression.PropertyOrField(d, "Fecha");
         Expression cuerpo = Expression.AndAlso(Expression.GreaterThanOrEqual(fecha, Expression.Constant(desde)), Expression.LessThanOrEqual(fecha, Expression.Constant(hasta)));
@@ -935,13 +935,13 @@ public static class ProbarPeriodos
         string ayudaC1 = S(Get(Get(Get(r, "Cifras"), "Asistencia"), "Ayuda"));
         Ver("la ayuda de C1 dice lo de Mis grupos para el ciclo", ayudaC1.Contains("Quien entr\u00f3 a la lista despu\u00e9s del primer d\u00eda de su clase cuenta con falta en las clases de antes, como en Mis grupos.")
             && !ayudaC1.Contains("pueden bajar"), ayudaC1);
-        Ver("la linea de Estudiantes: '(solo quienes registraron en el ciclo: ...)'", S(Get(r, "LineaEstudiantes")).EndsWith("(solo quienes registraron en el ciclo: DigBit no tiene la lista oficial de cada grupo)."), S(Get(r, "LineaEstudiantes")));
+        Ver("la linea de Estudiantes: '(solo quienes registraron en el ciclo: ...)'", S(Get(r, "LineaEstudiantes")).EndsWith("(solo quienes registraron en el ciclo: DigLab no tiene la lista oficial de cada grupo)."), S(Get(r, "LineaEstudiantes")));
         object conAviso = Calcular(lx, Resolver(periodo, lx, 0, 999999, 0));
         Ver("un docente sin clases en el ciclo: 'Ese docente no tiene clases en este ciclo: se ve todo el personal.'", S(Get(Get(conAviso, "Filtro"), "Aviso")) == "Ese docente no tiene clases en este ciclo: se ve todo el personal.");
 
         // b) Cada clase: lo mismo que Mis grupos (DeLaClase) en los dias del ciclo.
-        object asistencia = Activator.CreateInstance(T("DigBit.conexion.AsistenciaDatos"), true);
-        Type tResumen = T("DigBit.conexion.ResumenAsistencia");
+        object asistencia = Activator.CreateInstance(T("DigLab.conexion.AsistenciaDatos"), true);
+        Type tResumen = T("DigLab.conexion.ResumenAsistencia");
         Delegate cuenta = EntreDias(desde, hasta);
         int iguales = 0, conSesiones = 0;
         List<string> distintas = new List<string>();
@@ -961,9 +961,9 @@ public static class ProbarPeriodos
             distintas.Count == 0, string.Join("; ", distintas));
 
         // c) C2 y Docentes como Faltas (LeerCalendario de los dias del ciclo).
-        object horarios = Activator.CreateInstance(T("DigBit.conexion.HorariosDatos"), true);
+        object horarios = Activator.CreateInstance(T("DigLab.conexion.HorariosDatos"), true);
         object calendario = Call(horarios, "LeerCalendario", desde, hasta, false);
-        Type tResumenDia = T("DigBit.ResumenDia");
+        Type tResumenDia = T("DigLab.ResumenDia");
         object total = Activator.CreateInstance(tResumenDia, true);
         Dictionary<int, object> porDocente = new Dictionary<int, object>();
         foreach (object c in Lista(calendario, "Clases"))
@@ -1052,7 +1052,7 @@ public static class ProbarPeriodos
 
     private static object DatosDelReporte(object r, object lectura)
     {
-        object d = Activator.CreateInstance(T("DigBit.DatosDelReporte"), true);
+        object d = Activator.CreateInstance(T("DigLab.DatosDelReporte"), true);
         Set(d, "Periodo", Call(Datos, "NombreDelPeriodo", r));
         Set(d, "NombreCorto", Call(Datos, "NombreCortoDelPeriodo", r));
         Set(d, "NotaDelPeriodo", Call(Datos, "NotaDelPeriodoParaElReporte", r));
@@ -1062,7 +1062,7 @@ public static class ProbarPeriodos
         Set(d, "Docente", "Todo el personal docente");
         Set(d, "Grupo", "Todos los grupos");
         Set(d, "Agrupacion", Get(Get(r, "Graficas"), "Sugerida"));
-        Set(d, "GeneradoPor", "ADMPRUEBA (administraci\u00f3n de DigBit)");
+        Set(d, "GeneradoPor", "ADMPRUEBA (administraci\u00f3n de DigLab)");
         Set(d, "GeneradoEn", Get(lectura, "AhoraServidor"));
         Set(d, "LeidoEn", Get(lectura, "AhoraServidor"));
         Set(d, "ConDocentes", true);
@@ -1095,7 +1095,7 @@ public static class ProbarPeriodos
         object l = Leer(periodo, false);
         object r = Calc(periodo, l);
         object datos = DatosDelReporte(r, l);
-        byte[] pdf = (byte[])Call(T("DigBit.ReporteAuditoriaPdf"), "Crear", r, datos);
+        byte[] pdf = (byte[])Call(T("DigLab.ReporteAuditoriaPdf"), "Crear", r, datos);
         string ruta = Path.Combine(carpetaSalida, "reporte_" + nombre + ".pdf");
         File.WriteAllBytes(ruta, pdf);
         string texto = TextoDelPdf(pdf);
@@ -1107,7 +1107,7 @@ public static class ProbarPeriodos
 
         if (archivo != null)
         {
-            string nombreArchivo = (string)Call(T("DigBit.ReporteAuditoriaPdf"), "NombreArchivo", datos, false);
+            string nombreArchivo = (string)Call(T("DigLab.ReporteAuditoriaPdf"), "NombreArchivo", datos, false);
             Ver("  NombreArchivo '" + nombreArchivo + "'", nombreArchivo == archivo);
         }
     }
@@ -1193,16 +1193,16 @@ public static class ProbarPeriodos
         object rl = Calc(largo, Leer(largo, true));
         string desde = Fecha(hoy.AddDays(-399));
         L("  " + Get(rl, "LineaResumen"));
-        Ver("'Del 01/06/2024 a hoy' (mas de 400 dias): se cuenta desde el " + desde, S(Get(rl, "LineaResumen")).StartsWith("Del " + desde + " al " + Fecha(hoy) + ". DigBit cuenta como mucho 400 d\u00edas seguidos: se cuenta desde el " + desde + "."));
+        Ver("'Del 01/06/2024 a hoy' (mas de 400 dias): se cuenta desde el " + desde, S(Get(rl, "LineaResumen")).StartsWith("Del " + desde + " al " + Fecha(hoy) + ". DigLab cuenta como mucho 400 d\u00edas seguidos: se cuenta desde el " + desde + "."));
         Ver("  y el combo dice 'Del 01/06/2024 a hoy'", (string)Call(Datos, "TextoDePeriodo", largo, null) == "Del 01/06/2024 a hoy");
     }
 
     public static void Consulta()
     {
-        Type tConexion = T("DigBit.Conexion");
+        Type tConexion = T("DigLab.Conexion");
         object equipo = Call(Activator.CreateInstance(tConexion, true), "GetConexion");
         object[] args = { equipo, null };
-        string problema = (string)T("DigBit.conexion.CuentaDeConsulta").GetMethod("Preparar", TI).Invoke(null, args);
+        string problema = (string)T("DigLab.conexion.CuentaDeConsulta").GetMethod("Preparar", TI).Invoke(null, args);
         ((IDisposable)equipo).Dispose();
         if (problema != null)
         {
@@ -1210,7 +1210,7 @@ public static class ProbarPeriodos
             return;
         }
 
-        Type du = T("DigBit.conexion.Datos_User");
+        Type du = T("DigLab.conexion.Datos_User");
         tConexion.GetMethod("UsarCuentaDeSesion", TI).Invoke(null, new object[] { (string)args[1] });
         du.GetProperty("TipoUsuario", TI).SetValue(null, 4, null);
         try

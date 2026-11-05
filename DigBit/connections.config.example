@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Plantilla versionada. Copiala como 'connections.config' y completa los datos reales. -->
-<connectionStrings>
-  <add name="DigBit"
-       connectionString="Database=NOMBRE_BD;Server=SERVIDOR;User Id=USUARIO;Password=CONTRASENA"
-       providerName="MySql.Data.MySqlClient" />
-</connectionStrings>

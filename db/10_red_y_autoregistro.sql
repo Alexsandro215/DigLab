@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: equipos sin internet, hora de llegada y autoregistro
+-- DigLab 2.0 - Migracion: equipos sin internet, hora de llegada y autoregistro
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas.
@@ -35,7 +35,7 @@
 -- escrituras bloqueadas mientras tanto: corre esto fuera de horario de clase.
 -- Cambiar el valor por defecto, en cambio, no copia nada.
 --
--- ORDEN: da igual. La version anterior de DigBit no nombra estas columnas, y
+-- ORDEN: da igual. La version anterior de DigLab no nombra estas columnas, y
 -- la nueva no pregunta por equipos sin internet hasta verlas (conexion/Esquema.cs).
 --
 -- Repetible: lo que ya esta, lo dice y no lo toca.

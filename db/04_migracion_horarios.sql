@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion fase 6 (horarios por laboratorio) para una base que
+-- DigLab 2.0 - Migracion fase 6 (horarios por laboratorio) para una base que
 -- YA existe
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de la fase 6, no necesitas
@@ -48,7 +48,7 @@ PREPARE ejecutar FROM @sql; EXECUTE ejecutar; DEALLOCATE PREPARE ejecutar;
 -- -----------------------------------------------------------------------------
 INSERT INTO usuarios
     (numero_identificador, nombre, apellido_paterno, apellido_materno, correo, password, fk_tipo_usuario)
-SELECT 'ADMIN001', 'Administrador', 'DigBit', '', NULL, MD5('CAMBIAME'), 3
+SELECT 'ADMIN001', 'Administrador', 'DigLab', '', NULL, MD5('CAMBIAME'), 3
 FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM usuarios WHERE numero_identificador = 'ADMIN001');
 

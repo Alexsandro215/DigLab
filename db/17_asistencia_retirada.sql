@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: asistencias que el profesor quita durante su clase
+-- DigLab 2.0 - Migracion: asistencias que el profesor quita durante su clase
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas.
@@ -21,7 +21,7 @@
 -- encargados de laboratorio, solo la lee: si ya existe, tambien se le da aqui;
 -- si no, se lo da la 18 al crearla.
 --
--- ORDEN: aplicarla no cambia nada para nadie. Los equipos con DigBit 1.1 la
+-- ORDEN: aplicarla no cambia nada para nadie. Los equipos con DigLab 1.1 la
 -- notan solos y desde entonces el profesor puede quitar asistencias; sin ella,
 -- la lista solo se consulta.
 --
@@ -74,7 +74,7 @@ SET @sql := CASE
 END;
 PREPARE ejecutar FROM @sql; EXECUTE ejecutar; DEALLOCATE PREPARE ejecutar;
 
--- Lo mismo para digbit_consulta (db/18), pero SOLO leer: DigBit no deja entrar
+-- Lo mismo para digbit_consulta (db/18), pero SOLO leer: DigLab no deja entrar
 -- a los encargados con esa cuenta si puede escribir algo.
 SET @consulta := (SELECT GRANTEE FROM information_schema.USER_PRIVILEGES
                   WHERE GRANTEE LIKE '''digbit\_consulta''@%' LIMIT 1);

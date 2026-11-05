@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: historial de cambios (quien cambio que y cuando)
+-- DigLab 2.0 - Migracion: historial de cambios (quien cambio que y cuando)
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas: la tabla ya esta, y el permiso de digbit_consulta lo da la 18,
@@ -12,7 +12,7 @@
 -- decia antes, y quitar una cancelacion o una sesion extra borraba la fila sin
 -- dejar rastro.
 --
--- Con esta migracion, DigBit anota cada uno de esos cambios en
+-- Con esta migracion, DigLab anota cada uno de esos cambios en
 -- historial_cambios en la MISMA transaccion que el cambio: si el cambio queda,
 -- su renglon tambien, y si falla, ninguno. Con ella:
 --   - Alertas avisa de los cambios de horario que hizo OTRA persona ("Cambio de
@@ -31,14 +31,14 @@
 --   digbit_equipo (db/07): nada. Los equipos de los laboratorios y de los
 --     profesores no hacen ninguno de estos cambios.
 --
--- ORDEN: da igual. Sin ella DigBit funciona como antes (conexion/Esquema.cs);
--- con ella dejan rastro los cambios hechos desde un DigBit de esta version (el
+-- ORDEN: da igual. Sin ella DigLab funciona como antes (conexion/Esquema.cs);
+-- con ella dejan rastro los cambios hechos desde un DigLab de esta version (el
 -- del equipo del administrador). Crea una tabla nueva y no toca ninguna otra:
 -- se puede aplicar en horario de clase.
 --
 -- MariaDB 5.5 (la de la escuela): "cuando" no lleva DEFAULT (alli no se admite
--- DEFAULT CURRENT_TIMESTAMP en un DATETIME); lo pone DigBit con NOW() del
--- servidor, en la zona de DigBit (-06:00), como las demas fechas.
+-- DEFAULT CURRENT_TIMESTAMP en un DATETIME); lo pone DigLab con NOW() del
+-- servidor, en la zona de DigLab (-06:00), como las demas fechas.
 --
 -- Repetible: lo que ya esta, lo deja como esta.
 --

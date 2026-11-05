@@ -4,7 +4,7 @@
     base de DESARROLLO.
 
 .DESCRIPTION
-    Carga DigBit.exe por reflexion y ejercita HorariosDatos.ResolverCodigo (todos
+    Carga DigLab.exe por reflexion y ejercita HorariosDatos.ResolverCodigo (todos
     los motivos de rechazo), las excepciones, la validacion de franjas, la agenda
     y la marca "fuera de grupo" de los informes; con db/20, ademas, que una
     franja terminada no se da ni choca y la que la sustituye si. Crea sus propias clases de
@@ -27,15 +27,15 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
 
-    # Otro DigBit.exe; por defecto, el de DigBit\bin\<Configuration>.
+    # Otro DigLab.exe; por defecto, el de DigLab\bin\<Configuration>.
     [string]$Exe
 )
 
 $ErrorActionPreference = 'Stop'
 if ($CadenaConexion -match 'teschi\.edu\.mx') { throw 'Esta prueba escribe en la base: nunca contra la de la escuela.' }
-$exe   = if ($Exe) { $Exe } else { Join-Path $PSScriptRoot "..\DigBit\bin\$Configuration\DigBit.exe" }
+$exe   = if ($Exe) { $Exe } else { Join-Path $PSScriptRoot "..\DigLab\bin\$Configuration\DigLab.exe" }
 $mysql = $MysqlExe
-$env:DIGBIT_CONNECTION_STRING = $CadenaConexion
+$env:DIGLAB_CONNECTION_STRING = $CadenaConexion
 
 # Servidor, puerto y usuario para el cliente mysql, sacados de la cadena.
 $partes = @{}
@@ -69,8 +69,8 @@ if ($horaServidor -lt [TimeSpan]'03:00:00' -or $horaServidor -gt [TimeSpan]'21:0
 }
 
 $asm = [Reflection.Assembly]::LoadFrom($exe)
-$tHorarios  = $asm.GetType('DigBit.conexion.HorariosDatos')
-$tConsultas = $asm.GetType('DigBit.conexion.Consultas')
+$tHorarios  = $asm.GetType('DigLab.conexion.HorariosDatos')
+$tConsultas = $asm.GetType('DigLab.conexion.Consultas')
 $h = [Activator]::CreateInstance($tHorarios, $true)
 $c = [Activator]::CreateInstance($tConsultas, $true)
 $mResolver = $tHorarios.GetMethod('ResolverCodigo')

@@ -46,10 +46,10 @@ tools/
 
 # Paquete para probar en una maquina virtual (se regenera; ~37 MB)
 respaldos/
-DigBit-VM.zip
-DigBit-VM-actualizacion.zip
+DigLab-VM.zip
+DigLab-VM-actualizacion.zip
 # Paquete extraido para instalar en este equipo (se regenera del zip)
-/DigBit-Paquete/
+/DigLab-Paquete/
 
 # ---- Datos reales de la escuela: NUNCA al repo ----
 # Respaldos de la base del TESCHI (nombres, correos y hashes de alumnos) y

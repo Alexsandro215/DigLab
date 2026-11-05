@@ -4,7 +4,7 @@
     contra una base de DESARROLLO.
 
 .DESCRIPTION
-    Carga DigBit.exe por reflexion y recorre CicloPreliminarDatos.Aplicar.cs y
+    Carga DigLab.exe por reflexion y recorre CicloPreliminarDatos.Aplicar.cs y
     RevisionAplicacion:
       - prepara (con la capa de configuraciones) una copia del horario de hoy
         con algun cambio: se quitan las clases que chocan o se enciman en un
@@ -24,7 +24,7 @@
         llevan el codigo de su docente y franjas sin fecha propia, un solo
         renglon en el historial y su alerta para otra cuenta, y la guardada
         "como quedo";
-      - un DigBit sin db/20 (-ExeAnterior, en un proceso aparte) y este no
+      - un DigLab sin db/20 (-ExeAnterior, en un proceso aparte) y este no
         dejan entrar con el codigo antes del primer dia, y el dia nuevo ven las
         nuevas y no las recortadas;
       - lo que no deja deshacer: una sesion o una asistencia dada en una clase
@@ -46,7 +46,7 @@
     MODIFICA la base: solo contra una base local de desarrollo (127.0.0.1).
 
 .EXAMPLE
-    .\probar_aplicar.ps1 -CadenaConexion 'Database=teschi_otru;Server=127.0.0.1;Port=3317;User Id=root;Password=' -ExeAnterior C:\viejo\DigBit.exe
+    .\probar_aplicar.ps1 -CadenaConexion 'Database=teschi_otru;Server=127.0.0.1;Port=3317;User Id=root;Password=' -ExeAnterior C:\viejo\DigLab.exe
 
 .EXAMPLE
     .\probar_aplicar.ps1 -CadenaConexion 'Database=teschi_otru;Server=127.0.0.1;Port=3318;User Id=root;Password=' -Administrador ADMIN001 -SinConsulta
@@ -59,13 +59,13 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
 
-    # Otro DigBit.exe; por defecto, el de DigBit\bin\<Configuration>.
+    # Otro DigLab.exe; por defecto, el de DigLab\bin\<Configuration>.
     [string]$Exe,
 
     # numero_identificador de la cuenta de la administracion que aplica.
     [string]$Administrador = 'ADMPRUEBA',
 
-    # Un DigBit.exe anterior a la 20 (sin la vigencia de las franjas), para ver que no deja entrar antes de tiempo.
+    # Un DigLab.exe anterior a la 20 (sin la vigencia de las franjas), para ver que no deja entrar antes de tiempo.
     [string]$ExeAnterior,
 
     # Sin la parte de solo consulta (digbit_consulta).
@@ -75,7 +75,7 @@ param(
     [DateTime]$Desde = [DateTime]'2027-01-11',
     [DateTime]$Hasta = [DateTime]'2027-06-30',
 
-    # Uso interno: el proceso aparte que carga el DigBit anterior a la 20 (solo lee).
+    # Uso interno: el proceso aparte que carga el DigLab anterior a la 20 (solo lee).
     [switch]$Anterior,
     [int]$Laboratorio,
     [int]$ClaseNueva,
@@ -89,14 +89,14 @@ $ErrorActionPreference = 'Stop'
 if ($CadenaConexion -match 'teschi\.edu\.mx' -or $CadenaConexion -notmatch 'Server=(127\.0\.0\.1|localhost)(;|$)') {
     throw 'Esta prueba escribe en la base: solo contra una base local de desarrollo (Server=127.0.0.1), nunca contra la de la escuela.'
 }
-if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "..\DigBit\bin\$Configuration\DigBit.exe" }
+if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "..\DigLab\bin\$Configuration\DigLab.exe" }
 $Exe = (Resolve-Path $Exe).Path
 $script:carpeta = Split-Path $Exe
 
-$env:DIGBIT_CONNECTION_STRING = $CadenaConexion
+$env:DIGLAB_CONNECTION_STRING = $CadenaConexion
 # El log de la prueba, fuera de la carpeta de datos real.
-$env:DIGBIT_CARPETA_DATOS = Join-Path $env:TEMP 'digbit_probar_aplicar'
-New-Item -ItemType Directory -Force $env:DIGBIT_CARPETA_DATOS | Out-Null
+$env:DIGLAB_CARPETA_DATOS = Join-Path $env:TEMP 'diglab_probar_aplicar'
+New-Item -ItemType Directory -Force $env:DIGLAB_CARPETA_DATOS | Out-Null
 
 [AppDomain]::CurrentDomain.add_AssemblyResolve({
     param($origen, $pedido)
@@ -174,12 +174,12 @@ function Lista([int[]]$valores) {
 }
 
 # ---------------------------------------------------------------------------
-# Modo aparte: el DigBit anterior a la 20 (solo lee; lo lanza la prueba).
+# Modo aparte: el DigLab anterior a la 20 (solo lee; lo lanza la prueba).
 # ---------------------------------------------------------------------------
 if ($Anterior) {
-    $tH = T 'DigBit.conexion.HorariosDatos'
+    $tH = T 'DigLab.conexion.HorariosDatos'
     $hd = [Activator]::CreateInstance($tH, $true)
-    Ver "DigBit sin la vigencia de las franjas (no tiene VigenciaFranjas): $($app.GetName().Version), $Exe" (-not ($app.GetTypes() | Where-Object { $_.Name -eq 'VigenciaFranjas' }))
+    Ver "DigLab sin la vigencia de las franjas (no tiene VigenciaFranjas): $($app.GetName().Version), $Exe" (-not ($app.GetTypes() | Where-Object { $_.Name -eq 'VigenciaFranjas' }))
     $hoyA = [DateTime](Uno 'SELECT CURDATE()')
     $dia = [DateTime]$DiaNuevo
     $agenda = @($tH.GetMethod('AgendaDelDia', [Type[]]@([int], [DateTime])).Invoke($hd, [object[]]@($Laboratorio, $hoyA)))
@@ -205,15 +205,15 @@ if ($Anterior) {
 # ---------------------------------------------------------------------------
 # La prueba
 # ---------------------------------------------------------------------------
-$tDatos     = T 'DigBit.conexion.CicloPreliminarDatos'
-$tRevision  = T 'DigBit.conexion.RevisionCiclo'
-$tRevAp     = T 'DigBit.conexion.RevisionAplicacion'
-$tFuente    = T 'DigBit.conexion.FuentePreparacion'
-$tFranja    = T 'DigBit.conexion.FranjaCiclo'
-$tUsuario   = T 'DigBit.conexion.Datos_User'
-$tConexion  = T 'DigBit.Conexion'
-$tHorarios  = T 'DigBit.conexion.HorariosDatos'
-$tHistorial = T 'DigBit.conexion.HistorialCambios'
+$tDatos     = T 'DigLab.conexion.CicloPreliminarDatos'
+$tRevision  = T 'DigLab.conexion.RevisionCiclo'
+$tRevAp     = T 'DigLab.conexion.RevisionAplicacion'
+$tFuente    = T 'DigLab.conexion.FuentePreparacion'
+$tFranja    = T 'DigLab.conexion.FranjaCiclo'
+$tUsuario   = T 'DigLab.conexion.Datos_User'
+$tConexion  = T 'DigLab.Conexion'
+$tHorarios  = T 'DigLab.conexion.HorariosDatos'
+$tHistorial = T 'DigLab.conexion.HistorialCambios'
 $datos = [Activator]::CreateInstance($tDatos, $true)
 $horarios = [Activator]::CreateInstance($tHorarios, $true)
 
@@ -595,20 +595,20 @@ try {
     $fechaNueva = $Desde
     while ([int]$fechaNueva.DayOfWeek -ne ($dow % 7)) { $fechaNueva = $fechaNueva.AddDays(1) }
     $agenda = @($horarios.GetType().GetMethod('AgendaDelDia', [Type[]]@([int], [DateTime])).Invoke($horarios, [object[]]@($labNueva, $hoy)))
-    Ver "[este DigBit] hoy el laboratorio $labNueva no ensena la clase nueva" (-not ($agenda | Where-Object { $_.ClaseId -eq $idClaseNueva }))
+    Ver "[este DigLab] hoy el laboratorio $labNueva no ensena la clase nueva" (-not ($agenda | Where-Object { $_.ClaseId -eq $idClaseNueva }))
     $agenda = @($horarios.GetType().GetMethod('AgendaDelDia', [Type[]]@([int], [DateTime])).Invoke($horarios, [object[]]@($labNueva, $fechaNueva)))
-    Ver "[este DigBit] el $(Dmy $fechaNueva) si" (@($agenda | Where-Object { $_.ClaseId -eq $idClaseNueva }).Count -eq 1)
+    Ver "[este DigLab] el $(Dmy $fechaNueva) si" (@($agenda | Where-Object { $_.ClaseId -eq $idClaseNueva }).Count -eq 1)
     $antesS = [int](Uno 'SELECT COUNT(*) FROM codigos_accesos')
     $rc = $horarios.GetType().GetMethod('ResolverCodigo').Invoke($horarios, [object[]]@($codigoNuevo, $labNueva, $idAlumno, $null))
-    Ver "[este DigBit] hoy el codigo $codigoNuevo no deja entrar" (-not $rc.Aceptado -and [int](Uno 'SELECT COUNT(*) FROM codigos_accesos') -eq $antesS) "$($rc.Motivo): $($rc.Mensaje)"
+    Ver "[este DigLab] hoy el codigo $codigoNuevo no deja entrar" (-not $rc.Aceptado -and [int](Uno 'SELECT COUNT(*) FROM codigos_accesos') -eq $antesS) "$($rc.Motivo): $($rc.Mensaje)"
     if ($ExeAnterior) {
         $salida = & powershell -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -CadenaConexion $CadenaConexion -Exe $ExeAnterior -Anterior `
             -Laboratorio $labNueva -ClaseNueva $idClaseNueva -Codigo $codigoNuevo -DiaNuevo (F $fechaNueva) -Recortadas ($idsRecortables -join ',') -Alumno $idAlumno 2>&1
         $lineas = @($salida | ForEach-Object { "$_" } | Where-Object { $_ -match '^\[(OK |FALLO)\]' })
         foreach ($l in $lineas) { Ver ($l -replace '^\[(OK |FALLO)\] ', '') ($l.StartsWith('[OK ')) }
-        if ($lineas.Count -eq 0) { Ver 'el DigBit anterior a la 20 corrio' $false (($salida | ForEach-Object { "$_" }) -join ' / ') }
+        if ($lineas.Count -eq 0) { Ver 'el DigLab anterior a la 20 corrio' $false (($salida | ForEach-Object { "$_" }) -join ' / ') }
         $null = Sql "DELETE FROM codigos_accesos WHERE horarios_idhorarios IN (SELECT idhorarios FROM horarios WHERE clases_idclases > $maxClase)"
-    } else { Write-Host '   (sin -ExeAnterior: no se prueba un DigBit anterior a la 20)' -ForegroundColor Yellow }
+    } else { Write-Host '   (sin -ExeAnterior: no se prueba un DigLab anterior a la 20)' -ForegroundColor Yellow }
 
     Write-Host "`n== Lo que no deja deshacer ==" -ForegroundColor Cyan
     $franjaNueva = [int](Uno "SELECT idhorarios FROM horarios WHERE clases_idclases = $idClaseNueva LIMIT 1")
@@ -637,7 +637,7 @@ try {
     if (-not $SinConsulta) {
         $conexionEquipo = $tConexion.GetMethod('GetConexion').Invoke([Activator]::CreateInstance($tConexion, $true), [object[]]@())
         $argsPreparar = [object[]]@($conexionEquipo, $null)
-        $problema = (T 'DigBit.conexion.CuentaDeConsulta').GetMethod('Preparar', $bf).Invoke($null, $argsPreparar)
+        $problema = (T 'DigLab.conexion.CuentaDeConsulta').GetMethod('Preparar', $bf).Invoke($null, $argsPreparar)
         $conexionEquipo.Dispose()
         if ($problema) { Write-Host "   Se salta la de solo consulta: $problema" -ForegroundColor Yellow }
         else {

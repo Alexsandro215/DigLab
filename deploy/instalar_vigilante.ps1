@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Instala (o quita) el servicio DigBit.Vigilante en este equipo.
+    Instala (o quita) el servicio DigLab.Vigilante en este equipo.
 
 .DESCRIPTION
     El vigilante corre como LocalSystem y cierra la sesion de Windows del alumno
@@ -9,9 +9,9 @@
 
 .EXAMPLE
     .\instalar_vigilante.ps1
-        Instala desde ..\DigBit.Vigilante\bin\Release\DigBit.Vigilante.exe y lo arranca.
+        Instala desde ..\DigLab.Vigilante\bin\Release\DigLab.Vigilante.exe y lo arranca.
 
-    .\instalar_vigilante.ps1 -Ruta 'C:\DigBit\Vigilante\DigBit.Vigilante.exe'
+    .\instalar_vigilante.ps1 -Ruta 'C:\DigLab\Vigilante\DigLab.Vigilante.exe'
         Instala desde una ruta concreta: esa es la del equipo ya desplegado.
 
     .\instalar_vigilante.ps1 -Desinstalar
@@ -24,17 +24,17 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$nombre = 'DigBitVigilante'
+$nombre = 'DigLabVigilante'
 
 # OJO: $PSScriptRoot llega VACIO dentro de los valores por defecto del bloque
 # param cuando el guion se lanza con "powershell -File <ruta>", que es como lo
 # llama el instalador. En el cuerpo si esta, asi que se resuelve aqui. Con & o
 # dot-source funcionaba de las dos formas, y por eso no se vio antes.
-if (-not $Ruta) { $Ruta = Join-Path $PSScriptRoot '..\DigBit.Vigilante\bin\Release\DigBit.Vigilante.exe' }
+if (-not $Ruta) { $Ruta = Join-Path $PSScriptRoot '..\DigLab.Vigilante\bin\Release\DigLab.Vigilante.exe' }
 
 # El modo seguro arranca con cmd.exe como shell (SafeBoot\AlternateShell) y sin
 # los servicios que no esten en su lista. Es decir: Mayus + Reiniciar deja un
-# simbolo del sistema SIN DigBit y, hasta ahora, SIN vigilante, asi que la
+# simbolo del sistema SIN DigLab y, hasta ahora, SIN vigilante, asi que la
 # sesion tampoco se cerraba a su hora. Registrar el servicio aqui no impide
 # entrar en modo seguro --eso depende de que la contrasena del inicio automatico
 # deje de estar en claro-- pero al menos el vigilante sigue haciendo su trabajo.
@@ -67,7 +67,7 @@ function QuitarDeModoSeguro {
 # para provocarlo.
 if (-not $Desinstalar) {
     if (-not (Test-Path $Ruta)) {
-        throw "No se encontro $Ruta. No se toca el servicio actual. Compila en Release (.\build.cmd -Configuration Release -NoRun) o indica -Ruta; en un equipo ya desplegado es 'C:\DigBit\Vigilante\DigBit.Vigilante.exe'."
+        throw "No se encontro $Ruta. No se toca el servicio actual. Compila en Release (.\build.cmd -Configuration Release -NoRun) o indica -Ruta; en un equipo ya desplegado es 'C:\DigLab\Vigilante\DigLab.Vigilante.exe'."
     }
     $Ruta = (Resolve-Path $Ruta).Path
 }
@@ -110,9 +110,9 @@ if (Get-Service -Name $nombre -ErrorAction SilentlyContinue) {
 
 # binPath= necesita la ruta entre comillas si tiene espacios; sc.exe exige el
 # espacio despues de cada '='.
-sc.exe create $nombre binPath= "`"$Ruta`"" start= auto DisplayName= "DigBit Vigilante" obj= LocalSystem | Out-Null
+sc.exe create $nombre binPath= "`"$Ruta`"" start= auto DisplayName= "DigLab Vigilante" obj= LocalSystem | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "sc.exe create fallo con codigo $LASTEXITCODE." }
-sc.exe description $nombre "Cierra la sesion de Windows de quien usa el equipo cuando vence su codigo de acceso de DigBit." | Out-Null
+sc.exe description $nombre "Cierra la sesion de Windows de quien usa el equipo cuando vence su codigo de acceso de DigLab." | Out-Null
 sc.exe failure $nombre reset= 86400 actions= restart/5000/restart/5000/restart/5000 | Out-Null
 
 # Start-Service en vez de 'sc.exe start': espera a que arranque de verdad y, si
@@ -120,7 +120,7 @@ sc.exe failure $nombre reset= 86400 actions= restart/5000/restart/5000/restart/5
 try {
     Start-Service -Name $nombre -ErrorAction Stop
 } catch {
-    throw "El servicio $nombre se creo pero no arranca: $($_.Exception.Message) Mira $env:ProgramData\DigBit\logs y el Visor de eventos."
+    throw "El servicio $nombre se creo pero no arranca: $($_.Exception.Message) Mira $env:ProgramData\DigLab\logs y el Visor de eventos."
 }
 
 # Objetos, no texto: la salida de sc.exe esta traducida y 'STATE' no aparece en
@@ -134,4 +134,4 @@ RegistrarEnModoSeguro
 Write-Host "Servicio $nombre instalado desde $Ruta" -ForegroundColor Green
 Write-Host "  Estado: $($servicio.Status), arranque: $($servicio.StartType)"
 Write-Host "  Tambien arranca en modo seguro (SafeBoot Minimal y Network)"
-Write-Host "  Log: $env:ProgramData\DigBit\logs\vigilante-AAAAMMDD.log"
+Write-Host "  Log: $env:ProgramData\DigLab\logs\vigilante-AAAAMMDD.log"

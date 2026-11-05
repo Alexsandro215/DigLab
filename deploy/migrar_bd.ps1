@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Aplica las migraciones de DigBit sobre una base que ya existe, con respaldo
+    Aplica las migraciones de DigLab sobre una base que ya existe, con respaldo
     y revision previa, y se niega a seguir si algo va a fallar.
 
 .DESCRIPTION
@@ -36,7 +36,7 @@
     digbit_equipo y digbit_consulta; con otro usuario, lo dice con un AVISO.
 
     La 23 (configuraciones de horario) solo cambia las tablas de la 16, que
-    solo usa el DigBit de la administracion: no hace falta actualizar los
+    solo usa el DigLab de la administracion: no hace falta actualizar los
     equipos. Con root deja ademas que digbit_consulta las lea (la persona
     responsable del laboratorio ve las guardadas y las aplicadas); con otro
     usuario, lo dice con un AVISO.
@@ -47,7 +47,7 @@
     digbit_equipo y digbit_consulta; con otro usuario, lo dice con un AVISO.
 
     La 25 (horas que faltan por asignar) crea una tabla nueva y no toca nada
-    mas. Solo la usa el DigBit de la administracion: no hace falta actualizar
+    mas. Solo la usa el DigLab de la administracion: no hace falta actualizar
     los equipos. Con root deja ademas que digbit_consulta la lea (la persona
     responsable ve "Falta asignar"); con otro usuario, lo dice con un AVISO.
 
@@ -136,7 +136,7 @@ function Buscar([string]$nombre) {
     foreach ($p in @(
         (Join-Path $env:ProgramFiles "MySQL\MySQL Server 8.0\bin"),
         (Join-Path $env:ProgramFiles "MySQL\MySQL Server 8.4\bin"),
-        "C:\DigBitDB\bin")) {
+        "C:\DigLabDB\bin")) {
         $ruta = Join-Path $p $nombre
         if (Test-Path $ruta) { return $ruta }
     }
@@ -299,6 +299,6 @@ Paso "4. Como quedo"
 Write-Host ""
 Write-Host "Migraciones aplicadas." -ForegroundColor Green
 if ($ContrasenaAdmin) {
-    Write-Host "La cuenta de la administracion de DigBit es ADMIN001, con la contrasena que indicaste. Se guarda en MD5 y la aplicacion la reemplaza por PBKDF2 la primera vez que se entre con ella." -ForegroundColor Yellow
+    Write-Host "La cuenta de la administracion de DigLab es ADMIN001, con la contrasena que indicaste. Se guarda en MD5 y la aplicacion la reemplaza por PBKDF2 la primera vez que se entre con ella." -ForegroundColor Yellow
 }
 Write-Host "Respaldo por si acaso: $archivoRespaldo" -ForegroundColor DarkGray

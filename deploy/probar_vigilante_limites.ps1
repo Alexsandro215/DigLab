@@ -29,15 +29,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$exe = Join-Path $PSScriptRoot "..\DigBit.Vigilante\bin\$Configuration\DigBit.Vigilante.exe"
+$exe = Join-Path $PSScriptRoot "..\DigLab.Vigilante\bin\$Configuration\DigLab.Vigilante.exe"
 if (-not (Test-Path $exe)) { throw "No se encontro $exe. Compila primero (.\build.cmd -NoRun)." }
 $exe = (Resolve-Path $exe).Path
 
 # Sin carpeta de datos configurada, para que el registro caiga donde lo espera
 # este guion. Si estuviera puesta, el vigilante escribiria en el ThawSpace.
-$env:DIGBIT_CARPETA_DATOS = ''
+$env:DIGLAB_CARPETA_DATOS = ''
 
-$carpeta = Join-Path $env:ProgramData 'DigBit'
+$carpeta = Join-Path $env:ProgramData 'DigLab'
 $ruta    = Join-Path $carpeta 'sesion_activa.txt'
 $log     = Join-Path $carpeta ('logs\vigilante-' + (Get-Date -Format 'yyyyMMdd') + '.log')
 $sesionWindows = (Get-Process -Id $PID).SessionId
@@ -64,7 +64,7 @@ function Escribir {
     param(
         [datetime]$Fin,
         [datetime]$Inicio = (Get-Date).AddMinutes(-30),
-        [datetime]$Latido = (Get-Date).AddMinutes(-10),   # DigBit ausente: el vigilante avisa el
+        [datetime]$Latido = (Get-Date).AddMinutes(-10),   # DigLab ausente: el vigilante avisa el
         [datetime]$ArranqueSistema = (Arranque),
         [int]$Sesion = $sesionWindows,
         [string]$Usuario = '20230001',

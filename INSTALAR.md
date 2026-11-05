@@ -1,4 +1,4 @@
-﻿# Instalar DigBit
+﻿# Instalar DigLab
 
 Esta guía deja funcionando el montaje completo: **un equipo que hace de servidor
 y de equipo de la administración**, y las **máquinas de laboratorio** que se
@@ -15,17 +15,25 @@ pantalla y con qué usuario de base de datos se conecta.
 
 Las personas **responsables de laboratorio** (el panel de administración en
 solo consulta) no tienen equipo propio ni hay que configurar nada para ellas en
-ningún equipo: entran con su cuenta en cualquiera de estos (con DigBit 1.1), y
-DigBit pasa su sesión a la cuenta de MySQL de solo lectura `digbit_consulta`.
+ningún equipo: entran con su cuenta en cualquiera de estos (con DigLab 1.1), y
+DigLab pasa su sesión a la cuenta de MySQL de solo lectura `digbit_consulta`.
 Basta aplicar una vez `db\18_encargados.sql` **con root** en el servidor (ver
 «Migrar una base que ya existe»).
 
-## El instalador: `DigBit-Setup.exe`
+## El instalador: `DigLab-Setup.exe`
 
 Un asistente normal de Windows: doble clic, permiso de administrador y siguiente,
 siguiente. En el equipo no hace falta PowerShell. Queda en **Agregar o quitar
-programas** y siempre instala en `C:\DigBit`. El anterior (`DigBit-Instalador.exe`,
+programas** y siempre instala en `C:\DigLab`. El anterior (`DigLab-Instalador.exe`,
 la sección siguiente) sigue aquí hasta que este pase la prueba en una VM.
+
+**Si el equipo tiene la versión que se llamaba DigBit** (en `C:\DigBit`), el asistente
+lo detecta y ofrece quitarla con su propio desinstalador, que deshace su kiosco. Si
+pregunta si borra los datos locales, responde **No**: DigLab los toma la primera vez
+que arranca en esa cuenta, también las bitácoras que no hayan llegado al servidor. No
+es una actualización: hay que volver a elegir el tipo de equipo y escribir la
+contraseña de la base. Un equipo con el instalador anterior, sin desinstalador, conserva
+`C:\DigBit` y el servicio `DigBitVigilante`: quítalos a mano antes de instalar.
 
 **Generarlo** (en el equipo de desarrollo, con Inno Setup 7):
 
@@ -33,10 +41,10 @@ la sección siguiente) sigue aquí hasta que este pase la prueba en una VM.
 .\crear_setup.ps1 -Inno 'C:\ruta\a\ISCC.exe'
 ```
 
-Deja `DigBit-Setup.exe` junto a la carpeta del proyecto. El de
-`instalador\DigBit-Setup.exe` es el armado con este código: si cambias algo, vuelve a
+Deja `DigLab-Setup.exe` junto a la carpeta del proyecto. El de
+`instalador\DigLab-Setup.exe` es el armado con este código: si cambias algo, vuelve a
 generarlo y cópialo ahí. Servidor, base, usuario y
-puerto los toma del `connections.config` de `DigBit\bin\Release`, o de `-Servidor`,
+puerto los toma del `connections.config` de `DigLab\bin\Release`, o de `-Servidor`,
 `-Base`, `-Usuario` y `-Puerto`. **La contraseña de la base no va dentro**: se teclea
 y se comprueba al instalar. Si encuentra un secreto real en lo que va a empaquetar,
 no lo arma.
@@ -45,9 +53,9 @@ no lo arma.
 
 | Tipo | Qué queda |
 |---|---|
-| Administración | DigBit como programa normal, con accesos directos |
+| Administración | DigLab como programa normal, con accesos directos |
 | Docente | Igual que Administración |
-| Equipo de laboratorio | Kiosco: la cuenta elegida entra sola, DigBit es su pantalla y corre el vigilante. Al terminar pide reiniciar |
+| Equipo de laboratorio | Kiosco: la cuenta elegida entra sola, DigLab es su pantalla y corre el vigilante. Al terminar pide reiniciar |
 
 **La cuenta del kiosco.** El asistente ofrece dos, y por omisión la primera:
 
@@ -62,7 +70,7 @@ no lo arma.
 Con la que ya tiene el equipo, y si es administradora, cualquiera que registre su
 bitácora puede instalar programas o desactivar el kiosco. Se aceptó porque esos
 equipos se reinstalan cada semestre. Sus programas y archivos los comparten todos los
-que usen el equipo. Antes de la bitácora sigue bloqueada; al liberar el equipo, DigBit
+que usen el equipo. Antes de la bitácora sigue bloqueada; al liberar el equipo, DigLab
 quita los límites de Administrador de tareas, `Win+R` y Panel de control, y los vuelve
 a poner al arrancar. No se quitan los de bloquear el equipo ni cambiar la contraseña:
 cualquiera de los dos impediría que vuelva a entrar sola. Una cuenta de Microsoft no se
@@ -70,29 +78,29 @@ puede usar así: el asistente lo rechaza.
 
 **Instalar encima** actualiza: el asistente se salta las preguntas y conserva la
 conexión, los ajustes y los datos. En un kiosco cierra la sesión del laboratorio si
-está abierta (matar DigBit no basta: Windows lo vuelve a abrir), así que nadie debe
+está abierta (matar DigLab no basta: Windows lo vuelve a abrir), así que nadie debe
 estar usando el equipo; al terminar pide reiniciar. Con la cuenta que ya tenía el
 equipo se actualiza desde su propio escritorio (entra con la memoria de emergencia) y
 esa sesión no se cierra.
 
 **Desinstalar** deshace el kiosco (inicio automático, shell y directivas de la
-cuenta, vigilante) y borra `C:\DigBit`. Pregunta aparte si borrar los datos locales
+cuenta, vigilante) y borra `C:\DigLab`. Pregunta aparte si borrar los datos locales
 y, si se creó una cuenta nueva, esa cuenta; en las dos, la respuesta por omisión es No.
 
-**Microsoft Defender:** en los tres tipos se excluyen solo `DigBit.exe` y, en un
-kiosco, `DigBit.Vigilante.exe`, porque Defender los puede confundir con un virus y un
+**Microsoft Defender:** en los tres tipos se excluyen solo `DigLab.exe` y, en un
+kiosco, `DigLab.Vigilante.exe`, porque Defender los puede confundir con un virus y un
 kiosco arrancaría con la pantalla negra. Se avisa antes de instalar y se quita al
 desinstalar.
 
 **Sin firma digital**, Windows avisa «Editor desconocido»: *Más información →
 Ejecutar de todos modos*. Con un certificado: `-Certificado ruta.pfx` y su clave en
-la variable `DIGBIT_PFX_CLAVE`.
+la variable `DIGLAB_PFX_CLAVE`.
 
 **Si algo falla**, la última página dice qué. El detalle queda en
-`C:\ProgramData\DigBit\logs\instalacion-*.log` (sin contraseñas). Repetir la
+`C:\ProgramData\DigLab\logs\instalacion-*.log` (sin contraseñas). Repetir la
 instalación no rompe nada.
 
-**Instalar en un solo laboratorio:** en DigBit, *Laboratorios → Habilitar o
+**Instalar en un solo laboratorio:** en DigLab, *Laboratorios → Habilitar o
 deshabilitar...* deja marcado solo ese. Los demás conservan su horario de la plantilla
 actual, sin armar otra, pero no corren: sus docentes no ven esas clases ni su código,
 sus equipos no aceptan registros y esos días no cuentan faltas ni alertas. Un equipo se
@@ -100,21 +108,21 @@ puede preparar antes de habilitar su laboratorio: el instalador lo ofrece igual 
 lista, y hasta entonces el equipo dice que está deshabilitado. Al habilitarlo, en
 menos de un minuto empieza a aceptar registros, sin tocar el equipo.
 
-## Con la base de la escuela: `DigBit-Instalador.exe`, un solo archivo
+## Con la base de la escuela: `DigLab-Instalador.exe`, un solo archivo
 
 Cuando la base ya existe en un servidor (la del TESCHI está en `sql.teschi.edu.mx`)
 no hace falta el paquete entero: basta **un solo `.exe`** que lleva dentro
-DigBit, el vigilante y los guiones de instalación.
+DigLab, el vigilante y los guiones de instalación.
 
-**Generarlo** (en el equipo de desarrollo, con DigBit cerrado):
+**Generarlo** (en el equipo de desarrollo, con DigLab cerrado):
 
 ```powershell
 .\crear_instalador.ps1
 ```
 
-Deja `DigBit-Instalador.exe` junto a la carpeta del proyecto (unos 6 MB). La
+Deja `DigLab-Instalador.exe` junto a la carpeta del proyecto (unos 6 MB). La
 conexión (servidor, base, usuario y puerto) la toma del `connections.config` de
-`DigBit\bin\Release`, o de `-Servidor`, `-Base` y `-Usuario`. **La contraseña de la
+`DigLab\bin\Release`, o de `-Servidor`, `-Base` y `-Usuario`. **La contraseña de la
 base no va dentro**: se teclea al instalar cada equipo, así el `.exe` puede
 circular sin exponer la base.
 
@@ -122,9 +130,9 @@ circular sin exponer la base.
 
 | Tipo | Qué queda |
 |---|---|
-| Administrador | DigBit en `C:\DigBit` como programa normal, con acceso directo en el escritorio |
+| Administrador | DigLab en `C:\DigLab` como programa normal, con acceso directo en el escritorio |
 | Maestro | Igual que Administrador |
-| Alumno (máquina del laboratorio) | Modo kiosco: la cuenta del laboratorio entra sola y DigBit es su pantalla, con el vigilante |
+| Alumno (máquina del laboratorio) | Modo kiosco: la cuenta del laboratorio entra sola y DigLab es su pantalla, con el vigilante |
 
 Son los nombres que usa el instalador (todavía no se ha rehecho): «Administrador»
 es el equipo de la administración, «Maestro» el de un docente y «Alumno» una
@@ -134,7 +142,7 @@ Luego la contraseña de la base y, solo para Alumno: el laboratorio (sale de la
 base; si hay más de uno, hay que elegirlo), el número de la máquina, la cuenta
 del laboratorio y su contraseña, y la carpeta de datos si tiene Deep Freeze.
 Antes de tocar nada prueba la contraseña contra la base: si la rechaza (distingue
-mayúsculas), avisa y no instala. Al terminar ofrece abrir DigBit (Administrador y
+mayúsculas), avisa y no instala. Al terminar ofrece abrir DigLab (Administrador y
 Maestro) o reiniciar (Alumno).
 
 Por debajo ejecuta `deploy\configurar_equipo.ps1`, igual que el instalador del
@@ -149,13 +157,13 @@ mysql/              MySQL portátil (no hace falta instalarlo aparte)
 deploy\             Los guiones de instalación y diagnóstico (preparar_bd.ps1
                     deja MySQL listo con el esquema y datos de prueba)
 db\                 Esquema, datos de prueba y migraciones
-DigBit\bin\Release  La aplicación
-DigBit.Vigilante\bin\Release  El servicio que cierra la sesión a la hora
+DigLab\bin\Release  La aplicación
+DigLab.Vigilante\bin\Release  El servicio que cierra la sesión a la hora
 ```
 
 ## La forma facil: el instalador
 
-En la raiz del paquete hay un **`DigBit.Instalador.exe`**. Haz doble clic: pide
+En la raiz del paquete hay un **`DigLab.Instalador.exe`**. Haz doble clic: pide
 permiso de administrador y eliges arriba que clase de equipo estas preparando.
 Es la misma ventana para los cuatro casos; segun lo que marques se habilitan
 unas casillas u otras.
@@ -173,7 +181,7 @@ antes y volver a congelar despues.
 La casilla **Servidor** ya no hay que rellenarla. El paquete se acuerda de a que
 equipo apunta, y lo hace en este orden:
 
-1. la variable de entorno `DIGBIT_SERVIDOR`, si la pones (para pruebas);
+1. la variable de entorno `DIGLAB_SERVIDOR`, si la pones (para pruebas);
 2. **si la base esta en este mismo equipo**, `127.0.0.1`;
 3. el archivo **`servidor.config`** de la raiz del paquete, que el paso 1 deja
    escrito con el **nombre de red** del equipo servidor.
@@ -233,9 +241,9 @@ En estos dos equipos, el de la administracion y el de cada docente, **no se inst
 nada en el sentido incomodo de la palabra**: no hay kiosco, ni cuenta nueva, ni
 servicio, ni inicio de sesion automatico. Son tres cosas y ya esta:
 
-1. la copia de DigBit en `C:\DigBit`,
+1. la copia de DigLab en `C:\DigLab`,
 2. el `connections.config` apuntando al servidor,
-3. un **acceso directo "DigBit" en el escritorio**.
+3. un **acceso directo "DigLab" en el escritorio**.
 
 Doble clic y entras con `ADMIN001` / `admin123`. La aplicacion es la misma que
 la de las maquinas de laboratorio; lo unico que cambia es que aqui no bloquea
@@ -279,7 +287,7 @@ si el instalador falla o si quieres saber que esta pasando por debajo.
 empezar por "Administrador"; si no, casi todo fallará.
 
 ```powershell
-cd A:\DigBit-Paquete
+cd A:\DigLab-Paquete
 Set-ExecutionPolicy -Scope Process Bypass -Force
 ```
 
@@ -300,7 +308,7 @@ desde aquí, y el instalador de las máquinas comprueba contra la base que exist
 ## A1. La base de datos
 
 ```powershell
-.\deploy\preparar_bd.ps1 -Destino C:\DigBitDB
+.\deploy\preparar_bd.ps1 -Destino C:\DigLabDB
 ```
 
 Deja MySQL como servicio automático, con el esquema y los usuarios de prueba.
@@ -332,11 +340,11 @@ Edita antes las dos contraseñas al principio de `db\07_usuarios_minimos.sql`, y
 Desde **cmd** (en PowerShell el `<` no funciona):
 
 ```bat
-C:\DigBitDB\bin\mysql.exe -u root < db\07_usuarios_minimos.sql
+C:\DigLabDB\bin\mysql.exe -u root < db\07_usuarios_minimos.sql
 ```
 
 Por qué dos: el `connections.config` de una máquina de laboratorio **lo puede
-leer quien usa el equipo**, porque DigBit corre con su sesión de Windows. Con
+leer quien usa el equipo**, porque DigLab corre con su sesión de Windows. Con
 `digbit_equipo` puede meter bitácoras falsas, crear cuentas de estudiante (lo
 mismo que "Crear cuenta") y cambiar la contraseña de un estudiante o de un
 docente, y con ella entrar con esa cuenta. No puede borrar el semestre, cambiar
@@ -355,10 +363,10 @@ Mientras los equipos se conecten con `teschi_otru`, que puede hacerlo todo
     -CadenaConexion "Database=teschi_otru;Server=127.0.0.1;Port=3306;User Id=digbit_admin;Password=LA_QUE_PUSISTE"
 ```
 
-Copia los archivos a `C:\DigBit`, escribe la conexión y excluye la carpeta en
+Copia los archivos a `C:\DigLab`, escribe la conexión y excluye la carpeta en
 Defender. **No** bloquea la pantalla, no crea cuentas y no instala el vigilante.
 
-Abre `C:\DigBit\DigBit.exe` y entra con `ADMIN001` / `admin123`.
+Abre `C:\DigLab\DigLab.exe` y entra con `ADMIN001` / `admin123`.
 
 ## A5. Dar de alta los laboratorios
 
@@ -400,7 +408,7 @@ Qué es cada cosa:
   que marca cada estudiante de ese laboratorio (paso 3: salen los equipos que
   registraron bitácoras en los últimos 30 días). Sin esto usa el nombre de
   Windows, que si es `DESKTOP-A7F3K2` no le sirve a nadie y no sale en esa lista.
-- **`-CarpetaDatos "T:\DigBitDatos"`** — **sólo con Deep Freeze**, apuntando a un
+- **`-CarpetaDatos "T:\DigLabDatos"`** — **sólo con Deep Freeze**, apuntando a un
   ThawSpace. Sin ella se pierden cada noche las bitácoras que aún no llegaron al
   servidor. El guion se niega a seguir si detecta Deep Freeze y no la indicas.
 - **`-AutorizarMemoria`** — opcional. Deja autorizada como llave de emergencia
@@ -418,7 +426,7 @@ No cambia nada, sólo mira. Todo debería salir en verde.
 ## B4. Reiniciar, probar, y sólo entonces congelar
 
 Reinicia. El equipo tiene que entrar solo en la cuenta del laboratorio y
-aparecer DigBit sin escritorio. Entra con una cuenta de estudiante, registra una bitácora,
+aparecer DigLab sin escritorio. Entra con una cuenta de estudiante, registra una bitácora,
 comprueba que aparece el escritorio.
 
 Vuelve a pasar el diagnóstico: la marca de instalación tiene que seguir ahí
@@ -453,10 +461,10 @@ llaman "contrasena" en pantallas parecidas.
 |---|---|---|---|
 | MySQL `digbit_equipo` | la inventas al preparar el servidor | cada maquina de laboratorio y cada equipo docente | `connections.config` de cada equipo, **en claro** |
 | MySQL `digbit_admin` | la inventas al preparar el servidor | el equipo de la administracion | `connections.config` de ese equipo, **en claro** |
-| MySQL `digbit_consulta` | la pone db/18, al azar | ninguna a mano: DigBit la lee de la base cuando entra una persona responsable de laboratorio | tabla `configuracion` (`consulta_clave`), **en claro** |
+| MySQL `digbit_consulta` | la pone db/18, al azar | ninguna a mano: DigLab la lee de la base cuando entra una persona responsable de laboratorio | tabla `configuracion` (`consulta_clave`), **en claro** |
 | Cuenta de Windows del laboratorio | la inventas al instalar cada maquina | Windows, para el inicio automatico | el registro, **en claro** |
 | MySQL `root` | nadie: se queda vacia | solo desde el propio servidor | — |
-| Usuarios de DigBit (`ADMIN001`...) | vienen sembradas | entrar en la aplicacion | tabla `usuarios`, cifradas |
+| Usuarios de DigLab (`ADMIN001`...) | vienen sembradas | entrar en la aplicacion | tabla `usuarios`, cifradas |
 
 Las dos primeras son las que hay que apuntar y guardar: sin ellas no se puede
 configurar ni un equipo mas. Las demas o se inventan sobre la marcha, o las pone
@@ -464,7 +472,7 @@ una migracion, o no existen.
 
 **Las que dicen "en claro" son a proposito, y son el limite de este
 diseno.** El `connections.config` de una maquina de laboratorio lo puede leer
-quien usa el equipo, porque DigBit corre con su sesion de Windows; por eso esa
+quien usa el equipo, porque DigLab corre con su sesion de Windows; por eso esa
 maquina lleva `digbit_equipo` y nunca `digbit_admin`. Quien lo lea puede meter
 bitacoras falsas, crear cuentas de estudiante, cambiar la contrasena de
 estudiantes y docentes (ver A3) y leer el secreto de los codigos generados, con
@@ -501,7 +509,7 @@ No trae responsables de laboratorio: se dan de alta en el panel de
 administración (**Docentes → Responsables de laboratorio... → Registrar
 responsable**), y para que puedan entrar hace falta aplicar también a esta base
 `db\18_encargados.sql` con root
-(`C:\DigBitDB\bin\mysql.exe -u root < db\18_encargados.sql`, desde cmd).
+(`C:\DigLabDB\bin\mysql.exe -u root < db\18_encargados.sql`, desde cmd).
 
 ---
 
@@ -523,7 +531,7 @@ memoria va en el llavero de la persona responsable del laboratorio, no en un
 cajón.
 
 **Si se va la luz a media clase**, quien ya registró su bitácora vuelve
-a entrar con su código y DigBit le pregunta si quiere seguir usando el equipo
+a entrar con su código y DigLab le pregunta si quiere seguir usando el equipo
 hasta la hora de salida. No registra una segunda bitácora.
 
 ---
@@ -535,14 +543,14 @@ hasta la hora de salida. No registra una segunda bitácora.
 Cuando cambie sólo la aplicación:
 
 ```powershell
-.\deploy\actualizar_digbit.ps1
+.\deploy\actualizar_diglab.ps1
 ```
 
 Conserva la configuración del equipo y sustituye los binarios. Si lo que cambió
 es un guion de `deploy\`, basta con copiar ese archivo.
 
 Con **Deep Freeze**, en este orden: descongela (Boot Thawed) y reinicia,
-ejecuta `actualizar_digbit.ps1`, reinicia, comprueba con
+ejecuta `actualizar_diglab.ps1`, reinicia, comprueba con
 `diagnostico_equipo.ps1` que dice la versión nueva, y vuelve a congelar. Si el
 disco está congelado el guion se niega: la copia iría a la capa temporal y el
 reinicio la borraría.
@@ -557,7 +565,7 @@ También sirve mantener `Mayús` pulsada durante el arranque para saltar el inic
 automático.
 
 Eso solo sirve si hay **otra** cuenta. Si el kiosco usa la única cuenta del equipo,
-entrar con ella abre DigBit: el camino es la **memoria de emergencia**, que abre su
+entrar con ella abre DigLab: el camino es la **memoria de emergencia**, que abre su
 escritorio hasta reiniciar.
 
 ## Deshacerlo
@@ -573,7 +581,7 @@ archivos, la cuenta, la carpeta de datos y la base:
 Quita el kiosco, las directivas, el inicio automático y el servicio. **No** borra
 la carpeta de datos: ahí pueden quedar bitácoras sin enviar.
 
-Para dejar el equipo **como si DigBit nunca se hubiera instalado**, que es lo
+Para dejar el equipo **como si DigLab nunca se hubiera instalado**, que es lo
 que hace falta antes de reinstalar desde cero:
 
 ```powershell
@@ -599,7 +607,7 @@ Dice en qué estado quedó el equipo, línea por línea, y qué hacer con cada c
 que salga en rojo. Es lo primero que hay que mirar, siempre.
 
 Los registros están en la carpeta de datos, o si no se configuró:
-`%LOCALAPPDATA%\DigBit\logs` (la aplicación) y `%ProgramData%\DigBit\logs`
+`%LOCALAPPDATA%\DigLab\logs` (la aplicación) y `%ProgramData%\DigLab\logs`
 (el vigilante).
 
 ---
@@ -625,7 +633,7 @@ que da el docente, pero **va después de actualizar todos los equipos** (ver
 abajo). `migrar_bd.ps1` la aplica junto con las demás y no tiene forma de
 saltarla: si antes de eso hace falta otra migración, aplícala sola con
 `mysql` (README, «Base de datos»). La 23 solo cambia las tablas de la 16 (las
-configuraciones de horario, pequeñas y que solo usa el DigBit de la
+configuraciones de horario, pequeñas y que solo usa el DigLab de la
 administración) y no hace falta actualizar los equipos para aplicarla.
 
 Sin la 10 no se puede dar de alta a ninguna cuenta de estudiante (ni desde la
@@ -646,7 +654,7 @@ hizo, cuándo y qué decía antes, y la administración ve en Alertas los cambio
 horario que hizo otra persona (filtro «Cambios de horario», también con el
 aviso de Windows) y el «Historial de cambios...» completo. El orden da igual: sin ella
 todo funciona como antes, y con ella solo dejan rastro los cambios hechos desde
-un DigBit de esta versión (actualiza el del equipo de la administración).
+un DigLab de esta versión (actualiza el del equipo de la administración).
 Aplícala con root: así también deja leerla a `digbit_consulta`, para que las
 personas responsables de laboratorio vean esas alertas y el historial; con otro usuario,
 `migrar_bd.ps1` lo dice con un AVISO. A `digbit_equipo` no le da nada: los
@@ -657,10 +665,10 @@ clase pero no pudo registrar su bitácora (la 22: su equipo no tenía internet,
 no funcionaba o no había uno libre; ver README, «Panel docente»), el orden
 importa:
 
-1. Actualiza DigBit en **todos** los equipos que lo usan: las máquinas de cada
+1. Actualiza DigLab en **todos** los equipos que lo usan: las máquinas de cada
    laboratorio (descongeladas: ver «Actualizar sin reconfigurar»), las
    computadoras docentes y la de la administración.
-   `diagnostico_equipo.ps1` dice la versión de cada uno. Un DigBit anterior no
+   `diagnostico_equipo.ps1` dice la versión de cada uno. Un DigLab anterior no
    lee la tabla nueva: en Mis grupos vería falta donde el docente dio la
    asistencia, y en Faltas, en rojo, una clase que sí se dio.
 2. Aplica la 22 **con root** (con `migrar_bd.ps1` o sola). Crea
@@ -675,7 +683,7 @@ Para que **cambiar el horario no reescriba las semanas pasadas** (la 20: cada
 franja con su propia vigencia; ver README, «Cambios de horario sin reescribir
 el pasado»), el orden importa:
 
-1. Actualiza DigBit en **todos** los equipos que lo usan: las máquinas de cada
+1. Actualiza DigLab en **todos** los equipos que lo usan: las máquinas de cada
    laboratorio (descongeladas: ver «Actualizar sin reconfigurar»), las
    computadoras docentes y la de la administración.
    `diagnostico_equipo.ps1` dice la versión de cada uno.
@@ -698,8 +706,8 @@ el orden importa:
 1. Aplica la 11 (sola no cambia nada). Para la generación de códigos, también
    la 13 (guarda el secreto del que salen los códigos). Para que sin códigos
    también se pueda registrar cuando no hay clase (uso libre), la 14.
-2. Actualiza DigBit a la **1.1** en las máquinas de ese laboratorio
-   (`actualizar_digbit.ps1`, descongeladas: ver «Actualizar sin reconfigurar»)
+2. Actualiza DigLab a la **1.1** en las máquinas de ese laboratorio
+   (`actualizar_diglab.ps1`, descongeladas: ver «Actualizar sin reconfigurar»)
    y en las computadoras de sus docentes.
    `diagnostico_equipo.ps1` dice la versión de cada equipo. Una anterior
    seguiría pidiendo el código del docente.
@@ -720,7 +728,7 @@ configuracion").
 
 Con generación de códigos, al empezar cada semana cada clase tiene un código
 distinto para cada día. Solo la administración los ve todos (Horarios, en cada
-clase de la semana). Cada docente tiene que **entrar a DigBit durante su
+clase de la semana). Cada docente tiene que **entrar a DigLab durante su
 clase** (desde 15 minutos antes): su panel abre la clase y le enseña el código
 para dictarlo. Si un día no puede, la administración le da el código (lo ve en
 Horarios) o abre la clase con clic derecho en «Los laboratorios ahora».
@@ -744,7 +752,7 @@ Para **«¿Olvidaste tu contraseña?»** por correo:
 4. Los equipos con una versión anterior a la 1.1 hay que actualizarlos una vez
    (descongelados): en ellos el enlace abre la ventana vieja, que no hace nada.
 
-Mientras no esté, el enlace dice que pidan a la administración de DigBit una
+Mientras no esté, el enlace dice que pidan a la administración de DigLab una
 contraseña nueva, que se pone en Estudiantes o Docentes → Restablecer contraseña
 (la de una persona responsable de laboratorio, en Docentes → Responsables de
 laboratorio... → Restablecer contraseña).
@@ -766,16 +774,16 @@ administración sin poder cambiar nada):
    en `configuracion`. Con `teschi_otru` solo hace lo primero y sale un AVISO:
    sin esa cuenta no pueden entrar. Volver a pasarla conserva la contraseña y
    deja otra vez la cuenta en solo lectura.
-2. Actualiza DigBit (la **1.1**, ya con responsables de laboratorio) en los
-   equipos donde vayan a entrar. Un DigBit anterior no conoce el tipo 4: avisa
+2. Actualiza DigLab (la **1.1**, ya con responsables de laboratorio) en los
+   equipos donde vayan a entrar. Un DigLab anterior no conoce el tipo 4: avisa
    «Tipo de usuario no manejado» y se queda sin ventana (en el kiosco,
    `Ctrl+Alt+Supr` → Cerrar sesión).
 3. Entonces, en el panel de administración: **Docentes → Responsables de
    laboratorio... → Registrar responsable**.
 
-Fuera de actualizar DigBit, no hay que tocar ningún equipo: ni reinstalarlo de
+Fuera de actualizar DigLab, no hay que tocar ningún equipo: ni reinstalarlo de
 otro tipo ni cambiar su `connections.config`. Al entrar una persona responsable
-de laboratorio, DigBit lee
+de laboratorio, DigLab lee
 de la base la contraseña de `digbit_consulta` y trabaja con esa cuenta durante
 su sesión, en el equipo que sea.
 
@@ -798,6 +806,6 @@ enseña esas filas y cuál conservar.
 - **La red de la escuela**: cortafuegos entre segmentos, directivas de dominio.
 - **Defender con una consola central** que pueda revertir las exclusiones.
 
-Y una advertencia que no depende de esta guía: `DigBit.exe` **no está firmado**,
+Y una advertencia que no depende de esta guía: `DigLab.exe` **no está firmado**,
 y Defender lo detecta como falso positivo. El instalador pone la exclusión antes
 de copiar, y por eso funciona. La solución de fondo es firmarlo.

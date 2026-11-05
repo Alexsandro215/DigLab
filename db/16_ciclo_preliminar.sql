@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: horario preliminar del proximo ciclo
+-- DigLab 2.0 - Migracion: horario preliminar del proximo ciclo
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas.
@@ -8,7 +8,7 @@
 -- siguiente en un BORRADOR: empieza como copia de la carga de cada profesor de
 -- hoy (sus materias, sus grupos y sus horas en cada laboratorio) y despues solo
 -- marca lo que cambia. Mientras es borrador vive solo en estas tablas: ninguna
--- clase, franja ni sesion cambia. Al publicarlo, DigBit crea clases y franjas
+-- clase, franja ni sesion cambia. Al publicarlo, DigLab crea clases y franjas
 -- normales con la vigencia del ciclo nuevo y termina las de ahora en su ultimo
 -- dia de clases (ciclo_recortes guarda su fecha de antes, para deshacerlo).
 --
@@ -16,7 +16,7 @@
 -- digbit_equipo, con el que entran los equipos de los laboratorios, NO debe ver
 -- estas tablas: el borrador no le sirve a nadie mas que al administrador.
 --
--- ORDEN: aplicarla no cambia nada para nadie. Solo el DigBit del administrador
+-- ORDEN: aplicarla no cambia nada para nadie. Solo el DigLab del administrador
 -- la usa; los laboratorios no se tocan.
 --
 -- Repetible: lo que ya esta, lo deja como esta.
@@ -28,7 +28,7 @@
 USE teschi_otru;
 
 -- Un horario preliminar. Solo puede haber uno en borrador, y ninguno nuevo
--- mientras haya uno publicado que todavia no empieza (lo cuida DigBit).
+-- mientras haya uno publicado que todavia no empieza (lo cuida DigLab).
 CREATE TABLE IF NOT EXISTS ciclos_preliminares (
     idciclo        INT          NOT NULL AUTO_INCREMENT,
     nombre         VARCHAR(60)  NOT NULL,

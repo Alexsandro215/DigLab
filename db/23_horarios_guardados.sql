@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: configuraciones de horario (guardar, preparar y
+-- DigLab 2.0 - Migracion: configuraciones de horario (guardar, preparar y
 -- aplicar)
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
@@ -23,7 +23,7 @@
 --   4) ciclo_cargas.carga_origen: la clase de la configuracion de la que se
 --      copio cada una (asi se copian sus horas con un solo INSERT ... SELECT).
 --
--- ORDEN: aplicarla no cambia nada para nadie: solo el DigBit de la
+-- ORDEN: aplicarla no cambia nada para nadie: solo el DigLab de la
 -- administracion usa estas tablas, y los laboratorios no se tocan. MariaDB 5.5
 -- reconstruye ciclos_preliminares al cambiar el ENUM; son tablas chicas que
 -- nadie mas usa, asi que se puede aplicar en horario de clase.
@@ -39,7 +39,7 @@
 --     docentes no usan estas tablas.
 --
 -- MariaDB 5.5 (la de la escuela): cambiado_en no lleva DEFAULT (alli no se
--- admite DEFAULT CURRENT_TIMESTAMP en un DATETIME); lo pone DigBit con NOW()
+-- admite DEFAULT CURRENT_TIMESTAMP en un DATETIME); lo pone DigLab con NOW()
 -- del servidor. Las columnas se anaden despues de mirar information_schema,
 -- como en db/20.
 --
@@ -75,7 +75,7 @@ PREPARE ejecutar FROM @sql; EXECUTE ejecutar; DEALLOCATE PREPARE ejecutar;
 
 -- 3) De que configuracion viene (o en cual se guardo por ultima vez) y el
 --    ultimo cambio. Sin clave foranea a si misma: si esa se borra, queda el
---    numero y DigBit lo trata como "sin guardar".
+--    numero y DigLab lo trata como "sin guardar".
 SET @hay := (SELECT COUNT(*) FROM information_schema.COLUMNS
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ciclos_preliminares' AND COLUMN_NAME = 'origen_ciclo');
 SET @sql := IF(@hay16 = 1 AND @hay = 0,

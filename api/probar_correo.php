@@ -1,5 +1,5 @@
 <?php
-// DigBit - prueba de envio de la API de recuperacion, solo desde la linea de
+// DigLab - prueba de envio de la API de recuperacion, solo desde la linea de
 // comandos (en el navegador no hace nada):
 //
 //   php probar_correo.php tu_correo@ejemplo.com [ruta de config.php]
@@ -15,10 +15,10 @@ if (PHP_SAPI !== 'cli') {
 }
 
 if (isset($argv[2]) && $argv[2] !== '') {
-    putenv('DIGBIT_API_CONFIG=' . $argv[2]);
+    putenv('DIGLAB_API_CONFIG=' . $argv[2]);
 }
 
-define('DIGBIT_API', true);
+define('DIGLAB_API', true);
 require __DIR__ . '/lib/comun.php';
 require __DIR__ . '/lib/correo.php';
 
@@ -31,7 +31,7 @@ if (!filter_var($para, FILTER_VALIDATE_EMAIL)) {
 try {
     // El mismo correo que recibe un alumno, con un codigo de ejemplo: asi se ve tambien el diseno.
     list($asunto, $texto, $html, $imagenes) = correo_de_codigo('Prueba', '123456', (int)cfg()['minutos_codigo']);
-    enviar_correo($para, '', 'Prueba de DigBit (código de ejemplo)', $texto, $html, $imagenes);
+    enviar_correo($para, '', 'Prueba de DigLab (código de ejemplo)', $texto, $html, $imagenes);
     echo "Enviado a $para. Revisa la bandeja de entrada (y la de spam).\n";
 } catch (Throwable $e) {
     // Desde la consola, la causa y que revisar, y debajo lo que contesto el servidor.

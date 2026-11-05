@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Abre la base de DigBit de esta maquina para que la usen otros equipos.
+    Abre la base de DigLab de esta maquina para que la usen otros equipos.
 
 .DESCRIPTION
     Por defecto preparar_bd.ps1 deja MySQL escuchando solo en 127.0.0.1, que es
@@ -23,21 +23,21 @@
 
 .EXAMPLE
     .\abrir_bd_en_red.ps1
-    .\abrir_bd_en_red.ps1 -Usuario digbit -Contrasena 'otra-clave'
+    .\abrir_bd_en_red.ps1 -Usuario diglab -Contrasena 'otra-clave'
     .\abrir_bd_en_red.ps1 -Cerrar
 #>
 [CmdletBinding()]
 param(
-    [string]$Destino = 'C:\DigBitDB',
+    [string]$Destino = 'C:\DigLabDB',
     [int]$Puerto = 3306,
-    [string]$Servicio = 'DigBitMySQL',
-    [string]$Usuario = 'digbit',
+    [string]$Servicio = 'DigLabMySQL',
+    [string]$Usuario = 'diglab',
     # Sin valor por defecto a proposito: una contrasena escrita en un guion
     # acaba en el repositorio y de ahi no sale nunca.
     [Parameter(Mandatory = $true)]
     [string]$Contrasena,
     [string]$BaseDatos = 'teschi_otru',
-    [string]$ReglaCortafuegos = 'DigBit MySQL',
+    [string]$ReglaCortafuegos = 'DigLab MySQL',
 
     # Vuelve a dejarla solo local y quita la regla del cortafuegos.
     [switch]$Cerrar
@@ -100,11 +100,11 @@ Write-Host '   bind-address=0.0.0.0'
 
 # --- 2. Usuario para los equipos remotos ----------------------------------------
 # Este guion es anterior a db\07_usuarios_minimos.sql. Cuando se escribio, el
-# usuario 'digbit' con permisos de datos sobre la base era lo mas restringido
+# usuario 'diglab' con permisos de datos sobre la base era lo mas restringido
 # que habia. Ya no: 07 crea digbit_equipo, que solo puede insertar bitacoras y
 # tocar cinco columnas de usuarios, y digbit_admin para el equipo de gestion.
 # Los dos son '@%', asi que en cuanto el puerto esta abierto ya valen desde
-# fuera. Crear 'digbit' encima de eso anade un usuario capaz de borrar el
+# fuera. Crear 'diglab' encima de eso anade un usuario capaz de borrar el
 # semestre entero, que es justo lo que 07 evita; asi que si ya existen, no se
 # crea nada y se imprimen los que hay.
 $equipoExiste = (& $mysql '-h' '127.0.0.1' '-P' $Puerto '-u' 'root' '-N' '-B' `

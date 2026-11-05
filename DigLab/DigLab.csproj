@@ -1,0 +1,479 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{35EB3151-BF24-46E9-8BF5-384A8A0DF1B3}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>DigLab</RootNamespace>
+    <AssemblyName>DigLab</AssemblyName>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="BouncyCastle.Cryptography, Version=2.0.0.0, Culture=neutral, PublicKeyToken=072edcf4a5328938, processorArchitecture=MSIL">
+      <HintPath>..\packages\BouncyCastle.Cryptography.2.6.2\lib\net461\BouncyCastle.Cryptography.dll</HintPath>
+    </Reference>
+    <Reference Include="Google.Protobuf, Version=3.25.3.0, Culture=neutral, PublicKeyToken=a7d26565bac4d604, processorArchitecture=MSIL">
+      <HintPath>..\packages\Google.Protobuf.3.25.3\lib\net45\Google.Protobuf.dll</HintPath>
+    </Reference>
+    <Reference Include="itextsharp, Version=5.5.13.0, Culture=neutral, PublicKeyToken=8354ae6d2174ddca, processorArchitecture=MSIL">
+      <HintPath>..\packages\iTextSharp.5.5.13\lib\itextsharp.dll</HintPath>
+    </Reference>
+    <Reference Include="itextsharp.xmlworker, Version=5.5.13.0, Culture=neutral, PublicKeyToken=8354ae6d2174ddca, processorArchitecture=MSIL">
+      <HintPath>..\packages\itextsharp.xmlworker.5.5.13\lib\itextsharp.xmlworker.dll</HintPath>
+    </Reference>
+    <Reference Include="K4os.Compression.LZ4, Version=1.3.6.0, Culture=neutral, PublicKeyToken=2186fa9121ef231d, processorArchitecture=MSIL">
+      <HintPath>..\packages\K4os.Compression.LZ4.1.3.6\lib\net462\K4os.Compression.LZ4.dll</HintPath>
+    </Reference>
+    <Reference Include="K4os.Compression.LZ4.Streams, Version=1.3.6.0, Culture=neutral, PublicKeyToken=2186fa9121ef231d, processorArchitecture=MSIL">
+      <HintPath>..\packages\K4os.Compression.LZ4.Streams.1.3.6\lib\net462\K4os.Compression.LZ4.Streams.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Bcl.AsyncInterfaces, Version=8.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
+      <HintPath>..\packages\Microsoft.Bcl.AsyncInterfaces.8.0.0\lib\net462\Microsoft.Bcl.AsyncInterfaces.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.DependencyInjection.Abstractions, Version=8.0.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60, processorArchitecture=MSIL">
+      <HintPath>..\packages\Microsoft.Extensions.DependencyInjection.Abstractions.8.0.0\lib\net462\Microsoft.Extensions.DependencyInjection.Abstractions.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.Logging.Abstractions, Version=8.0.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60, processorArchitecture=MSIL">
+      <HintPath>..\packages\Microsoft.Extensions.Logging.Abstractions.8.0.0\lib\net462\Microsoft.Extensions.Logging.Abstractions.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.VisualBasic" />
+    <Reference Include="MySql.Data, Version=8.2.0.0, Culture=neutral, PublicKeyToken=c5687fc88969c44d, processorArchitecture=MSIL">
+      <HintPath>..\packages\MySql.Data.8.2.0\lib\net462\MySql.Data.dll</HintPath>
+    </Reference>
+    <Reference Include="MySqlConnector, Version=2.0.0.0, Culture=neutral, PublicKeyToken=d33d3e53aa5f8c92, processorArchitecture=MSIL">
+      <HintPath>..\packages\MySqlConnector.2.3.4\lib\net471\MySqlConnector.dll</HintPath>
+    </Reference>
+    <Reference Include="System" />
+    <Reference Include="System.Configuration" />
+    <Reference Include="System.Configuration.ConfigurationManager, Version=8.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
+      <HintPath>..\packages\System.Configuration.ConfigurationManager.8.0.0\lib\net462\System.Configuration.ConfigurationManager.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Core" />
+    <Reference Include="System.Diagnostics.DiagnosticSource, Version=8.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
+      <HintPath>..\packages\System.Diagnostics.DiagnosticSource.8.0.0\lib\net462\System.Diagnostics.DiagnosticSource.dll</HintPath>
+    </Reference>
+    <Reference Include="System.IO.Pipelines, Version=8.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
+      <HintPath>..\packages\System.IO.Pipelines.8.0.0\lib\net462\System.IO.Pipelines.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Management" />
+    <Reference Include="System.Runtime.Serialization" />
+    <!-- La voz que dicta el codigo de clase (DictadoCodigo): viene con .NET Framework, sin paquete. -->
+    <Reference Include="System.Speech" />
+    <Reference Include="System.Transactions" />
+    <Reference Include="System.Xml.Linq" />
+    <Reference Include="System.Data.DataSetExtensions" />
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Data" />
+    <Reference Include="System.Deployment" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xml" />
+    <Reference Include="ZstdSharp, Version=0.7.5.0, Culture=neutral, PublicKeyToken=8d151af33a4ad5cf, processorArchitecture=MSIL">
+      <HintPath>..\packages\ZstdSharp.Port.0.7.5\lib\net462\ZstdSharp.dll</HintPath>
+    </Reference>
+    <!-- Estos seis estaban en packages.config pero SIN Reference aqui, asi que
+         nuget los restauraba y msbuild no los copiaba a bin\. No dieron guerra
+         porque casi ningun camino los toca, pero MySqlConnection.BeginTransaction
+         necesita System.Threading.Tasks.Extensions: el alta de alumnos (la unica
+         que usa transaccion) reventaba con FileNotFoundException. Sin Reference
+         tampoco sirven de nada las redirecciones de App.config. -->
+    <Reference Include="K4os.Hash.xxHash, Version=1.0.8.0, Culture=neutral, PublicKeyToken=32cd54395057cec3, processorArchitecture=MSIL">
+      <HintPath>..\packages\K4os.Hash.xxHash.1.0.8\lib\net462\K4os.Hash.xxHash.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Buffers, Version=4.0.3.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
+      <HintPath>..\packages\System.Buffers.4.5.1\lib\net461\System.Buffers.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Memory, Version=4.0.1.2, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
+      <HintPath>..\packages\System.Memory.4.5.5\lib\net461\System.Memory.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Numerics.Vectors, Version=4.1.4.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a, processorArchitecture=MSIL">
+      <HintPath>..\packages\System.Numerics.Vectors.4.5.0\lib\net46\System.Numerics.Vectors.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Runtime.CompilerServices.Unsafe, Version=6.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a, processorArchitecture=MSIL">
+      <HintPath>..\packages\System.Runtime.CompilerServices.Unsafe.6.0.0\lib\net461\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Threading.Tasks.Extensions, Version=4.2.0.1, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
+      <HintPath>..\packages\System.Threading.Tasks.Extensions.4.5.4\lib\net461\System.Threading.Tasks.Extensions.dll</HintPath>
+    </Reference>
+    <!-- Windows.Data.Pdf (WinRT de Windows 10/11) dibuja la vista previa del PDF
+         (VisorPdf): los .winmd que trae el propio Windows, sin paquetes ni SDK.
+         Private=False: no se copian a bin\, en cada equipo se usan los suyos.
+         Desde el MSBuild de 32 bits, System32 es SysWOW64, que tambien los tiene. -->
+    <Reference Include="Windows.Data">
+      <HintPath>$(windir)\System32\WinMetadata\Windows.Data.winmd</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Windows.Foundation">
+      <HintPath>$(windir)\System32\WinMetadata\Windows.Foundation.winmd</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Windows.Storage">
+      <HintPath>$(windir)\System32\WinMetadata\Windows.Storage.winmd</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Alumno_Principal.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FichaClaseAlumno.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="conexion\VigenciaFranjas.cs" />
+    <Compile Include="conexion\ResumenDeClase.cs" />
+    <Compile Include="conexion\HistorialCambios.cs" />
+    <Compile Include="conexion\CicloPreliminarDatos.cs" />
+    <Compile Include="conexion\CicloPreliminarDatos.Aplicar.cs" />
+    <Compile Include="conexion\CicloPreliminarDatos.Baja.cs" />
+    <Compile Include="conexion\RevisionCiclo.cs" />
+    <Compile Include="conexion\RevisionAplicacion.cs" />
+    <Compile Include="Infraestructura\Inactividad.cs" />
+    <Compile Include="VentanaHistorialAlumno.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="VentanaHistorialCambios.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="conexion\Codigo_Gemerador.cs" />
+    <Compile Include="conexion\Conexion.cs" />
+    <Compile Include="conexion\Consultas.cs" />
+    <Compile Include="conexion\Contrasenas.cs" />
+    <Compile Include="conexion\InsercionDatos.cs" />
+    <Compile Include="conexion\Datos_User.cs" />
+    <Compile Include="conexion\OpcionCombo.cs" />
+    <Compile Include="conexion\Usuario.cs" />
+    <Compile Include="conexion\VentanaCodigo.cs" />
+    <Compile Include="conexion\HorariosDatos.cs" />
+    <Compile Include="conexion\HorariosDatos.PorAsignar.cs" />
+    <Compile Include="conexion\AlumnosDatos.cs" />
+    <Compile Include="conexion\CatalogosDatos.cs" />
+    <Compile Include="conexion\ReglasCodigo.cs" />
+    <Compile Include="conexion\ModosDeAcceso.cs" />
+    <Compile Include="conexion\RecuperacionContrasena.cs" />
+    <Compile Include="conexion\AjustesDatos.cs" />
+    <Compile Include="conexion\InicioConSiia.cs" />
+    <Compile Include="conexion\Consultas.Siia.cs" />
+    <Compile Include="conexion\EnlacesSiia.cs" />
+    <Compile Include="conexion\AlertasDatos.cs" />
+    <Compile Include="conexion\ReportesProfesorDatos.cs" />
+    <Compile Include="conexion\SesionDeHoy.cs" />
+    <Compile Include="conexion\AsistenciaDatos.cs" />
+    <Compile Include="conexion\AsistenciasDadas.cs" />
+    <Compile Include="conexion\ResumenAsistencia.cs" />
+    <Compile Include="conexion\EstadisticasDatos.cs" />
+    <Compile Include="conexion\CuentaDeConsulta.cs" />
+    <Compile Include="conexion\EncargadosDatos.cs" />
+    <Compile Include="conexion\PersonalizacionClasesDatos.cs" />
+    <Compile Include="Infraestructura\Permisos.cs" />
+    <Compile Include="conexion\ReglasCuenta.cs" />
+    <Compile Include="conexion\LaboratoriosDatos.cs" />
+    <Compile Include="conexion\LaboratoriosDeshabilitados.cs" />
+    <Compile Include="conexion\ProfesoresDatos.cs" />
+    <Compile Include="conexion\UsuariosDatos.cs" />
+    <Compile Include="conexion\Esquema.cs" />
+    <Compile Include="conexion\Consultas.Sesiones.cs" />
+    <Compile Include="Infraestructura\LaboratorioEquipo.cs" />
+    <Compile Include="Infraestructura\SinConexion.cs" />
+    <Compile Include="conexion\CacheHorario.cs" />
+    <Compile Include="conexion\ColaBitacoras.cs" />
+    <Compile Include="BitacoraMisClases.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="BitacoraSesion.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="VisorPdf.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="VistaPreviaPdf.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="AdministrarHorarios.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Infraestructura\AppContexto.cs" />
+    <Compile Include="Infraestructura\CarpetaDatos.cs" />
+    <Compile Include="Infraestructura\NombreAnterior.cs" />
+    <Compile Include="Infraestructura\DirectivasKiosco.cs" />
+    <Compile Include="Infraestructura\Emergencia.cs" />
+    <Compile Include="Infraestructura\EnviadorBitacoras.cs" />
+    <Compile Include="Infraestructura\AvisoApagado.cs" />
+    <Compile Include="DialogoEmergencia.cs" />
+    <Compile Include="Infraestructura\Kiosco.cs" />
+    <Compile Include="Infraestructura\Log.cs" />
+    <Compile Include="Infraestructura\SesionActiva.cs" />
+    <Compile Include="Infraestructura\SesionEquipo.cs" />
+    <Compile Include="AvisoSesion.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PantallaError.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="RegistroExitoso.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="editar_Perfil.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="editar_Perfil.Designer.cs">
+      <DependentUpon>editar_Perfil.cs</DependentUpon>
+    </Compile>
+    <Compile Include="GestionBitacorasAdministrador.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="EditarBitacoraAdministrador.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Deslizamiento.cs" />
+    <Compile Include="BotonesApagados.cs" />
+    <Compile Include="VentanaFaltaAsignar.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Login.Diseno.cs">
+      <DependentUpon>Login.cs</DependentUpon>
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Login.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Login.designer.cs">
+      <DependentUpon>Login.cs</DependentUpon>
+    </Compile>
+    <Compile Include="AdministrarAlumnos.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="AdministrarLaboratorios.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="AdministrarProfesores.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PantallaAdmin.cs" />
+    <Compile Include="BotonCabecera.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="DictadoCodigo.cs" />
+    <Compile Include="ColoresProfesor.cs" />
+    <Compile Include="DialogoAccesoClases.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DialogoContrasenaAdmin.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="VentanaAlertas.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DialogoRecuperarContrasena.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DialogoAjustes.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DialogoEnlazarSiia.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="VentanaEnlacePendiente.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DialogoReporteFalla.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DialogoDarAsistencia.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="VentanaMisGrupos.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="VentanaEstadisticas.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HojaAsistencia.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="TableroAsistencia.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="PiezasEstadisticas.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="GraficasEstadisticas.cs" />
+    <Compile Include="ContenidoGraficas.cs" />
+    <Compile Include="PestanaGraficas.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="ReporteAuditoriaPdf.cs" />
+    <Compile Include="SelectorDePeriodo.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="conexion\FichaDocenteDatos.cs" />
+    <Compile Include="FichaDocente.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="VentanaListaDeClase.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="ContenidoFichaDocente.cs" />
+    <Compile Include="AdministrarEncargados.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="SelectorColorProfesor.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="TablaAlumnosPdf.cs" />
+    <Compile Include="PanelLaboratoriosAhora.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="PestanaCalendario.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="PestanaProximoCiclo.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="PestanaAplicacion.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="LineaDeFechasHorario.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="DialogosConfiguraciones.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PrincipalAdministrador.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Profesor_Principal.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="TarjetasProfesor.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="PersonalizacionClases.cs" />
+    <Compile Include="CirculoClase.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="ImagenDeClase.cs" />
+    <Compile Include="DialogoPersonalizarClase.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Program.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="RJControls\Btnradius.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="RJControls\CustomComboBox.cs" />
+    <Compile Include="RJControls\customLabel.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="RJControls\panel.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="RJControls\RJButton.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="RJControls\RJComboBox.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="RJControls\RJTextbox.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="RJControls\RJTextbox.Designer.cs">
+      <DependentUpon>RJTextbox.cs</DependentUpon>
+    </Compile>
+    <EmbeddedResource Include="editar_Perfil.resx">
+      <DependentUpon>editar_Perfil.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Login.resx">
+      <DependentUpon>Login.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="PrincipalAdministrador.resx">
+      <DependentUpon>PrincipalAdministrador.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+      <SubType>Designer</SubType>
+    </EmbeddedResource>
+    <Compile Include="Properties\Resources.Designer.cs">
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+      <DesignTime>True</DesignTime>
+    </Compile>
+    <EmbeddedResource Include="RJControls\RJTextbox.resx">
+      <DependentUpon>RJTextbox.cs</DependentUpon>
+    </EmbeddedResource>
+    <None Include="App.config" />
+    <None Include="connections.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="connections.config.example">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="packages.config" />
+    <None Include="Properties\Settings.settings">
+      <Generator>SettingsSingleFileGenerator</Generator>
+      <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+    </None>
+    <Compile Include="Properties\Settings.Designer.cs">
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Settings.settings</DependentUpon>
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="img\fondoRecContr.jpg" />
+    <Content Include="img\Fondo_Registro_Bitacora.jpg" />
+    <Content Include="img\fondo_Vista_Principal.jpg" />
+    <Content Include="img\fondo_Vista_Principal1.jpg" />
+    <Content Include="img\Buscar.png" />
+    <Content Include="img\Genear codigo.jpg" />
+    <Content Include="img\generarcodi.png" />
+    <Content Include="img\iconoDB.ico" />
+    <Content Include="img\Ingresar_Acceso_alumnos.jpg" />
+    <Content Include="img\login.png" />
+    <Content Include="img\logo_gobierno.jpg" />
+    <Content Include="img\logo_gobierno.png" />
+    <Content Include="img\minimizar.png" />
+    <Content Include="img\password.png" />
+    <Content Include="img\portapapel.png" />
+    <Content Include="img\salir.png" />
+    <Content Include="img\tashe.png" />
+    <Content Include="img\teschi.jpg" />
+    <Content Include="img\TESCHIq.png" />
+    <Content Include="img\usuario.png" />
+    <None Include="Resources\estadoMexico.png" />
+    <Content Include="Resources\fondoRecContr.jpg" />
+    <Content Include="Resources\fondo_Vista_Principal1.jpg" />
+    <None Include="Resources\plantilla.html" />
+    <None Include="Resources\logoteschi.gif" />
+    <Content Include="Resources\reloj.png" /> 
+  </ItemGroup>
+  <ItemGroup>
+    <WCFMetadata Include="Connected Services\" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

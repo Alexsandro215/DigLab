@@ -9,7 +9,7 @@
 
       Profesores (separador ';'):  clave;numero;nombre;apellido_paterno;apellido_materno
         - clave: como se nombra al maestro en el CSV de franjas (TREJO, ZITA...).
-        - numero: su numero de empleado (con el que entra a DigBit). Si ya existe
+        - numero: su numero de empleado (con el que entra a DigLab). Si ya existe
           en la base se usa ese maestro; si no, se da de alta con una contrasena
           aleatoria y su codigo de clase. Solo letras y numeros. Un maestro ya
           enlazado con el SIIA (db/24) se encuentra tambien por su numero de antes.
@@ -32,7 +32,7 @@
     franja terminada (cambiada en Horarios desde una fecha) no cuenta como
     "ya estaba" ni choca con lo nuevo. Si ademas estan encendidos en Ajustes
     los cambios de horario desde una fecha (configuracion.franjas_con_fecha =
-    1, como en DigBit), las franjas nuevas de una clase reutilizada que ya
+    1, como en DigLab), las franjas nuevas de una clase reutilizada que ya
     empezo empiezan en -Desde (o hoy, si -Desde ya paso): asi no aparecen en
     las semanas pasadas, donde Faltas las daria por no dadas. Si no, valen
     toda la vigencia de su clase, como antes (y lo avisa).
@@ -74,8 +74,8 @@ param(
     # Carpeta de mysqldump.exe, para el respaldo (solo con -Aplicar).
     [string]$BinMysql,
 
-    # Compilacion de DigBit: de ahi salen MySql.Data y el formato de contrasena (PBKDF2).
-    # Por defecto, DigBit\bin\Release.
+    # Compilacion de DigLab: de ahi salen MySql.Data y el formato de contrasena (PBKDF2).
+    # Por defecto, DigLab\bin\Release.
     [string]$CarpetaApp,
 
     # Carrera de las materias y grupos nuevos (1 = Sistemas Computacionales en la base del TESCHI).
@@ -100,7 +100,7 @@ $ErrorActionPreference = 'Stop'
 
 # $PSScriptRoot llega VACIO en los valores por defecto del bloque param cuando el
 # guion se lanza con "powershell -File" (igual que en migrar_bd.ps1): aqui si esta.
-if (-not $CarpetaApp) { $CarpetaApp = Join-Path $PSScriptRoot '..\DigBit\bin\Release' }
+if (-not $CarpetaApp) { $CarpetaApp = Join-Path $PSScriptRoot '..\DigLab\bin\Release' }
 if (-not $CarpetaRespaldo) { $CarpetaRespaldo = Join-Path $PSScriptRoot '..\respaldos' }
 
 function Paso([string]$t) { Write-Host ''; Write-Host "== $t" -ForegroundColor Cyan }
@@ -153,18 +153,18 @@ foreach ($p in $filasProfesores) {
 
 # --- Conexion ---------------------------------------------------------------------
 Paso '2. Conectar y leer la base'
-if (-not (Test-Path (Join-Path $CarpetaApp 'DigBit.exe'))) { throw "No esta DigBit.exe en $CarpetaApp (se usa su MySql.Data y su formato de contrasena)." }
+if (-not (Test-Path (Join-Path $CarpetaApp 'DigLab.exe'))) { throw "No esta DigLab.exe en $CarpetaApp (se usa su MySql.Data y su formato de contrasena)." }
 
 # MySql.Data pide versiones exactas de sus dependencias (System.Runtime.
-# CompilerServices.Unsafe 4.0.4.1...) que DigBit.exe.config redirige; aqui no hay
+# CompilerServices.Unsafe 4.0.4.1...) que DigLab.exe.config redirige; aqui no hay
 # ese .config, asi que se le da la que ya este cargada, sea cual sea su version.
 # En C# y no como bloque de PowerShell: un bloque como manejador de
 # AssemblyResolve se vuelve a llamar a si mismo y revienta la pila.
-if (-not ('ResolverDependenciasDigBit' -as [type])) {
+if (-not ('ResolverDependenciasDigLab' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Reflection;
-public static class ResolverDependenciasDigBit
+public static class ResolverDependenciasDigLab
 {
     public static void Instalar()
     {
@@ -180,11 +180,11 @@ public static class ResolverDependenciasDigBit
     }
 }
 '@
-    [ResolverDependenciasDigBit]::Instalar()
+    [ResolverDependenciasDigLab]::Instalar()
 }
 foreach ($dll in Get-ChildItem $CarpetaApp -Filter *.dll) { try { [void][Reflection.Assembly]::LoadFrom($dll.FullName) } catch { } }
-$app = [Reflection.Assembly]::LoadFrom((Join-Path $CarpetaApp 'DigBit.exe'))
-$hashContrasena = $app.GetType('DigBit.conexion.Contrasenas').GetMethod('Hash', [Reflection.BindingFlags]'Static,Public,NonPublic')
+$app = [Reflection.Assembly]::LoadFrom((Join-Path $CarpetaApp 'DigLab.exe'))
+$hashContrasena = $app.GetType('DigLab.conexion.Contrasenas').GetMethod('Hash', [Reflection.BindingFlags]'Static,Public,NonPublic')
 
 $constructor = New-Object MySql.Data.MySqlClient.MySqlConnectionStringBuilder
 $constructor.Server = $Servidor
@@ -232,7 +232,7 @@ $codigoPorProfesor = Existe 'usuarios' 'codigo_clase'
 $hayBajasLab = Existe 'laboratorios' 'activo'
 $conVigencia = Existe 'horarios' 'vigente_hasta'
 # Las franjas nuevas llevan fecha de inicio con db/20, como VigenciaFranjas.ConFecha
-# en DigBit: desde 2026-10-31 siempre (el historial no se reescribe); solo un '0'
+# en DigLab: desde 2026-10-31 siempre (el historial no se reescribe); solo un '0'
 # escrito a mano en configuracion.franjas_con_fecha lo apaga.
 $conFecha = $conVigencia
 if ($conVigencia -and (Existe 'configuracion' 'valor')) {
@@ -315,7 +315,7 @@ Write-Host ("   {0} laboratorios, {1} grupos, {2} materias, {3} clases y {4} fra
 
 foreach ($id in $BorrarClases) {
     if (-not ($clasesExistentes.Rows | Where-Object { [int]$_.idclases -eq $id })) { throw "La clase $id de -BorrarClases no existe." }
-    # Sus sesiones como las cuenta DigBit (VigenciaFranjas.SesionDeLaClase): las de
+    # Sus sesiones como las cuenta DigLab (VigenciaFranjas.SesionDeLaClase): las de
     # sus franjas y sesiones extra, y las sin enlace de su profesor, materia y grupo
     # en su vigencia (las de antes de los horarios, sin fecha, por el dia en que se
     # crearon). Con alguna, borrarla le quitaria su historia (Faltas, asistencia).

@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: un codigo por profesor
+-- DigLab 2.0 - Migracion: un codigo por profesor
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas.
@@ -24,7 +24,7 @@
 -- Las sesiones y bitacoras ya registradas no cambian: guardan el codigo que se
 -- uso ese dia.
 --
--- ORDEN: aplicala DESPUES de actualizar DigBit en todos los equipos. La version
+-- ORDEN: aplicala DESPUES de actualizar DigLab en todos los equipos. La version
 -- anterior busca "la" clase de un codigo y se queda con la primera: con varias
 -- clases compartiendo codigo rechazaria por error las demas. La version nueva
 -- funciona igual con o sin esta migracion.

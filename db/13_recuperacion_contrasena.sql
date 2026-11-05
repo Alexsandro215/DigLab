@@ -1,13 +1,13 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: recuperar la contrasena con un codigo por correo
+-- DigLab 2.0 - Migracion: recuperar la contrasena con un codigo por correo
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas.
 --
 -- El alumno (o el profesor) que olvido su contrasena pulsa "Olvidaste tu
--- contrasena?" en el inicio de sesion de DigBit, tambien en el kiosco. La API
+-- contrasena?" en el inicio de sesion de DigLab, tambien en el kiosco. La API
 -- de recuperacion (carpeta api/, en el hosting con PHP de la escuela) le manda
--- a su correo un codigo de 6 cifras que vale 15 minutos; con el, en DigBit,
+-- a su correo un codigo de 6 cifras que vale 15 minutos; con el, en DigLab,
 -- pone una contrasena nueva. Esta tabla guarda esos codigos.
 --
 -- Que hace:
@@ -17,11 +17,11 @@
 --   caduca y admite pocos intentos. Tambien quedan las peticiones de matriculas
 --   que no existen (usuario_id NULL): con ellas la API limita por IP.
 --
---   configuracion: ajustes de toda la escuela que DigBit lee de la base, para
+--   configuracion: ajustes de toda la escuela que DigLab lee de la base, para
 --   no tener que tocar cada equipo (con Deep Freeze habria que descongelarlos
 --   uno por uno). Por ahora, la direccion de la API y la clave que le manda
---   DigBit: las pone el administrador en DigBit (Ajustes, arriba en su panel)
---   y valen al momento en todos los equipos con DigBit 1.1 (los de una version
+--   DigLab: las pone el administrador en DigLab (Ajustes, arriba en su panel)
+--   y valen al momento en todos los equipos con DigLab 1.1 (los de una version
 --   anterior hay que actualizarlos una vez, descongelados).
 --
 -- La tabla recuperarpassword que tiene la base de la escuela es del sistema
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS recuperacion_contrasena (
     -- Cuando se uso (o se anulo porque se pidio otro, o porque se cambio la contrasena).
     usado_en        DATETIME     NULL,
     ip              VARCHAR(45)  NULL,
-    -- El equipo que lo pidio ("numero @ laboratorio", lo manda DigBit): limite por equipo.
+    -- El equipo que lo pidio ("numero @ laboratorio", lo manda DigLab): limite por equipo.
     equipo          VARCHAR(60)  NULL,
     PRIMARY KEY (idrecuperacion),
     KEY ix_recuperacion_usuario (usuario_id, creado_en),

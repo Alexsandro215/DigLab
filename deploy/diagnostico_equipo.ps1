@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     No cambia nada: solo mira y reporta. Util cuando reinicias y el equipo
-    arranca con el escritorio de siempre en vez de con DigBit.
+    arranca con el escritorio de siempre en vez de con DigLab.
 
     Ejecutar como administrador, con la sesion de un administrador (no con la
     cuenta del laboratorio).
@@ -16,8 +16,8 @@
 [CmdletBinding()]
 param(
     [string]$Cuenta = 'laboratorio',
-    [string]$Destino = 'C:\DigBit',
-    [string]$BaseDatos = 'C:\DigBitDB'
+    [string]$Destino = 'C:\DigLab',
+    [string]$BaseDatos = 'C:\DigLabDB'
 )
 
 $ErrorActionPreference = 'Continue'
@@ -56,14 +56,14 @@ if ($deepFreeze.Congelado -eq $true) {
 }
 
 Titulo '1. Archivos'
-$hayExe = Test-Path (Join-Path $Destino 'DigBit.exe')
-Linea "$Destino\DigBit.exe" $hayExe $hayExe
+$hayExe = Test-Path (Join-Path $Destino 'DigLab.exe')
+Linea "$Destino\DigLab.exe" $hayExe $hayExe
 if (-not $hayExe) {
     Write-Host '     -> configurar_equipo.ps1 NO llego a copiar nada.' -ForegroundColor Yellow
     Write-Host '        Seguramente se ejecuto con -SoloMostrar, que no cambia nada.' -ForegroundColor Yellow
 }
 if ($hayExe) {
-    # Si Usuarios puede escribir aqui, el alumno sustituye DigBit.exe por un
+    # Si Usuarios puede escribir aqui, el alumno sustituye DigLab.exe por un
     # cmd.exe y el siguiente inicio automatico le da un simbolo del sistema.
     # Se mira la ACL con Get-Acl y no el texto de icacls: icacls saca cada
     # permiso en su propio parentesis (Authenticated Users:(I)(M)) y ademas
@@ -79,32 +79,32 @@ if ($hayExe) {
     $escribiblePorUsuarios = $reglasMalas.Count -gt 0
     Linea 'Carpeta protegida contra escritura' $(if ($escribiblePorUsuarios) { "NO: $($reglasMalas[0].IdentityReference) tiene $($reglasMalas[0].FileSystemRights)" } else { 'si, solo lectura para Usuarios' }) (-not $escribiblePorUsuarios)
     if ($escribiblePorUsuarios) {
-        Write-Host "     -> Quien use el equipo puede sustituir DigBit.exe. Vuelve a ejecutar configurar_equipo.ps1," -ForegroundColor Yellow
+        Write-Host "     -> Quien use el equipo puede sustituir DigLab.exe. Vuelve a ejecutar configurar_equipo.ps1," -ForegroundColor Yellow
         Write-Host "        o a mano: icacls $Destino /inheritance:r y conceder Usuarios solo RX." -ForegroundColor Yellow
     }
 }
 
 if ($hayExe) {
-    # Desde la 1.1 DigBit sabe de los modos de acceso (db/11). Una anterior
+    # Desde la 1.1 DigLab sabe de los modos de acceso (db/11). Una anterior
     # pediria el codigo del profesor aunque el laboratorio entre sin codigos o
     # con codigos generados cada semana.
-    $version = (Get-Item (Join-Path $Destino 'DigBit.exe')).VersionInfo.FileVersion
+    $version = (Get-Item (Join-Path $Destino 'DigLab.exe')).VersionInfo.FileVersion
     $alDia = $false
     try { $alDia = [version]$version -ge [version]'1.1' } catch { }
-    Linea 'Version de DigBit' $(if ($version) { $version } else { 'sin version' }) $alDia
+    Linea 'Version de DigLab' $(if ($version) { $version } else { 'sin version' }) $alDia
     if (-not $alDia) {
         Write-Host '     -> Anterior a la 1.1: no sabe de los modos de acceso. Actualizala antes' -ForegroundColor Yellow
         Write-Host '        de que este laboratorio deje el codigo unico de cada docente.' -ForegroundColor Yellow
     }
 }
 
-$hayVig = Test-Path (Join-Path $Destino 'Vigilante\DigBit.Vigilante.exe')
+$hayVig = Test-Path (Join-Path $Destino 'Vigilante\DigLab.Vigilante.exe')
 Linea 'Vigilante copiado' $hayVig $hayVig
 $hayDatos = Test-Path (Join-Path $BaseDatos 'data')
 Linea "$BaseDatos\data" $hayDatos $hayDatos
 
 if ($hayExe) {
-    $config = Join-Path $Destino 'DigBit.exe.config'
+    $config = Join-Path $Destino 'DigLab.exe.config'
     if (Test-Path $config) {
         [xml]$xml = Get-Content -Raw $config
         $kiosco = ($xml.configuration.appSettings.add | Where-Object { $_.key -eq 'ModoKiosco' }).value
@@ -133,8 +133,8 @@ if ($hayExe) {
         # queda vieja este equipo no recupera nada.
         $urlPropia = ($xml.configuration.appSettings.add | Where-Object { $_.key -eq 'UrlRecuperacion' }).value
         if (-not $alDia) {
-            Linea 'Recuperar contrasena por correo' 'no la tiene (DigBit anterior a la 1.1)' $false
-            Write-Host '     -> El enlace abre la ventana vieja, que no hace nada. Actualiza DigBit (descongelado).' -ForegroundColor Yellow
+            Linea 'Recuperar contrasena por correo' 'no la tiene (DigLab anterior a la 1.1)' $false
+            Write-Host '     -> El enlace abre la ventana vieja, que no hace nada. Actualiza DigLab (descongelado).' -ForegroundColor Yellow
         } elseif ([string]::IsNullOrWhiteSpace($urlPropia)) {
             Write-Host ('  {0,-34} ' -f 'Recuperar contrasena por correo:') -NoNewline
             Write-Host 'la direccion de Ajustes (en la base); compruebala en el ADM con Ajustes -> Probar' -ForegroundColor Yellow
@@ -166,7 +166,7 @@ if ($hayExe) {
             Linea 'CarpetaDatos en el config' 'sin fijar (se usa el perfil)' (-not $deepFreeze.Presente)
             if ($deepFreeze.Presente) {
                 Write-Host '     -> Con Deep Freeze, el horario local y las bitacoras sin enviar se borran cada reinicio.' -ForegroundColor Yellow
-                Write-Host '        Vuelve a ejecutar configurar_equipo.ps1 con -CarpetaDatos T:\DigBitDatos.' -ForegroundColor Yellow
+                Write-Host '        Vuelve a ejecutar configurar_equipo.ps1 con -CarpetaDatos T:\DigLabDatos.' -ForegroundColor Yellow
             }
         }
         else {
@@ -178,7 +178,7 @@ if ($hayExe) {
             } catch { }
             Linea 'CarpetaDatos en el config' $carpetaDatos $escribible
             if (-not $escribible) {
-                Write-Host '     -> No se puede escribir ahi. DigBit volvera al perfil y perdera los datos al reiniciar.' -ForegroundColor Yellow
+                Write-Host '     -> No se puede escribir ahi. DigLab volvera al perfil y perdera los datos al reiniciar.' -ForegroundColor Yellow
             }
 
             # La copia del horario con la que trabaja sin servidor (CacheHorario):
@@ -201,12 +201,12 @@ if ($hayExe) {
                 try { $cuantas = ([xml](Get-Content -Raw $cola)).SelectNodes('/pendientes/bitacora').Count } catch { $cuantas = -1 }
                 if ($cuantas -lt 0) {
                     Linea 'Bitacoras sin enviar al servidor' 'el archivo no se puede leer' $false
-                    Write-Host "     -> $cola esta danado. DigBit lo apartara como .corrupto; NO lo borres, avisa." -ForegroundColor Yellow
+                    Write-Host "     -> $cola esta danado. DigLab lo apartara como .corrupto; NO lo borres, avisa." -ForegroundColor Yellow
                 } else {
                     Linea 'Bitacoras sin enviar al servidor' $cuantas ($cuantas -eq 0)
                     if ($cuantas -gt 0) {
                         Write-Host "     -> Hay $cuantas bitacoras esperando servidor en $cola. NO borres esa carpeta." -ForegroundColor Yellow
-                        Write-Host '        DigBit las envia solo en cuanto hay conexion; dejalo encendido en el inicio de sesion.' -ForegroundColor Yellow
+                        Write-Host '        DigLab las envia solo en cuanto hay conexion; dejalo encendido en el inicio de sesion.' -ForegroundColor Yellow
                     }
                 }
             }
@@ -219,7 +219,7 @@ if ($hayExe) {
                 try { $cuantas = ([xml](Get-Content -Raw $rechazadas)).SelectNodes('/pendientes/bitacora').Count } catch { $cuantas = -1 }
                 Linea 'Bitacoras apartadas (no se pudieron enviar)' $(if ($cuantas -lt 0) { 'el archivo no se puede leer' } else { $cuantas }) ($cuantas -eq 0)
                 if ($cuantas -ne 0) {
-                    Write-Host "     -> Revisa $rechazadas y el log de DigBit: dice por que las rechazo el servidor." -ForegroundColor Yellow
+                    Write-Host "     -> Revisa $rechazadas y el log de DigLab: dice por que las rechazo el servidor." -ForegroundColor Yellow
                 }
             }
 
@@ -232,19 +232,19 @@ if ($hayExe) {
     }
 
     # Sin esto, un equipo con la PLANTILLA de connections.config pasaba el
-    # diagnostico entero en verde y solo se descubria al arrancar DigBit.
+    # diagnostico entero en verde y solo se descubria al arrancar DigLab.
     $conexion = Join-Path $Destino 'connections.config'
     if (Test-Path $conexion) {
-        $cadena = ([xml](Get-Content -Raw $conexion)).connectionStrings.add | Where-Object { $_.name -eq 'DigBit' }
+        $cadena = ([xml](Get-Content -Raw $conexion)).connectionStrings.add | Where-Object { $_.name -in 'DigLab', 'DigBit' }
         if ($cadena) {
             # Tambien entre comillas: el instalador las pone si la contrasena lleva ';'.
             $texto = $cadena.connectionString -replace '(?i)(password\s*=\s*)("(?:[^"]|"")*"|''(?:[^'']|'''')*''|[^;]*)', '$1***'
             Linea 'connections.config' $texto ($texto -notmatch 'SERVIDOR|NOMBRE_BD|USUARIO')
             if ($texto -match 'SERVIDOR|NOMBRE_BD|USUARIO') {
-                Write-Host '     -> es la PLANTILLA, no una cadena real. DigBit no podra conectar.' -ForegroundColor Yellow
+                Write-Host '     -> es la PLANTILLA, no una cadena real. DigLab no podra conectar.' -ForegroundColor Yellow
             }
         } else {
-            Linea 'connections.config' 'sin entrada DigBit' $false
+            Linea 'connections.config' 'sin entrada DigLab' $false
         }
     } else {
         Linea 'connections.config' 'NO existe' $false
@@ -252,11 +252,11 @@ if ($hayExe) {
 }
 
 Titulo '1b. Microsoft Defender'
-# Esto es lo unico que separa a un equipo de arrancar en negro. DigBit.exe no
+# Esto es lo unico que separa a un equipo de arrancar en negro. DigLab.exe no
 # esta firmado y se registra como shell de Winlogon, asi que el modelo de
 # Defender lo marca como Trojan:Win32/Bearfoos.A!ml y se lo lleva a cuarentena.
 # La exclusion la pone configurar_equipo.ps1 ANTES de copiar; si falta, el
-# equipo puede arrancar bien hoy y amanecer sin DigBit cualquier otro dia.
+# equipo puede arrancar bien hoy y amanecer sin DigLab cualquier otro dia.
 if (-not (Get-Command Get-MpPreference -ErrorAction SilentlyContinue)) {
     Write-Host '  Este equipo no tiene los comandos de Microsoft Defender.' -ForegroundColor Yellow
     Write-Host '  Si usa otro antivirus, hay que excluir la carpeta en el suyo.' -ForegroundColor Yellow
@@ -266,13 +266,13 @@ else {
     $carpetaExcluida = @($pref.ExclusionPath) -contains $Destino
     Linea "Carpeta $Destino excluida" $(if ($carpetaExcluida) { 'si' } else { 'NO' }) $carpetaExcluida
 
-    foreach ($exe in @((Join-Path $Destino 'DigBit.exe'), (Join-Path $Destino 'Vigilante\DigBit.Vigilante.exe'))) {
+    foreach ($exe in @((Join-Path $Destino 'DigLab.exe'), (Join-Path $Destino 'Vigilante\DigLab.Vigilante.exe'))) {
         $excluido = @($pref.ExclusionProcess) -contains $exe
         Linea "  proceso $(Split-Path $exe -Leaf)" $(if ($excluido) { 'si' } else { 'NO' }) $excluido
     }
 
     if (-not $carpetaExcluida) {
-        Write-Host '     -> SIN ESTO el equipo puede amanecer sin DigBit.exe y arrancar en negro.' -ForegroundColor Yellow
+        Write-Host '     -> SIN ESTO el equipo puede amanecer sin DigLab.exe y arrancar en negro.' -ForegroundColor Yellow
         Write-Host '        Se arregla con deploy\permitir_en_defender.ps1 (tambien recupera lo' -ForegroundColor Yellow
         Write-Host '        que ya estuviera en cuarentena).' -ForegroundColor Yellow
     }
@@ -330,7 +330,7 @@ if ($usuario) {
             }
             Linea 'No puede cambiar su propio Shell' $(if ($suya.Count) { "NO: tiene $($suya[0].RegistryRights)" } else { 'si, solo lectura' }) ($suya.Count -eq 0)
             if ($suya.Count) {
-                Write-Host '     -> Puede poner Shell=explorer.exe y entrar al escritorio sin pasar por DigBit.' -ForegroundColor Yellow
+                Write-Host '     -> Puede poner Shell=explorer.exe y entrar al escritorio sin pasar por DigLab.' -ForegroundColor Yellow
                 Write-Host '        Se arregla volviendo a ejecutar configurar_equipo.ps1.' -ForegroundColor Yellow
             }
 
@@ -398,7 +398,7 @@ $pwless = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\P
 Linea 'DevicePasswordLessBuildVersion' $(if ($null -ne $pwless.DevicePasswordLessBuildVersion) { $pwless.DevicePasswordLessBuildVersion } else { 'sin fijar' }) ($pwless.DevicePasswordLessBuildVersion -eq 0)
 
 Titulo '5. Servicios'
-foreach ($nombre in @('DigBitVigilante', 'DigBitMySQL')) {
+foreach ($nombre in @('DigLabVigilante', 'DigLabMySQL')) {
     $s = Get-Service -Name $nombre -ErrorAction SilentlyContinue
     if ($s) {
         Linea $nombre "$($s.Status), arranque $($s.StartType)" ($s.Status -eq 'Running')
@@ -408,10 +408,10 @@ foreach ($nombre in @('DigBitVigilante', 'DigBitMySQL')) {
 }
 
 # Mayus + Reiniciar lleva al modo seguro, que arranca con cmd.exe como shell y
-# solo con los servicios de su lista. Sin esto, ahi no hay ni DigBit ni
+# solo con los servicios de su lista. Sin esto, ahi no hay ni DigLab ni
 # vigilante, y la sesion no se cierra nunca.
 $enSeguro = @('Minimal', 'Network') | Where-Object {
-    Test-Path "HKLM:\SYSTEM\CurrentControlSet\Control\SafeBoot\$_\DigBitVigilante"
+    Test-Path "HKLM:\SYSTEM\CurrentControlSet\Control\SafeBoot\$_\DigLabVigilante"
 }
 Linea 'El vigilante arranca en modo seguro' $(if ($enSeguro.Count -eq 2) { 'si, Minimal y Network' } elseif ($enSeguro.Count) { "solo en $($enSeguro -join ', ')" } else { 'NO' }) ($enSeguro.Count -eq 2)
 if ($enSeguro.Count -ne 2) {
@@ -422,12 +422,12 @@ $shellSeguro = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\SafeBoo
 Linea 'Shell del modo seguro' $(if ($shellSeguro) { $shellSeguro } else { 'sin fijar' }) $false
 Write-Host '     -> Windows siempre pone cmd.exe aqui. Con la contrasena del inicio' -ForegroundColor Yellow
 Write-Host '        automatico (que esta en claro en el registro) se puede entrar en' -ForegroundColor Yellow
-Write-Host '        modo seguro y tener un simbolo del sistema sin DigBit. PENDIENTE.' -ForegroundColor Yellow
+Write-Host '        modo seguro y tener un simbolo del sistema sin DigLab. PENDIENTE.' -ForegroundColor Yellow
 
 Titulo '6. Registros'
 $dondeMirar = @(
-    (Join-Path $perfil 'AppData\Local\DigBit\logs'),
-    (Join-Path $env:ProgramData 'DigBit\logs'),
+    (Join-Path $perfil 'AppData\Local\DigLab\logs'),
+    (Join-Path $env:ProgramData 'DigLab\logs'),
     (Join-Path $BaseDatos 'error.log'))
 if ($carpetaDatos) { $dondeMirar = @((Join-Path $carpetaDatos 'logs')) + $dondeMirar }
 foreach ($ruta in $dondeMirar) {
@@ -440,4 +440,4 @@ foreach ($ruta in $dondeMirar) {
 }
 
 Write-Host ''
-Write-Host 'Si "C:\DigBit\DigBit.exe" sale en rojo, vuelve a ejecutar configurar_equipo.ps1 SIN -SoloMostrar.' -ForegroundColor Yellow
+Write-Host 'Si "C:\DigLab\DigLab.exe" sale en rojo, vuelve a ejecutar configurar_equipo.ps1 SIN -SoloMostrar.' -ForegroundColor Yellow

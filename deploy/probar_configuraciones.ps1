@@ -4,7 +4,7 @@
     contra una base de DESARROLLO.
 
 .DESCRIPTION
-    Carga DigBit.exe por reflexion y recorre CicloPreliminarDatos y
+    Carga DigLab.exe por reflexion y recorre CicloPreliminarDatos y
     RevisionCiclo:
       - guardar el horario de hoy, con las mismas cuentas que ResumirOrigen, y
         los nombres repetidos (sin acentos ni mayusculas);
@@ -43,7 +43,7 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
 
-    # Otro DigBit.exe; por defecto, el de DigBit\bin\<Configuration>.
+    # Otro DigLab.exe; por defecto, el de DigLab\bin\<Configuration>.
     [string]$Exe,
 
     # numero_identificador de la cuenta de la administracion que firma los cambios.
@@ -55,14 +55,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if ($CadenaConexion -match 'teschi\.edu\.mx') { throw 'Esta prueba escribe en la base: nunca contra la de la escuela.' }
-if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "..\DigBit\bin\$Configuration\DigBit.exe" }
+if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "..\DigLab\bin\$Configuration\DigLab.exe" }
 $Exe = (Resolve-Path $Exe).Path
 $script:carpeta = Split-Path $Exe
 
-$env:DIGBIT_CONNECTION_STRING = $CadenaConexion
+$env:DIGLAB_CONNECTION_STRING = $CadenaConexion
 # El log de la prueba, fuera de la carpeta de datos real.
-$env:DIGBIT_CARPETA_DATOS = Join-Path $env:TEMP 'digbit_probar_configuraciones'
-New-Item -ItemType Directory -Force $env:DIGBIT_CARPETA_DATOS | Out-Null
+$env:DIGLAB_CARPETA_DATOS = Join-Path $env:TEMP 'diglab_probar_configuraciones'
+New-Item -ItemType Directory -Force $env:DIGLAB_CARPETA_DATOS | Out-Null
 
 [AppDomain]::CurrentDomain.add_AssemblyResolve({
     param($origen, $pedido)
@@ -74,14 +74,14 @@ $app = [Reflection.Assembly]::LoadFrom($Exe)
 $null = [Reflection.Assembly]::LoadFrom((Join-Path $script:carpeta 'MySql.Data.dll'))
 $bf = [Reflection.BindingFlags]'Public,NonPublic,Instance,Static'
 function T([string]$n) { $app.GetType($n, $true) }
-$tDatos    = T 'DigBit.conexion.CicloPreliminarDatos'
-$tRevision = T 'DigBit.conexion.RevisionCiclo'
-$tFuente   = T 'DigBit.conexion.FuentePreparacion'
-$tFranja   = T 'DigBit.conexion.FranjaCiclo'
-$tEstado   = T 'DigBit.conexion.EstadoConfiguracion'
-$tFiltro   = T 'DigBit.conexion.FiltroClases'
-$tUsuario  = T 'DigBit.conexion.Datos_User'
-$tConexion = T 'DigBit.Conexion'
+$tDatos    = T 'DigLab.conexion.CicloPreliminarDatos'
+$tRevision = T 'DigLab.conexion.RevisionCiclo'
+$tFuente   = T 'DigLab.conexion.FuentePreparacion'
+$tFranja   = T 'DigLab.conexion.FranjaCiclo'
+$tEstado   = T 'DigLab.conexion.EstadoConfiguracion'
+$tFiltro   = T 'DigLab.conexion.FiltroClases'
+$tUsuario  = T 'DigLab.conexion.Datos_User'
+$tConexion = T 'DigLab.Conexion'
 $datos = [Activator]::CreateInstance($tDatos, $true)
 $publico = [Reflection.BindingFlags]'Public,Instance'
 
@@ -365,7 +365,7 @@ try {
         Write-Host "`n== Solo consulta (persona responsable del laboratorio) ==" -ForegroundColor Cyan
         $conexionEquipo = $tConexion.GetMethod('GetConexion').Invoke([Activator]::CreateInstance($tConexion, $true), [object[]]@())
         $argsPreparar = [object[]]@($conexionEquipo, $null)
-        $problema = (T 'DigBit.conexion.CuentaDeConsulta').GetMethod('Preparar', $bf).Invoke($null, $argsPreparar)
+        $problema = (T 'DigLab.conexion.CuentaDeConsulta').GetMethod('Preparar', $bf).Invoke($null, $argsPreparar)
         $conexionEquipo.Dispose()
         if ($problema) {
             Write-Host "Se salta: $problema" -ForegroundColor Yellow

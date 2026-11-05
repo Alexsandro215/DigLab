@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion fase 2 para una base que YA existe
+-- DigLab 2.0 - Migracion fase 2 para una base que YA existe
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de la fase 2, no necesitas
 -- este script: la restriccion ya viene incluida.

@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: el color de cada profesor en los horarios
+-- DigLab 2.0 - Migracion: el color de cada profesor en los horarios
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas.
@@ -19,7 +19,7 @@
 -- columnas de su lista (contrasena, nombre, apellidos y correo), asi que no
 -- puede cambiarlo; el del administrador si.
 --
--- ORDEN: da igual. La version anterior de DigBit no nombra la columna, y la
+-- ORDEN: da igual. La version anterior de DigLab no nombra la columna, y la
 -- nueva no ofrece elegir el color hasta verla (conexion/Esquema.cs).
 --
 -- MariaDB 5.5 copia la tabla usuarios entera al anadir la columna, con las

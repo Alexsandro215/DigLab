@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Prueba DigBit contra una COPIA de la base del TESCHI ya migrada.
+    Prueba DigLab contra una COPIA de la base del TESCHI ya migrada.
 
 .DESCRIPTION
     La base del TESCHI no es la de db\01_schema.sql: es MariaDB 5.5.68, tiene
@@ -9,7 +9,7 @@
     sirve contra ella porque depende de los ids del seed de desarrollo, que ahi
     no existen. Esta prueba usa ids REALES de esa base.
 
-    Ejercita el codigo de verdad, cargando DigBit.exe por reflexion, por debajo
+    Ejercita el codigo de verdad, cargando DigLab.exe por reflexion, por debajo
     de la interfaz (lo que abre ventanas bloquearia una prueba automatica):
       - contrasenas: MD5 heredado -> migracion perezosa a PBKDF2
       - el administrador ADMIN001 que crea la migracion 04, con su tipo 3
@@ -69,10 +69,10 @@ if ($CadenaConexion -match 'teschi\.edu\.mx') {
     throw 'Esta prueba escribe en la base. No se ejecuta contra el servidor de la escuela: usa una copia local.'
 }
 
-$carpeta = Join-Path $PSScriptRoot "..\DigBit\bin\$Configuration"
-$exe = Join-Path $carpeta 'DigBit.exe'
+$carpeta = Join-Path $PSScriptRoot "..\DigLab\bin\$Configuration"
+$exe = Join-Path $carpeta 'DigLab.exe'
 if (-not (Test-Path $exe)) { throw "No encuentro $exe. Compila antes: .\build.ps1 -Configuration $Configuration -NoRun" }
-$fuenteConsultas = Join-Path $PSScriptRoot '..\DigBit\conexion\Consultas.cs'
+$fuenteConsultas = Join-Path $PSScriptRoot '..\DigLab\conexion\Consultas.cs'
 
 # --- Ids de la copia (parametros) y los de esta prueba -----------------------------
 $idProfesor   = $IdProfesor
@@ -87,7 +87,7 @@ $idMateria    = 2
 $idClase      = 9901
 $codigo       = 'ENSA1'
 
-$env:DIGBIT_CONNECTION_STRING = $CadenaConexion
+$env:DIGLAB_CONNECTION_STRING = $CadenaConexion
 $partes = @{}
 foreach ($p in $CadenaConexion.Split(';')) {
     if ($p -match '^\s*([^=]+)=(.*)$') { $partes[$matches[1].Trim().ToLower()] = $matches[2].Trim() }
@@ -109,11 +109,11 @@ function Sql([string]$consulta) {
     finally { $ErrorActionPreference = $previo }
 }
 
-# --- Cargar DigBit.exe con sus dependencias ---------------------------------------
-$global:CarpetaDigBit = $carpeta
+# --- Cargar DigLab.exe con sus dependencias ---------------------------------------
+$global:CarpetaDigLab = $carpeta
 [AppDomain]::CurrentDomain.add_AssemblyResolve([ResolveEventHandler] {
     param($remitente, $evento)
-    $dll = Join-Path $global:CarpetaDigBit ((($evento.Name -split ',')[0]) + '.dll')
+    $dll = Join-Path $global:CarpetaDigLab ((($evento.Name -split ',')[0]) + '.dll')
     if (Test-Path $dll) { return [Reflection.Assembly]::LoadFrom($dll) }
     return $null
 })
@@ -121,16 +121,16 @@ $global:CarpetaDigBit = $carpeta
 $asm = [Reflection.Assembly]::LoadFrom($exe)
 $todo = [Reflection.BindingFlags]'Public,NonPublic,Static,Instance'
 
-$tContrasenas = $asm.GetType('DigBit.conexion.Contrasenas')
+$tContrasenas = $asm.GetType('DigLab.conexion.Contrasenas')
 $mVerificar   = $tContrasenas.GetMethod('Verificar', $todo)
-$mMigrar      = $asm.GetType('DigBit.conexion.Consultas').GetMethod('MigrarContrasena', $todo)
-$tHorarios    = $asm.GetType('DigBit.conexion.HorariosDatos')
+$mMigrar      = $asm.GetType('DigLab.conexion.Consultas').GetMethod('MigrarContrasena', $todo)
+$tHorarios    = $asm.GetType('DigLab.conexion.HorariosDatos')
 $horarios     = [Activator]::CreateInstance($tHorarios, $true)
 $mResolver    = $tHorarios.GetMethod('ResolverCodigo', [Type[]]@([string], [int], [int], [string]))
-$tCola        = $asm.GetType('DigBit.conexion.ColaBitacoras')
+$tCola        = $asm.GetType('DigLab.conexion.ColaBitacoras')
 $mEnviar      = $tCola.GetMethod('Enviar', $todo)
-$tPendiente   = $asm.GetType('DigBit.conexion.BitacoraPendiente')
-$tSesion      = $asm.GetType('DigBit.conexion.SesionLocal')
+$tPendiente   = $asm.GetType('DigLab.conexion.BitacoraPendiente')
+$tSesion      = $asm.GetType('DigLab.conexion.SesionLocal')
 
 # Lo que sale de una funcion llega envuelto en un PSObject, y MethodInfo.Invoke
 # no lo desenvuelve: por eso las llamadas por reflexion usan .psobject.BaseObject.

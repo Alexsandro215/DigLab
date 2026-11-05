@@ -23,28 +23,28 @@ Casi todo lo que nos preocupaba del modo kiosco deja de importar:
 | Riesgo | Con Deep Freeze |
 |---|---|
 | Un alumno consigue salirse y rompe algo | Se arregla solo al reiniciar |
-| Alguien borra `C:\DigBit` o el servicio | Vuelve al reiniciar |
-| Defender pone `DigBit.exe` en cuarentena | La exclusión y el ejecutable vuelven al reiniciar |
+| Alguien borra `C:\DigLab` o el servicio | Vuelve al reiniciar |
+| Defender pone `DigLab.exe` en cuarentena | La exclusión y el ejecutable vuelven al reiniciar |
 | Alguien cambia el shell en el registro | Vuelve al reiniciar |
 | La imagen se degrada con el uso | Nunca se degrada |
 
 Un equipo congelado y bien configurado es, a efectos prácticos, **inmune**. Eso
 vale más que cualquier directiva de grupo, y es la razón por la que el enfoque
-de DigBit como shell de Windows es defendible aquí aunque en un equipo normal
+de DigLab como shell de Windows es defendible aquí aunque en un equipo normal
 sería frágil.
 
 ## Lo malo: se pierden los datos del día a día
 
 Deep Freeze no distingue entre basura que dejó un alumno y una bitácora que
-todavía no llegó al servidor. Borra las dos. Sin configurar nada, DigBit
+todavía no llegó al servidor. Borra las dos. Sin configurar nada, DigLab
 escribe cuatro cosas en el disco del sistema:
 
 | Qué | Dónde iba | Se pierde al reiniciar |
 |---|---|---|
-| Bitácoras registradas sin servidor | `%LOCALAPPDATA%\DigBit\bitacoras_pendientes.xml` | **Sí, y son datos de alumnos** |
-| Copia local del horario | `%LOCALAPPDATA%\DigBit\horario_local.xml` | Sí |
-| Registros de DigBit | `%LOCALAPPDATA%\DigBit\logs` | Sí |
-| Registros del vigilante | `%ProgramData%\DigBit\logs` | Sí |
+| Bitácoras registradas sin servidor | `%LOCALAPPDATA%\DigLab\bitacoras_pendientes.xml` | **Sí, y son datos de alumnos** |
+| Copia local del horario | `%LOCALAPPDATA%\DigLab\horario_local.xml` | Sí |
+| Registros de DigLab | `%LOCALAPPDATA%\DigLab\logs` | Sí |
+| Registros del vigilante | `%ProgramData%\DigLab\logs` | Sí |
 
 La primera fila es pérdida de información real. La segunda es peor de lo que
 parece: **el modo sin conexión de la fase 4 deja de funcionar**. Toda su gracia
@@ -54,8 +54,8 @@ la que se descargó, que es justo cuando había red.
 
 ### La solución: `-CarpetaDatos`
 
-DigBit y el vigilante leen un ajuste `CarpetaDatos` (`appSettings`, o la variable
-de entorno `DIGBIT_CARPETA_DATOS`, que tiene prioridad) que apunta a una carpeta
+DigLab y el vigilante leen un ajuste `CarpetaDatos` (`appSettings`, o la variable
+de entorno `DIGLAB_CARPETA_DATOS`, que tiene prioridad) que apunta a una carpeta
 **fuera del disco congelado**: un **ThawSpace** de Deep Freeze (la unidad virtual
 persistente que crea el propio producto, por convención `T:`) o una partición
 que no esté congelada.
@@ -63,13 +63,13 @@ que no esté congelada.
 ```powershell
 .\deploy\configurar_equipo.ps1 -Cuenta laboratorio -Contrasena LaContrasena `
     -Laboratorio "Laboratorio de Computo 1" `
-    -CadenaConexion "Database=teschi_otru;Server=SERVIDOR;User Id=digbit;Password=xxx" `
-    -CarpetaDatos T:\DigBitDatos
+    -CadenaConexion "Database=teschi_otru;Server=SERVIDOR;User Id=diglab;Password=xxx" `
+    -CarpetaDatos T:\DigLabDatos
 ```
 
 El guion crea la carpeta, le da permiso de escritura a `Usuarios` y a `SYSTEM`
 (por SID, no por nombre: en Windows en español el grupo se llama `Usuarios`), y
-escribe el ajuste en los **dos** archivos de configuración, el de DigBit y el
+escribe el ajuste en los **dos** archivos de configuración, el de DigLab y el
 del vigilante.
 
 Si el equipo tiene Deep Freeze y **no** se indica `-CarpetaDatos`, el guion se
@@ -78,7 +78,7 @@ de alumnos. Para un equipo que nunca se queda sin servidor y donde se acepte
 perder los registros, `-AceptarSinPersistencia` sigue adelante.
 
 Si la carpeta configurada no se puede escribir (el ThawSpace no existe, la
-unidad cambió de letra), DigBit **no se cae**: vuelve al perfil del usuario y lo
+unidad cambió de letra), DigLab **no se cae**: vuelve al perfil del usuario y lo
 deja dicho en la primera línea del log. Perder los registros es malo; no
 arrancar en mitad de una clase es peor.
 
@@ -100,12 +100,12 @@ nada, y ése es el fallo más caro de diagnosticar porque todo *parece* correcto
    congelado ya no se corrige nada sin repetir el ciclo entero.
 6. **Congelar.** Boot Frozen, reiniciar.
 7. **Confirmar que sobrevivió.** Volver a pasar el diagnóstico: la marca
-   `C:\DigBit\.instalado` sigue ahí después de un reinicio.
+   `C:\DigLab\.instalado` sigue ahí después de un reinicio.
 
 ### Cómo saber si un disco conserva lo que se escribe
 
 `configurar_equipo.ps1` deja una marca con la fecha de instalación en
-`C:\DigBit\.instalado`. El diagnóstico la compara con la hora del último
+`C:\DigLab\.instalado`. El diagnóstico la compara con la hora del último
 arranque de Windows: si la marca sigue ahí **después** de un reinicio posterior
 a la instalación, el disco conservó lo escrito. Es la única comprobación que no
 depende del fabricante ni de que `DFC.exe` conteste, y por eso la más fiable,
@@ -152,13 +152,13 @@ deberían chocar con una directiva de grupo que las bloquee, cosa que en un
 dominio estricto habría que pedir a quien lo administre. Si algún día se
 endurece, el guion ya avisa cuando la exclusión no llega a quedar puesta.
 
-Lo que no cambia es que `DigBit.exe` **no está firmado** y Defender lo detecta
+Lo que no cambia es que `DigLab.exe` **no está firmado** y Defender lo detecta
 como `Trojan:Win32/Bearfoos.A!ml`. La exclusión es un parche; la solución de
 fondo sigue siendo firmar el ejecutable con un certificado de firma de código.
 
 ## Si los equipos están en el dominio: la contraseña de la cuenta de máquina
 
-Esto no es de DigBit, pero rompe el arranque entero y aparece a los treinta días
+Esto no es de DigLab, pero rompe el arranque entero y aparece a los treinta días
 de congelar, así que conviene saberlo antes.
 
 Un equipo unido a un dominio cambia solo la contraseña de su **cuenta de

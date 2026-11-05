@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-    Arma DigBit-Setup.exe: el instalador de DigBit, con el asistente normal de Windows.
+    Arma DigLab-Setup.exe: el instalador de DigLab, con el asistente normal de Windows.
 
 .DESCRIPTION
     Corre solo en la PC de desarrollo; en los equipos donde se instala no hace falta
     PowerShell. Compila en Release, prepara una carpeta de carga y se la pasa a Inno Setup
-    (instalador\DigBit.iss).
+    (instalador\DigLab.iss).
 
     La CONTRASENA de la base NO va dentro: se teclea al instalar cada equipo. El
     connections.config de la compilacion (el de este equipo) puede llevarla, asi que no se
@@ -16,7 +16,7 @@
     .\crear_setup.ps1 -Inno 'C:\ruta\a\ISCC.exe'
 
 .EXAMPLE
-    # Firmado, si se consigue un certificado (la clave del .pfx, en la variable DIGBIT_PFX_CLAVE)
+    # Firmado, si se consigue un certificado (la clave del .pfx, en la variable DIGLAB_PFX_CLAVE)
     .\crear_setup.ps1 -Inno 'C:\ruta\a\ISCC.exe' -Certificado 'C:\ruta\certificado.pfx'
 #>
 [CmdletBinding()]
@@ -27,21 +27,21 @@ param(
     [string]$Base,
     [string]$Usuario,
     [int]$Puerto = 0,
-    # Vacio: DigBit-Setup.exe junto a la carpeta del repositorio.
+    # Vacio: DigLab-Setup.exe junto a la carpeta del repositorio.
     [string]$Destino,
     # Usar la compilacion Release que ya haya.
     [switch]$SinCompilar,
     # Las paginas del asistente, sin instalar nada ni pedir administrador. Solo para revisarlas.
     [switch]$VistaPrevia,
     # La carpeta donde la vista previa mira si ya hay algo instalado (solo la lee).
-    [string]$VistaPreviaEn = 'C:\DigBitVistaPreviaNoExiste',
+    [string]$VistaPreviaEn = 'C:\DigLabVistaPreviaNoExiste',
     # Un .pfx para firmar; vacio: sin firma, y Windows avisa "Editor desconocido".
     [string]$Certificado
 )
 
 $ErrorActionPreference = 'Stop'
 $raiz = $PSScriptRoot
-if (-not $Destino) { $Destino = Join-Path (Split-Path $raiz -Parent) 'DigBit-Setup.exe' }
+if (-not $Destino) { $Destino = Join-Path (Split-Path $raiz -Parent) 'DigLab-Setup.exe' }
 $Destino = [IO.Path]::GetFullPath([IO.Path]::Combine((Get-Location).ProviderPath, $Destino))
 
 function Paso([string]$t) { Write-Host ''; Write-Host "== $t" -ForegroundColor Cyan }
@@ -57,9 +57,9 @@ if (-not $Inno -or -not (Test-Path $Inno)) { throw 'No se encontro ISCC.exe de I
 
 # --- La conexion que va precargada (sin contrasena) --------------------------------
 Paso '1. Conexion que llevara el instalador'
-$config = Join-Path $raiz 'DigBit\bin\Release\connections.config'
+$config = Join-Path $raiz 'DigLab\bin\Release\connections.config'
 if ((-not $Servidor -or -not $Base -or -not $Usuario) -and (Test-Path $config)) {
-    $nodo = ([xml](Get-Content -Raw $config)).connectionStrings.add | Where-Object { $_.name -eq 'DigBit' } | Select-Object -First 1
+    $nodo = ([xml](Get-Content -Raw $config)).connectionStrings.add | Where-Object { $_.name -in 'DigLab', 'DigBit' } | Select-Object -First 1
     if ($nodo) {
         $partes = @{}
         foreach ($trozo in $nodo.connectionString.Split(';')) {
@@ -83,19 +83,19 @@ Write-Host "   base $Base en ${Servidor}:$Puerto, usuario $Usuario (la contrasen
 # --- Compilar ---------------------------------------------------------------------
 if (-not $SinCompilar) {
     Paso '2. Compilar la solucion (Release)'
-    # -SinCerrar: sin el, build.ps1 cierra cualquier DigBit abierto.
+    # -SinCerrar: sin el, build.ps1 cierra cualquier DigLab abierto.
     & (Join-Path $raiz 'build.ps1') -Configuration Release -NoRun -SinCerrar
 }
-$appDigBit = Join-Path $raiz 'DigBit\bin\Release'
-$appVigilante = Join-Path $raiz 'DigBit.Vigilante\bin\Release'
-$appConfigurador = Join-Path $raiz 'DigBit.Configurador\bin\Release'
-foreach ($exe in @((Join-Path $appDigBit 'DigBit.exe'), (Join-Path $appVigilante 'DigBit.Vigilante.exe'), (Join-Path $appConfigurador 'DigBit.Configurador.exe'))) {
+$appDigLab = Join-Path $raiz 'DigLab\bin\Release'
+$appVigilante = Join-Path $raiz 'DigLab.Vigilante\bin\Release'
+$appConfigurador = Join-Path $raiz 'DigLab.Configurador\bin\Release'
+foreach ($exe in @((Join-Path $appDigLab 'DigLab.exe'), (Join-Path $appVigilante 'DigLab.Vigilante.exe'), (Join-Path $appConfigurador 'DigLab.Configurador.exe'))) {
     if (-not (Test-Path $exe)) { throw "Falta $exe. Quita -SinCompilar o compila en Release." }
 }
 
 # --- Carga ------------------------------------------------------------------------
 Paso '3. Preparar lo que va dentro'
-$trabajo = Join-Path ([IO.Path]::GetTempPath()) ('digbit-setup-' + [Guid]::NewGuid().ToString('N'))
+$trabajo = Join-Path ([IO.Path]::GetTempPath()) ('diglab-setup-' + [Guid]::NewGuid().ToString('N'))
 $carga = Join-Path $trabajo 'carga'
 New-Item -ItemType Directory -Force $carga | Out-Null
 
@@ -114,16 +114,16 @@ try {
         }
     }
 
-    $cargaDigBit = Join-Path $carga 'DigBit'
+    $cargaDigLab = Join-Path $carga 'DigLab'
     $cargaConfigurador = Join-Path $carga 'Configurador'
-    CopiarCompilacion $appDigBit $cargaDigBit
+    CopiarCompilacion $appDigLab $cargaDigLab
     CopiarCompilacion $appVigilante (Join-Path $carga 'Vigilante')
     New-Item -ItemType Directory -Force $cargaConfigurador | Out-Null
-    Copy-Item (Join-Path $appConfigurador 'DigBit.Configurador.exe') $cargaConfigurador -Force
-    # Lo que necesita para hablar con la base: lo mismo de DigBit, con sus redirecciones.
-    Copy-Item (Join-Path $cargaDigBit '*.dll') $cargaConfigurador -Force
-    Copy-Item (Join-Path $cargaDigBit 'DigBit.exe.config') (Join-Path $cargaConfigurador 'DigBit.Configurador.exe.config') -Force
-    Copy-Item (Join-Path $raiz 'DigBit\img\iconoDB.ico') (Join-Path $carga 'icono.ico') -Force
+    Copy-Item (Join-Path $appConfigurador 'DigLab.Configurador.exe') $cargaConfigurador -Force
+    # Lo que necesita para hablar con la base: lo mismo de DigLab, con sus redirecciones.
+    Copy-Item (Join-Path $cargaDigLab '*.dll') $cargaConfigurador -Force
+    Copy-Item (Join-Path $cargaDigLab 'DigLab.exe.config') (Join-Path $cargaConfigurador 'DigLab.Configurador.exe.config') -Force
+    Copy-Item (Join-Path $raiz 'DigLab\img\iconoDB.ico') (Join-Path $carga 'icono.ico') -Force
 
     # Lo que el Setup extrae antes de instalar, para comprobar la base.
     $temporales = Join-Path $trabajo 'temporales.iss'
@@ -136,7 +136,7 @@ try {
     if (Test-Path $config) {
         Add-Type -AssemblyName System.Data
         $constructor = New-Object System.Data.Common.DbConnectionStringBuilder
-        $constructor.set_ConnectionString((([xml](Get-Content -Raw $config)).connectionStrings.add | Where-Object { $_.name -eq 'DigBit' }).connectionString)
+        $constructor.set_ConnectionString((([xml](Get-Content -Raw $config)).connectionStrings.add | Where-Object { $_.name -in 'DigLab', 'DigBit' }).connectionString)
         if ($constructor.ContainsKey('Password') -and "$($constructor['Password'])") { $secretos.Add([string]$constructor['Password']) }
     }
     $configApi = Join-Path $raiz 'api\config.php'
@@ -166,8 +166,8 @@ try {
         $firmar = Get-ChildItem (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin') -Recurse -Filter 'signtool.exe' -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
         if (-not $firmar) { throw 'Se pidio firmar y no se encontro signtool.exe (viene con el SDK de Windows).' }
-        foreach ($exe in @((Join-Path $cargaDigBit 'DigBit.exe'), (Join-Path $carga 'Vigilante\DigBit.Vigilante.exe'), (Join-Path $cargaConfigurador 'DigBit.Configurador.exe'))) {
-            & $firmar.FullName sign /f $Certificado /p $env:DIGBIT_PFX_CLAVE /fd SHA256 /tr 'http://timestamp.digicert.com' /td SHA256 $exe
+        foreach ($exe in @((Join-Path $cargaDigLab 'DigLab.exe'), (Join-Path $carga 'Vigilante\DigLab.Vigilante.exe'), (Join-Path $cargaConfigurador 'DigLab.Configurador.exe'))) {
+            & $firmar.FullName sign /f $Certificado /p $env:DIGLAB_PFX_CLAVE /fd SHA256 /tr 'http://timestamp.digicert.com' /td SHA256 $exe
             if ($LASTEXITCODE -ne 0) { throw "No se pudo firmar $exe." }
         }
     }
@@ -181,13 +181,13 @@ try {
         "/O$salidaInno", '/Qp'
     )
     if ($VistaPrevia) { $argumentos += "/DVistaPrevia=$VistaPreviaEn" }
-    & $Inno @argumentos (Join-Path $raiz 'instalador\DigBit.iss')
+    & $Inno @argumentos (Join-Path $raiz 'instalador\DigLab.iss')
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup termino con codigo $LASTEXITCODE." }
 
-    $generado = Join-Path $salidaInno 'DigBit-Setup.exe'
+    $generado = Join-Path $salidaInno 'DigLab-Setup.exe'
     if (-not (Test-Path $generado)) { throw "No aparecio $generado." }
     if ($firmar) {
-        & $firmar.FullName sign /f $Certificado /p $env:DIGBIT_PFX_CLAVE /fd SHA256 /tr 'http://timestamp.digicert.com' /td SHA256 $generado
+        & $firmar.FullName sign /f $Certificado /p $env:DIGLAB_PFX_CLAVE /fd SHA256 /tr 'http://timestamp.digicert.com' /td SHA256 $generado
         if ($LASTEXITCODE -ne 0) { throw 'No se pudo firmar el instalador.' }
     }
 

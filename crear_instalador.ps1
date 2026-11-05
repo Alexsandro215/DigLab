@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-    Arma DigBit-Instalador.exe: UN solo archivo que instala DigBit en un equipo
+    Arma DigLab-Instalador.exe: UN solo archivo que instala DigLab en un equipo
     y pregunta de que tipo es (administrador, maestro o alumno/kiosco).
 
 .DESCRIPTION
-    Dentro del .exe van, como un zip incrustado (ver DigBit.Instalador\Carga.cs):
-        DigBit\bin\Release\            la aplicacion, con la PLANTILLA de connections.config
-        DigBit.Vigilante\bin\Release\  el servicio del kiosco
+    Dentro del .exe van, como un zip incrustado (ver DigLab.Instalador\Carga.cs):
+        DigLab\bin\Release\            la aplicacion, con la PLANTILLA de connections.config
+        DigLab.Vigilante\bin\Release\  el servicio del kiosco
         deploy\                        los guiones que hacen la instalacion
         conexion.txt                   servidor, base, usuario y puerto de la base
 
@@ -20,7 +20,7 @@
 
 .EXAMPLE
     .\crear_instalador.ps1
-    # La conexion sale del connections.config de DigBit\bin\Release (sin la contrasena).
+    # La conexion sale del connections.config de DigLab\bin\Release (sin la contrasena).
 
 .EXAMPLE
     .\crear_instalador.ps1 -Servidor sql.teschi.edu.mx -Base teschi_otru -Usuario teschi_otru -SinCompilar
@@ -32,7 +32,7 @@ param(
     [string]$Usuario,
     [int]$Puerto = 0,
 
-    # Vacio: DigBit-Instalador.exe junto a la carpeta del repositorio.
+    # Vacio: DigLab-Instalador.exe junto a la carpeta del repositorio.
     [string]$Destino,
 
     # Usar la compilacion Release que ya haya, sin recompilar la solucion.
@@ -43,7 +43,7 @@ $ErrorActionPreference = 'Stop'
 $raiz = $PSScriptRoot
 # En el cuerpo y no como valor por defecto del param: ahi $PSScriptRoot llega
 # vacio cuando se lanza con "powershell -File".
-if (-not $Destino) { $Destino = Join-Path (Split-Path $raiz -Parent) 'DigBit-Instalador.exe' }
+if (-not $Destino) { $Destino = Join-Path (Split-Path $raiz -Parent) 'DigLab-Instalador.exe' }
 # Relativa a donde se esta, no a la carpeta del proceso (que es lo que usa .NET).
 $Destino = [IO.Path]::GetFullPath([IO.Path]::Combine((Get-Location).ProviderPath, $Destino))
 
@@ -59,9 +59,9 @@ function Nativo([scriptblock]$bloque) {
 
 # --- Conexion que va dentro (sin contrasena) -------------------------------------
 Paso '1. Conexion a la base que llevara el instalador'
-$config = Join-Path $raiz 'DigBit\bin\Release\connections.config'
+$config = Join-Path $raiz 'DigLab\bin\Release\connections.config'
 if ((-not $Servidor -or -not $Base -or -not $Usuario) -and (Test-Path $config)) {
-    $nodo = ([xml](Get-Content -Raw $config)).connectionStrings.add | Where-Object { $_.name -eq 'DigBit' } | Select-Object -First 1
+    $nodo = ([xml](Get-Content -Raw $config)).connectionStrings.add | Where-Object { $_.name -in 'DigLab', 'DigBit' } | Select-Object -First 1
     if ($nodo) {
         $partes = @{}
         foreach ($trozo in $nodo.connectionString.Split(';')) {
@@ -93,24 +93,24 @@ if (-not $SinCompilar) {
     Paso '2. Compilar la solucion (Release)'
     # Con build.ps1, que en un clon nuevo restaura los paquetes NuGet (sin eso
     # fallaba con veinte errores que no dicen nada), pero -SinCerrar: sin el,
-    # cierra cualquier DigBit abierto.
+    # cierra cualquier DigLab abierto.
     try {
         & (Join-Path $raiz 'build.ps1') -Configuration Release -NoRun -SinCerrar
     }
     catch {
-        throw "La compilacion fallo: $($_.Exception.Message) Si DigBit esta abierto desde bin\Release, cierralo y repite (o usa -SinCompilar)."
+        throw "La compilacion fallo: $($_.Exception.Message) Si DigLab esta abierto desde bin\Release, cierralo y repite (o usa -SinCompilar)."
     }
 }
 
-$appDigBit = Join-Path $raiz 'DigBit\bin\Release'
-$appVigilante = Join-Path $raiz 'DigBit.Vigilante\bin\Release'
-foreach ($exe in @((Join-Path $appDigBit 'DigBit.exe'), (Join-Path $appVigilante 'DigBit.Vigilante.exe'))) {
+$appDigLab = Join-Path $raiz 'DigLab\bin\Release'
+$appVigilante = Join-Path $raiz 'DigLab.Vigilante\bin\Release'
+foreach ($exe in @((Join-Path $appDigLab 'DigLab.exe'), (Join-Path $appVigilante 'DigLab.Vigilante.exe'))) {
     if (-not (Test-Path $exe)) { throw "Falta $exe. Quita -SinCompilar o compila en Release." }
 }
 
 # --- Carga ------------------------------------------------------------------------
 Paso '3. Preparar lo que va dentro'
-$trabajo = Join-Path ([IO.Path]::GetTempPath()) ('digbit-instalador-' + [Guid]::NewGuid().ToString('N'))
+$trabajo = Join-Path ([IO.Path]::GetTempPath()) ('diglab-instalador-' + [Guid]::NewGuid().ToString('N'))
 $carga = Join-Path $trabajo 'carga'
 $zip = Join-Path $trabajo 'Carga.zip'
 New-Item -ItemType Directory -Force $carga | Out-Null
@@ -128,13 +128,13 @@ try {
         }
     }
 
-    CopiarCompilacion $appDigBit (Join-Path $carga 'DigBit\bin\Release')
-    CopiarCompilacion $appVigilante (Join-Path $carga 'DigBit.Vigilante\bin\Release')
+    CopiarCompilacion $appDigLab (Join-Path $carga 'DigLab\bin\Release')
+    CopiarCompilacion $appVigilante (Join-Path $carga 'DigLab.Vigilante\bin\Release')
 
     # La conexion de la compilacion es la de ESTE equipo y puede llevar la
     # contrasena: dentro va la plantilla. configurar_equipo.ps1 escribe la buena
     # en cada equipo con lo que se teclea en el instalador.
-    Copy-Item (Join-Path $raiz 'DigBit\connections.config.example') (Join-Path $carga 'DigBit\bin\Release\connections.config') -Force
+    Copy-Item (Join-Path $raiz 'DigLab\connections.config.example') (Join-Path $carga 'DigLab\bin\Release\connections.config') -Force
 
     New-Item -ItemType Directory -Force (Join-Path $carga 'deploy') | Out-Null
     Copy-Item (Join-Path $raiz 'deploy\*.ps1') (Join-Path $carga 'deploy') -Force
@@ -150,7 +150,7 @@ try {
     [IO.File]::WriteAllLines((Join-Path $carga 'conexion.txt'), $lineasConexion, (New-Object Text.UTF8Encoding $false))
 
     # Comprobacion: ninguna contrasena de verdad dentro de la carga.
-    $plantilla = Get-Content -Raw (Join-Path $carga 'DigBit\bin\Release\connections.config')
+    $plantilla = Get-Content -Raw (Join-Path $carga 'DigLab\bin\Release\connections.config')
     if ($plantilla -notmatch 'Server=SERVIDOR') { throw 'El connections.config de la carga no es la plantilla. No se sigue.' }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -165,14 +165,14 @@ try {
     # cierre si la ruta lleva espacios.
     $salidaExe = (Join-Path $trabajo 'bin') + '/'
     $intermedia = (Join-Path $trabajo 'obj') + '/'
-    $proyecto = Join-Path $raiz 'DigBit.Instalador\DigBit.Instalador.csproj'
+    $proyecto = Join-Path $raiz 'DigLab.Instalador\DigLab.Instalador.csproj'
     $salida = Nativo { & $msbuild $proyecto -t:Rebuild -p:Configuration=Release "-p:CargaInstalador=$zip" "-p:OutputPath=$salidaExe" "-p:IntermediateOutputPath=$intermedia" -v:minimal -nologo 2>&1 }
     if ($LASTEXITCODE -ne 0) {
         $salida | ForEach-Object { Write-Host "   $_" }
         throw "No se pudo compilar el instalador ($LASTEXITCODE)."
     }
 
-    $generado = Join-Path $salidaExe 'DigBit.Instalador.exe'
+    $generado = Join-Path $salidaExe 'DigLab.Instalador.exe'
     if (-not (Test-Path $generado)) { throw "No aparecio $generado." }
     if ((Get-Item $generado).Length -lt (Get-Item $zip).Length) { throw 'El instalador pesa menos que su carga: no la lleva dentro.' }
 

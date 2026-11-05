@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion fase 7 (contrasenas PBKDF2) para una base que YA existe
+-- DigLab 2.0 - Migracion fase 7 (contrasenas PBKDF2) para una base que YA existe
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de la fase 7, no la necesitas.
 --

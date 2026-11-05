@@ -1,18 +1,18 @@
-# API de recuperación de contraseña de DigBit
+# API de recuperación de contraseña de DigLab
 
 Es lo que hay detrás de **«¿Olvidaste tu contraseña?»** en el inicio de sesión
-de DigBit, también en el kiosco de los laboratorios:
+de DigLab, también en el kiosco de los laboratorios:
 
 1. Quien olvidó su contraseña (estudiante, docente o responsable de
    laboratorio) escribe su matrícula (o su número de empleado).
 2. Esta API busca su cuenta y le manda **un código de 6 cifras a su correo**,
    desde `digbit.teschi@gmail.com`.
-3. En DigBit escribe el código y su contraseña nueva. Si el código es bueno, la
+3. En DigLab escribe el código y su contraseña nueva. Si el código es bueno, la
    API guarda la contraseña nueva y ya puede entrar con ella.
 
 La cuenta de correo y su contraseña viven **solo aquí**, en el hosting. Los
 equipos del laboratorio no las tienen: quien usa un equipo puede leer la
-configuración de DigBit que hay en él, pero no la de esta carpeta.
+configuración de DigLab que hay en él, pero no la de esta carpeta.
 
 ## Qué hace falta
 
@@ -27,7 +27,7 @@ configuración de DigBit que hay en él, pero no la de esta carpeta.
 - La migración `db/13_recuperacion_contrasena.sql` aplicada en la base: crea
   dos tablas nuevas y no cambia ningún dato.
 - Un usuario de MySQL para la API (paso 2).
-- **DigBit 1.1 en los equipos.** En los de una versión anterior, «¿Olvidaste
+- **DigLab 1.1 en los equipos.** En los de una versión anterior, «¿Olvidaste
   tu contraseña?» abre la ventana vieja, que no hace nada: hay que
   actualizarlos una vez (descongelados, si tienen Deep Freeze; ver
   `INSTALAR.md`).
@@ -43,7 +43,7 @@ Hace falta una **contraseña de aplicación**:
    Google** → **Seguridad**.
 2. Activa la **Verificación en dos pasos** (sin ella no aparece la opción
    siguiente).
-3. Busca **Contraseñas de aplicaciones**, crea una (por ejemplo «DigBit») y
+3. Busca **Contraseñas de aplicaciones**, crea una (por ejemplo «DigLab») y
    copia las 16 letras que te da. Solo se ven una vez.
 
 ### 2. El usuario de MySQL de la API
@@ -73,15 +73,15 @@ disparador de `db/07`) cambiar la de una cuenta de la administración.
 ### 3. Subir la carpeta
 
 Sube la carpeta `api/` entera al hosting, por ejemplo como
-`public_html/digbit/`. La dirección que usará DigBit es la de `recuperar.php`,
+`public_html/diglab/`. La dirección que usará DigLab es la de `recuperar.php`,
 por ejemplo:
 
 ```
-https://www.teschi.edu.mx/digbit/recuperar.php
+https://www.teschi.edu.mx/diglab/recuperar.php
 ```
 
 Usa la dirección **final**, la que queda en el navegador al abrirla (con o sin
-`www`, como la deje el hosting): DigBit no sigue redirecciones.
+`www`, como la deje el hosting): DigLab no sigue redirecciones.
 
 El `.htaccess` es una lista blanca: desde el navegador **solo se abre
 `recuperar.php`**; lo demás (`config.php`, cualquier copia suya que se quede
@@ -99,16 +99,16 @@ Copia `config.example.php` como `config.php` y llénalo:
 | `bd_usuario`, `bd_contrasena` | El usuario del paso 2 |
 | `smtp_contrasena` | La contraseña de aplicación del paso 1 (las 16 letras, con o sin espacios) |
 | `secreto` | 32 caracteres o más al azar. Por ejemplo, el resultado de `php -r "echo bin2hex(random_bytes(24));"`, o de https://www.random.org/strings/ |
-| `clave_api` | Otra cadena al azar, más corta. Es la que se pone en DigBit, en Ajustes |
-| `aviso_privacidad_url` | Opcional. La dirección del aviso de privacidad integral del TESCHI, completa y con `https://` (la misma que en DigBit, Ajustes → Aviso de privacidad). El correo la pone al pie; vacía, o sin esa línea, el correo sale sin pie. Ver «El aviso de privacidad», más abajo |
+| `clave_api` | Otra cadena al azar, más corta. Es la que se pone en DigLab, en Ajustes |
+| `aviso_privacidad_url` | Opcional. La dirección del aviso de privacidad integral del TESCHI, completa y con `https://` (la misma que en DigLab, Ajustes → Aviso de privacidad). El correo la pone al pie; vacía, o sin esa línea, el correo sale sin pie. Ver «El aviso de privacidad», más abajo |
 
 Lo demás ya viene bien para Gmail. Mientras `secreto` o `clave_api` sigan
 siendo los de ejemplo, la API no atiende.
 
 **Mejor fuera de la carpeta pública.** Si el hosting lo permite, guarda
 `config.php` en una carpeta que no se publique (por ejemplo
-`/home/<usuario>/digbit_config.php`) y, en el `.htaccess`, quita el `# ` de la
-línea `SetEnv DIGBIT_API_CONFIG ...` y pon esa ruta. Si no, déjalo junto a
+`/home/<usuario>/diglab_config.php`) y, en el `.htaccess`, quita el `# ` de la
+línea `SetEnv DIGLAB_API_CONFIG ...` y pon esa ruta. Si no, déjalo junto a
 `recuperar.php`.
 
 `config.php` lleva contraseñas: **no lo subas a git** (ya está en
@@ -116,9 +116,9 @@ línea `SetEnv DIGBIT_API_CONFIG ...` y pon esa ruta. Si no, déjalo junto a
 suyas en el hosting (`config.php.bak`...): si algún día se quita el
 `.htaccess`, serían descargables.
 
-### 5. Decirle a DigBit dónde está
+### 5. Decirle a DigLab dónde está
 
-En DigBit, entra con una cuenta de la administración. En el panel de
+En DigLab, entra con una cuenta de la administración. En el panel de
 administración, arriba, debajo de «Panel de administración», pulsa **Ajustes** y,
 en «Recuperar contraseña por correo», **Configurar...**:
 
@@ -134,13 +134,13 @@ en «Recuperar contraseña por correo», **Configurar...**:
 4. **Guardar**.
 
 Se guarda en la base (tabla `configuracion`), así que vale **al momento en
-todos los equipos con DigBit 1.1**, también en los congelados con Deep Freeze:
+todos los equipos con DigLab 1.1**, también en los congelados con Deep Freeze:
 no hay que tocar ninguno más. Para desactivarla, borra la dirección y guarda.
 
 Ajustes solo guarda una dirección `https://` de un servidor: la de la propia PC
 (`http://127.0.0.1...`, `localhost`) sirve para probar en esa PC, pero en los
 demás equipos apuntaría a ellos mismos y no funcionaría. Para probar en una
-sola PC, ponla en su `DigBit.exe.config` (`UrlRecuperacion` y
+sola PC, ponla en su `DigLab.exe.config` (`UrlRecuperacion` y
 `ClaveRecuperacion`), y en el `config.php` de esa API de prueba pon
 `'solo_https' => false` (si no, contesta «solo atiende por https»). Solo para
 esa prueba: en el hosting, `true`.
@@ -148,7 +148,7 @@ esa prueba: en el hosting, `true`.
 ### 6. Probarlo de verdad
 
 Con una cuenta de estudiante de prueba que tenga **tu** correo: en el inicio de
-sesión de DigBit, «¿Olvidaste tu contraseña?», escribe la matrícula, espera el
+sesión de DigLab, «¿Olvidaste tu contraseña?», escribe la matrícula, espera el
 correo (mira también en spam la primera vez), escribe el código y una
 contraseña nueva, y entra con ella.
 
@@ -161,7 +161,7 @@ Microsoft 365, que filtra distinto), y ábrelos también en el celular.
 
 Llega con diseño, con los colores del logo del TESCHI: arriba el logo del
 TESCHI y el de la carrera, una franja verde con «Recupera tu contraseña», el
-código en grande y, al pie, DigBit e Ingeniería en Sistemas Computacionales.
+código en grande y, al pie, DigLab e Ingeniería en Sistemas Computacionales.
 Con `aviso_privacidad_url` en `config.php`, debajo de «Este correo se envió
 automáticamente; no lo respondas.» lleva además «Tus datos se tratan conforme
 al aviso de privacidad del TESCHI: leer el aviso de privacidad completo», con
@@ -177,7 +177,7 @@ Está en la carpeta `correo/`:
 | `plantilla.html` | El diseño. Lo que va entre llaves dobles (`{{codigo}}`, `{{saludo}}`, `{{minutos}}`, `{{aviso_privacidad_url}}`, los logos) lo pone `lib/correo.php`. El pie del aviso va entre `<!--{{aviso}}-->` y `<!--{{/aviso}}-->`: sin `aviso_privacidad_url` se quita entero. Si cambias el texto, cambia también la versión en texto, en `correo_de_codigo()` de `lib/correo.php` |
 | `teschi.png` | Logo del TESCHI, sobre fondo blanco: con fondo transparente, sus letras negras desaparecen en el modo oscuro de la app de Gmail y de Outlook, que oscurecen el fondo del correo pero no las imágenes |
 | `sistemas.png` | Logo de Ingeniería en Sistemas Computacionales (ISC), recortado y sobre fondo blanco por lo mismo. Se ve a 168 px de ancho, del mismo alto que el del TESCHI; si lo cambias por uno de otra proporción, ajusta ese ancho en `correo_de_codigo()`. Si no está, en su lugar va el nombre de la carrera escrito |
-| `digbit.png` | El icono de DigBit, en el pie, sobre el gris del pie (`#F7F8F6`) |
+| `diglab.png` | El icono de DigLab, en el pie, sobre el gris del pie (`#F7F8F6`) |
 
 Si falta `plantilla.html`, el correo sale solo en texto; si falta un logo (o
 no se puede leer), en su lugar va su nombre escrito. El saludo lleva solo el
@@ -199,7 +199,7 @@ con los logos de la escuela; si no, «Hola:». Para ver cómo llega:
 - Límites (en `config.php`), comprobados de uno en uno para que varias
   peticiones a la vez no se los salten:
   - **3 códigos por cuenta** en una hora;
-  - **6 códigos pedidos desde un mismo equipo** en una hora (DigBit dice qué
+  - **6 códigos pedidos desde un mismo equipo** en una hora (DigLab dice qué
     equipo pide: laboratorio y número);
   - **60 códigos enviados desde una misma IP** en una hora. Todos los equipos
     de la escuela pueden salir a internet con la misma IP: si al empezar el
@@ -211,13 +211,13 @@ con los logos de la escuela; si no, «Hola:». Para ver cómo llega:
 - Solo cuentas **activas** de estudiantes, docentes y responsables de
   laboratorio. Las de la administración no se recuperan por aquí (se cambian a
   mano en la base), y la API nunca les cambia la contraseña.
-- La contraseña nueva cumple las mismas reglas que en DigBit
-  (`ReglasCuenta.cs`): de 6 a 128 caracteres, contados como los cuenta DigBit, y
-  no solo espacios. «CONTRASEÑA» se admite, como en DigBit.
-- Solo por **https** (`solo_https`). DigBit no manda nada por http a otra
+- La contraseña nueva cumple las mismas reglas que en DigLab
+  (`ReglasCuenta.cs`): de 6 a 128 caracteres, contados como los cuenta DigLab, y
+  no solo espacios. «CONTRASEÑA» se admite, como en DigLab.
+- Solo por **https** (`solo_https`). DigLab no manda nada por http a otra
   máquina ni sigue redirecciones.
-- La contraseña nueva se guarda igual que en DigBit (PBKDF2-SHA256 con 100 000
-  iteraciones y sal), así que DigBit la reconoce sin más.
+- La contraseña nueva se guarda igual que en DigLab (PBKDF2-SHA256 con 100 000
+  iteraciones y sal), así que DigLab la reconoce sin más.
 - Ningún error enseña la contraseña de la base ni la del correo; los detalles
   van al registro de errores del hosting (`error_log`).
 - Cada solicitud guarda la matrícula, la IP y el equipo que la pidió: la API
@@ -233,7 +233,7 @@ laboratorio, en **Docentes** → **Responsables de laboratorio...** → Editar (
 Restablecer contraseña).
 
 Si se acaba un cupo pero la cuenta tiene un código que todavía vale, se le dice
-que use ese, y DigBit pasa a pedírselo.
+que use ese, y DigLab pasa a pedírselo.
 
 Lo que no evita, y conviene saberlo:
 
@@ -242,11 +242,11 @@ Lo que no evita, y conviene saberlo:
   API, que los equipos leen de la base) puede dejar sin códigos a la escuela
   durante una hora, o hasta el día siguiente si agota el total del día. No es
   discreto: cada cuenta recibe los correos que no pidió, y en la tabla queda la
-  IP y el equipo. Mientras, queda pedir a la administración de DigBit una
+  IP y el equipo. Mientras, queda pedir a la administración de DigLab una
   contraseña nueva.
 - Quien tenga la clave también puede gastar los códigos de otra persona
   equivocándose a propósito; esa persona tendría que esperar o pedir a la
-  administración de DigBit una contraseña nueva.
+  administración de DigLab una contraseña nueva.
 
 ## El aviso de privacidad
 
@@ -268,7 +268,7 @@ TESCHI tiene que contarlo. Lo que conviene que diga (lo redacta la escuela):
   el hosting conserve ese registro.
 
 Para que el correo del código enlace al aviso, pon su dirección en
-`aviso_privacidad_url` (`config.php`), la misma que en DigBit (Ajustes →
+`aviso_privacidad_url` (`config.php`), la misma que en DigLab (Ajustes →
 **Aviso de privacidad** → Configurar..., «Dirección del aviso integral»). Tiene
 que ser completa, con `https://` (o `http://`), sin espacios ni acentos (si los
 lleva, cópiala de la barra del navegador, que los escribe como `%C3%B1`...).
@@ -277,7 +277,7 @@ Si no lo es, el correo sale sin el pie y `error_log` lo dice;
 
 ## Si algo falla
 
-Lo primero: **Probar** en DigBit (Ajustes → «Recuperar contraseña por correo» →
+Lo primero: **Probar** en DigLab (Ajustes → «Recuperar contraseña por correo» →
 Configurar...). Dice qué parte falla:
 
 | Mensaje | Qué revisar |
@@ -287,7 +287,7 @@ Configurar...). Dice qué parte falla:
 | No contestó como se esperaba: la dirección redirige a … | Pon en Ajustes esa dirección final |
 | No contestó como se esperaba: HTTP 404 … | La dirección no es la de `recuperar.php` |
 | … no está autorizado … Revisa que la clave sea la misma que tiene el servicio | La clave de Ajustes no es la `clave_api` de `config.php` |
-| … no reconoce lo que pidió este equipo: DigBit y el servicio no son de la misma versión | Sube la carpeta `api/` de la misma versión que el DigBit de los equipos |
+| … no reconoce lo que pidió este equipo: DigLab y el servicio no son de la misma versión | Sube la carpeta `api/` de la misma versión que el DigLab de los equipos |
 | … solo atiende por https | Con `https://` en el hosting: su proxy no le dice a PHP que la conexión es https (falta la variable `HTTPS` o la cabecera `X-Forwarded-Proto`); que lo revise quien lo administra. Con `http://127.0.0.1` al probar en una sola PC: `'solo_https' => false` en el `config.php` de esa prueba |
 | El servicio de recuperación no está configurado | `secreto` o `clave_api` siguen siendo los de ejemplo, o falta `config.php` |
 | … no puede usar la base: falta aplicar db/13 | Aplicar `db/13_recuperacion_contrasena.sql` |
@@ -301,7 +301,7 @@ Configurar...). Dice qué parte falla:
 | … pero el correo … falló: no se pudo cifrar la conexión | Lo mismo: prueba el puerto 465 con `'smtp_seguridad' => 'ssl'` |
 | … pero el correo … falló: el servidor de correo contestó algo inesperado | Lo que contestó está en `error_log` del hosting |
 
-Lo que contestó el servidor de correo (a veces en inglés) no sale en DigBit: queda en `error_log`.
+Lo que contestó el servidor de correo (a veces en inglés) no sale en DigLab: queda en `error_log`.
 
 Y lo que puede ver quien recupera su contraseña:
 
@@ -315,14 +315,14 @@ Y lo que puede ver quien recupera su contraseña:
 | Ese código ya no vale: el correo de tu cuenta cambió | Se corrigió el correo después de pedirlo; que pida otro |
 | El servicio de recuperación está ocupado | Muchas peticiones a la vez, o el usuario de la base llegó a su máximo de conexiones; que lo intente en unos segundos |
 | La recuperación por correo todavía no está activada | No hay dirección en Ajustes (o el equipo no puede leerla: el AVISO de la 13) |
-| La contraseña nueva no puede ser solo espacios | La misma regla que DigBit: que escriba otra |
+| La contraseña nueva no puede ser solo espacios | La misma regla que DigLab: que escriba otra |
 | Ahora no hay conexión con el servidor… | El equipo no llega a la base, así que no sabe la dirección de la API |
 
 Si el hosting da consola (SSH), `php probar_correo.php tu@correo.mx` manda un
 correo de prueba de verdad con la configuración de `config.php`. Si guardaste
 `config.php` fuera de la carpeta pública, pon su ruta detrás (desde la consola
 no se lee el `SetEnv` del `.htaccess`):
-`php probar_correo.php tu@correo.mx /home/<usuario>/digbit_config.php`.
+`php probar_correo.php tu@correo.mx /home/<usuario>/diglab_config.php`.
 
 ## Archivos
 

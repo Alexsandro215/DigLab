@@ -1,8 +1,8 @@
 <?php
-// DigBit - API de recuperacion de contrasena: lo comun (configuracion, base de
+// DigLab - API de recuperacion de contrasena: lo comun (configuracion, base de
 // datos, respuestas, contrasenas). Ver ../LEEME.md. PHP 7.2 o posterior.
 
-if (!defined('DIGBIT_API')) {
+if (!defined('DIGLAB_API')) {
     http_response_code(403);
     exit;
 }
@@ -17,11 +17,11 @@ function utf8_decode_seguro($texto)
 }
 
 /**
- * El largo de un texto como lo cuenta DigBit (string.Length de .NET, en
+ * El largo de un texto como lo cuenta DigLab (string.Length de .NET, en
  * ReglasCuenta): en unidades UTF-16, asi que un emoji cuenta 2. Con esto la
- * API acepta y rechaza las mismas contrasenas que DigBit.
+ * API acepta y rechaza las mismas contrasenas que DigLab.
  */
-function largo_como_digbit($texto)
+function largo_como_diglab($texto)
 {
     if (function_exists('mb_convert_encoding')) {
         return intdiv(strlen(mb_convert_encoding((string)$texto, 'UTF-16LE', 'UTF-8')), 2);
@@ -44,19 +44,19 @@ function solo_espacios($texto)
 
 /**
  * La configuracion: config.php junto a recuperar.php, o la ruta de la variable
- * DIGBIT_API_CONFIG (para guardarlo fuera de la carpeta publica, con SetEnv en
+ * DIGLAB_API_CONFIG (para guardarlo fuera de la carpeta publica, con SetEnv en
  * el .htaccess, y para las pruebas).
  */
 function cfg()
 {
     static $c = null;
     if ($c === null) {
-        $ruta = getenv('DIGBIT_API_CONFIG')
-            ?: (isset($_SERVER['DIGBIT_API_CONFIG']) ? (string)$_SERVER['DIGBIT_API_CONFIG'] : '')
-            ?: (isset($_SERVER['REDIRECT_DIGBIT_API_CONFIG']) ? (string)$_SERVER['REDIRECT_DIGBIT_API_CONFIG'] : '')
+        $ruta = getenv('DIGLAB_API_CONFIG')
+            ?: (isset($_SERVER['DIGLAB_API_CONFIG']) ? (string)$_SERVER['DIGLAB_API_CONFIG'] : '')
+            ?: (isset($_SERVER['REDIRECT_DIGLAB_API_CONFIG']) ? (string)$_SERVER['REDIRECT_DIGLAB_API_CONFIG'] : '')
             ?: __DIR__ . '/../config.php';
         if (!is_file($ruta)) {
-            error_log('DigBit API: falta config.php');
+            error_log('DigLab API: falta config.php');
             responder(500, false, 'El servicio de recuperación no está configurado. Avisa a la persona responsable del laboratorio.');
         }
 
@@ -77,7 +77,7 @@ function responder($http, $ok, $mensaje, array $extra = array())
     exit;
 }
 
-/** Conexion a la base de la escuela, con la hora de Mexico (como DigBit). */
+/** Conexion a la base de la escuela, con la hora de Mexico (como DigLab). */
 function bd()
 {
     static $pdo = null;
@@ -95,13 +95,13 @@ function bd()
             // El usuario de la API tiene tope de conexiones (db/13): pasado, esta ocupado, no roto.
             $n = codigo_mysql($e);
             if ($n === 1226 || $n === 1040) {
-                error_log('DigBit API: sin conexiones libres con la base (' . $n . ').');
+                error_log('DigLab API: sin conexiones libres con la base (' . $n . ').');
                 responder(503, false, 'El servicio de recuperación está ocupado. Inténtalo en unos segundos.');
             }
 
             throw $e;
         }
-        // El servidor de la escuela va en UTC; DigBit fija -06:00 en cada conexion.
+        // El servidor de la escuela va en UTC; DigLab fija -06:00 en cada conexion.
         $pdo->exec("SET time_zone = '-06:00'");
     }
 
@@ -150,7 +150,7 @@ function codigo_mysql(PDOException $e)
 
 /**
  * Que le pasa a la base, con la causa y que revisar, para quien prueba la API
- * (Probar, en los Ajustes de DigBit, y probar_correo.php).
+ * (Probar, en los Ajustes de DigLab, y probar_correo.php).
  */
 function problema_de_base(PDOException $e)
 {
@@ -213,7 +213,7 @@ function es_https()
     return isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string)$_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https';
 }
 
-/** Lo que mando DigBit: formulario (lo normal) o JSON. */
+/** Lo que mando DigLab: formulario (lo normal) o JSON. */
 function entrada()
 {
     $tipo = isset($_SERVER['CONTENT_TYPE']) ? strtolower((string)$_SERVER['CONTENT_TYPE']) : '';
@@ -242,7 +242,7 @@ function mb_substr_seguro($texto, $largo)
 }
 
 /**
- * La contrasena en el formato que comprueba DigBit (conexion/Contrasenas.cs):
+ * La contrasena en el formato que comprueba DigLab (conexion/Contrasenas.cs):
  * pbkdf2-sha256$<iteraciones>$<sal en base64>$<hash en base64>, con 16 bytes de
  * sal, 32 de hash y SHA-256. Rfc2898DeriveBytes de .NET pasa la contrasena a
  * UTF-8, que es como llega aqui.

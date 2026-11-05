@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: docentes que entran con el SIIA del TESCHI
+-- DigLab 2.0 - Migracion: docentes que entran con el SIIA del TESCHI
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas: la columna y la tabla ya estan, y los permisos los dan db/07 y
@@ -7,9 +7,9 @@
 --
 -- Con "Inicio de sesion de docentes con el SIIA" encendido en Ajustes, el
 -- docente entra con su numero de empleado y su contrasena del SIIA. Para que
--- un inicio de sesion correcto del SIIA abra una cuenta de DigBit, la
--- administracion tiene que ENLAZAR antes ese numero con el docente de DigBit
--- (el que tiene sus clases): DigBit no crea ni enlaza cuentas solo. Esta
+-- un inicio de sesion correcto del SIIA abra una cuenta de DigLab, la
+-- administracion tiene que ENLAZAR antes ese numero con el docente de DigLab
+-- (el que tiene sus clases): DigLab no crea ni enlaza cuentas solo. Esta
 -- migracion anade:
 --   1) usuarios.siia_enlazado_en (DATETIME, NULL): cuando la administracion
 --      enlazo la cuenta de ese docente con su numero de empleado del SIIA. Con
@@ -46,7 +46,7 @@
 --
 -- ORDEN: se puede aplicar en cualquier momento, tambien en horario de clase:
 -- no cambia nada para nadie hasta que se encienda en Ajustes, y eso se hace
--- cuando TODOS los equipos tengan esta version de DigBit. MariaDB 5.5 copia
+-- cuando TODOS los equipos tengan esta version de DigLab. MariaDB 5.5 copia
 -- usuarios al anadir la columna (es una tabla chica).
 --
 -- Repetible: lo que ya esta, lo deja como esta.
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS siia_solicitudes (
     nombre_completo     VARCHAR(255)  NULL,
     correo              VARCHAR(120)  NULL,
     tipo_siia           VARCHAR(4)    NULL,
-    -- Reloj del servidor (NOW() de DigBit, -06:00). Sin DEFAULT: 5.5 no lo admite.
+    -- Reloj del servidor (NOW() de DigLab, -06:00). Sin DEFAULT: 5.5 no lo admite.
     primer_intento      DATETIME      NOT NULL,
     ultimo_intento      DATETIME      NOT NULL,
     intentos            INT           NOT NULL DEFAULT 1,

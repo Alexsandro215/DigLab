@@ -1,19 +1,19 @@
 ﻿<#
 .SYNOPSIS
-    Arma el paquete distribuible de DigBit: el instalador con todo lo que
+    Arma el paquete distribuible de DigLab: el instalador con todo lo que
     necesita al lado, listo para copiar a una memoria USB.
 
 .DESCRIPTION
-    DigBit.Instalador.exe no lleva nada dentro: por diseno ejecuta los guiones
+    DigLab.Instalador.exe no lleva nada dentro: por diseno ejecuta los guiones
     de deploy\, que son los mismos del camino por consola. Por eso el entregable
     no es un .exe suelto sino una carpeta con esta forma, la que esperan
     Guiones.RaizPaquete() y el parametro -Origen de configurar_equipo.ps1:
 
-        DigBit.Instalador.exe
+        DigLab.Instalador.exe
         deploy\
         db\
-        DigBit\bin\Release\
-        DigBit.Vigilante\bin\Release\
+        DigLab\bin\Release\
+        DigLab.Vigilante\bin\Release\
 
     Si falta cualquiera de esas carpetas el instalador arranca igual y falla a
     la mitad, que es justo lo que se quiere evitar.
@@ -33,7 +33,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not $Destino) {
-    $Destino = Join-Path (Split-Path $PSScriptRoot -Parent) 'DigBit-Paquete'
+    $Destino = Join-Path (Split-Path $PSScriptRoot -Parent) 'DigLab-Paquete'
 }
 
 # --- Compilar ----------------------------------------------------------------
@@ -44,11 +44,11 @@ if (-not $SinCompilar) {
 # --- Comprobar que hay algo que empaquetar -----------------------------------
 # Se valida antes de borrar el destino: si la compilacion no esta, es mejor
 # terminar aqui que dejar al usuario sin el paquete anterior y sin uno nuevo.
-$instalador = Join-Path $PSScriptRoot 'DigBit.Instalador\bin\Release\DigBit.Instalador.exe'
-$appDigBit  = Join-Path $PSScriptRoot 'DigBit\bin\Release'
-$vigilante  = Join-Path $PSScriptRoot 'DigBit.Vigilante\bin\Release'
+$instalador = Join-Path $PSScriptRoot 'DigLab.Instalador\bin\Release\DigLab.Instalador.exe'
+$appDigLab  = Join-Path $PSScriptRoot 'DigLab\bin\Release'
+$vigilante  = Join-Path $PSScriptRoot 'DigLab.Vigilante\bin\Release'
 
-foreach ($ruta in @($instalador, $appDigBit, $vigilante)) {
+foreach ($ruta in @($instalador, $appDigLab, $vigilante)) {
     if (-not (Test-Path $ruta)) {
         throw "Falta $ruta. Ejecuta .\build.cmd -Configuration Release -NoRun antes, o quita -SinCompilar."
     }
@@ -97,12 +97,12 @@ Write-Host "Armando el paquete en $Destino..." -ForegroundColor Cyan
 Copy-Item (Join-Path (Split-Path $instalador) '*') $Destino -Recurse -Force
 
 # Las carpetas conservan su ruta relativa porque configurar_equipo.ps1 las
-# compone a mano sobre -Origen ('DigBit\bin\Release', etc.).
+# compone a mano sobre -Origen ('DigLab\bin\Release', etc.).
 $carpetas = @{
     'deploy'                       = Join-Path $PSScriptRoot 'deploy'
     'db'                           = Join-Path $PSScriptRoot 'db'
-    'DigBit\bin\Release'           = $appDigBit
-    'DigBit.Vigilante\bin\Release' = $vigilante
+    'DigLab\bin\Release'           = $appDigLab
+    'DigLab.Vigilante\bin\Release' = $vigilante
 }
 
 foreach ($relativa in $carpetas.Keys) {
@@ -116,9 +116,9 @@ Get-ChildItem $Destino -Recurse -Filter '*.pdb' | Remove-Item -Force
 
 # El connections.config de la compilacion es el del equipo donde se compila y
 # puede llevar la contrasena real de la base. En el paquete va la PLANTILLA: es
-# lo que esperan configurar_equipo.ps1 y actualizar_digbit.ps1, que escriben la
+# lo que esperan configurar_equipo.ps1 y actualizar_diglab.ps1, que escriben la
 # conexion buena en cada equipo; asi la contrasena no viaja en la memoria USB.
-Copy-Item (Join-Path $PSScriptRoot 'DigBit\connections.config.example') (Join-Path $Destino 'DigBit\bin\Release\connections.config') -Force
+Copy-Item (Join-Path $PSScriptRoot 'DigLab\connections.config.example') (Join-Path $Destino 'DigLab\bin\Release\connections.config') -Force
 
 foreach ($doc in @('INSTALAR.md', 'README.md')) {
     Copy-Item (Join-Path $PSScriptRoot $doc) $Destino -Force
@@ -128,11 +128,11 @@ foreach ($doc in @('INSTALAR.md', 'README.md')) {
 # La misma que hace el instalador al arrancar, hecha aqui para que un paquete
 # mal armado se detecte ahora y no delante del equipo que se va a configurar.
 $imprescindibles = @(
-    'DigBit.Instalador.exe',
+    'DigLab.Instalador.exe',
     'deploy\configurar_equipo.ps1',
     'deploy\preparar_bd.ps1',
-    'DigBit\bin\Release\DigBit.exe',
-    'DigBit.Vigilante\bin\Release\DigBit.Vigilante.exe'
+    'DigLab\bin\Release\DigLab.exe',
+    'DigLab.Vigilante\bin\Release\DigLab.Vigilante.exe'
 )
 foreach ($archivo in $imprescindibles) {
     if (-not (Test-Path (Join-Path $Destino $archivo))) {

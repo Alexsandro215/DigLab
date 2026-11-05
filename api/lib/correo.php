@@ -1,10 +1,10 @@
 <?php
-// DigBit - API de recuperacion: enviar un correo. Un cliente SMTP pequeno, sin
+// DigLab - API de recuperacion: enviar un correo. Un cliente SMTP pequeno, sin
 // librerias, para Gmail (STARTTLS en el 587 o SSL en el 465, con la
 // "contrasena de aplicacion" de la cuenta). Si smtp_servidor esta vacio, usa
 // mail() del hosting (llega peor: muchos hostings lo mandan a spam).
 
-if (!defined('DIGBIT_API')) {
+if (!defined('DIGLAB_API')) {
     http_response_code(403);
     exit;
 }
@@ -28,7 +28,7 @@ class FalloCorreo extends RuntimeException
 
 /**
  * Por que no salio el correo, en espanol y con que revisar en config.php, para
- * quien prueba la API (Probar, en los Ajustes de DigBit, y probar_correo.php).
+ * quien prueba la API (Probar, en los Ajustes de DigLab, y probar_correo.php).
  * Empieza en minuscula: va despues de "el correo x fallo: ". Corto: en Ajustes,
  * con lo de delante, caben 4 lineas.
  */
@@ -81,7 +81,7 @@ function aviso_privacidad_url()
 
     $esquema = strtolower((string)parse_url($url, PHP_URL_SCHEME));
     if (filter_var($url, FILTER_VALIDATE_URL) === false || ($esquema !== 'https' && $esquema !== 'http')) {
-        error_log('DigBit API: aviso_privacidad_url de config.php no es una direccion http(s) completa; el correo sale sin el pie del aviso.');
+        error_log('DigLab API: aviso_privacidad_url de config.php no es una direccion http(s) completa; el correo sale sin el pie del aviso.');
         return '';
     }
 
@@ -91,7 +91,7 @@ function aviso_privacidad_url()
 /**
  * Manda un correo en UTF-8: el texto y, si se da, tambien la version con diseno
  * (HTML) con sus imagenes dentro del mismo correo: el HTML las pide como
- * "cid:nombre@digbit" y se ven sin descargar nada. Los programas que no ensenan
+ * "cid:nombre@diglab" y se ven sin descargar nada. Los programas que no ensenan
  * HTML ensenan el texto. Lanza RuntimeException si no se pudo, con la respuesta
  * del servidor (nunca con la contrasena).
  *
@@ -117,8 +117,8 @@ function enviar_correo($para, $nombrePara, $asunto, $texto, $html = null, array 
     } else {
         // multipart/alternative: el texto o el HTML; el HTML va en un
         // multipart/related con sus imagenes.
-        $alternativa = 'digbit-alt-' . bin2hex(random_bytes(8));
-        $relacionado = 'digbit-rel-' . bin2hex(random_bytes(8));
+        $alternativa = 'diglab-alt-' . bin2hex(random_bytes(8));
+        $relacionado = 'diglab-rel-' . bin2hex(random_bytes(8));
         $cabeceras[] = 'Content-Type: multipart/alternative; boundary="' . $alternativa . '"';
         $partes = array(
             '--' . $alternativa,
@@ -140,7 +140,7 @@ function enviar_correo($para, $nombrePara, $asunto, $texto, $html = null, array 
             // HTML ensena su texto alternativo.
             $datos = @file_get_contents($ruta);
             if ($datos === false || $datos === '') {
-                error_log('DigBit: no se pudo leer ' . $ruta . '; el correo sale sin esa imagen.');
+                error_log('DigLab: no se pudo leer ' . $ruta . '; el correo sale sin esa imagen.');
                 continue;
             }
 
@@ -148,7 +148,7 @@ function enviar_correo($para, $nombrePara, $asunto, $texto, $html = null, array 
             $partes[] = '--' . $relacionado;
             $partes[] = 'Content-Type: ' . tipo_de_imagen($archivo) . '; name="' . $archivo . '"';
             $partes[] = 'Content-Transfer-Encoding: base64';
-            $partes[] = 'Content-ID: <' . $nombre . '@digbit>';
+            $partes[] = 'Content-ID: <' . $nombre . '@diglab>';
             $partes[] = 'Content-Disposition: inline; filename="' . $archivo . '"';
             $partes[] = '';
             $partes[] = base64_en_lineas($datos);
@@ -188,13 +188,13 @@ function correo_de_codigo($nombre, $codigo, $minutos)
 {
     $nombre = nombre_para_saludo($nombre);
     $aviso = aviso_privacidad_url();
-    $asunto = 'Tu código de DigBit: ' . $codigo;
+    $asunto = 'Tu código de DigLab: ' . $codigo;
     $texto = 'Hola' . ($nombre !== '' ? ', ' . $nombre : '') . ":\n\n"
-        . "Tu código para poner una contraseña nueva en DigBit es:\n\n"
+        . "Tu código para poner una contraseña nueva en DigLab es:\n\n"
         . '        ' . $codigo . "\n\n"
-        . 'Vale ' . $minutos . " minutos y una sola vez. Escríbelo en DigBit, en «¿Olvidaste tu contraseña?», junto con tu contraseña nueva.\n\n"
+        . 'Vale ' . $minutos . " minutos y una sola vez. Escríbelo en DigLab, en «¿Olvidaste tu contraseña?», junto con tu contraseña nueva.\n\n"
         . "Si no lo pediste tú, ignora este correo: tu contraseña no cambia. Nadie del TESCHI te pedirá este código.\n\n"
-        . "DigBit - Laboratorios de cómputo\nIngeniería en Sistemas Computacionales - TESCHI\n"
+        . "DigLab - Laboratorios de cómputo\nIngeniería en Sistemas Computacionales - TESCHI\n"
         // El pie del aviso (como en el diseno), solo con aviso_privacidad_url en config.php.
         . ($aviso !== '' ? "\nTus datos se tratan conforme al aviso de privacidad del TESCHI: " . $aviso . "\n" : '');
 
@@ -213,7 +213,7 @@ function correo_de_codigo($nombre, $codigo, $minutos)
         }
 
         $imagenes[$archivo] = $ruta;
-        return '<img src="cid:' . $archivo . '@digbit" width="' . $ancho . '" alt="' . htmlspecialchars($alt, ENT_QUOTES, 'UTF-8')
+        return '<img src="cid:' . $archivo . '@diglab" width="' . $ancho . '" alt="' . htmlspecialchars($alt, ENT_QUOTES, 'UTF-8')
             . '" style="display:block;border:0;outline:none;text-decoration:none;height:auto;max-width:100%;">';
     };
     $letra = 'font-family:Arial,Helvetica,sans-serif;font-weight:bold;color:#007040;';
@@ -230,7 +230,7 @@ function correo_de_codigo($nombre, $codigo, $minutos)
             '<span style="' . $letra . 'font-size:24px;line-height:28px;">TESCHI</span>'),
         '{{logo_carrera}}' => $logo('sistemas', 168, 'Ingeniería en Sistemas Computacionales',
             '<span style="' . $letra . 'font-size:12px;line-height:16px;">Ingeniería en<br>Sistemas Computacionales</span>'),
-        '{{logo_digbit}}' => $logo('digbit', 32, 'DigBit', ''),
+        '{{logo_diglab}}' => $logo('diglab', 32, 'DigLab', ''),
         '{{saludo}}' => $nombre !== '' ? 'Hola, ' . htmlspecialchars($nombre, ENT_QUOTES, 'UTF-8') . ':' : 'Hola:',
         '{{codigo}}' => htmlspecialchars((string)$codigo, ENT_QUOTES, 'UTF-8'),
         '{{minutos}}' => (string)(int)$minutos,
@@ -328,7 +328,7 @@ function smtp_abrir()
     stream_set_timeout($s, 20);
     try {
         smtp_leer($s, array(220));
-        $yo = 'digbit.local';
+        $yo = 'diglab.local';
         smtp_comando($s, 'EHLO ' . $yo, array(250));
         if ($seguridad === 'tls') {
             smtp_comando($s, 'STARTTLS', array(220));

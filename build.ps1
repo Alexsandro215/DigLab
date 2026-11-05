@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Compila DigBit y el servicio DigBit.Vigilante, y ejecuta DigBit, con un solo comando.
+    Compila DigLab y el servicio DigLab.Vigilante, y ejecuta DigLab, con un solo comando.
 
 .EXAMPLE
     .\build.ps1                          # compila en Debug y lanza la app
@@ -18,16 +18,16 @@ param(
     [switch]$NoRun,
     [switch]$Wait,
 
-    # No cerrar los DigBit abiertos (lo usa crear_instalador.ps1). Si hay uno
+    # No cerrar los DigLab abiertos (lo usa crear_instalador.ps1). Si hay uno
     # abierto desde la carpeta de salida, la compilacion falla y lo dice.
     [switch]$SinCerrar
 )
 
 $ErrorActionPreference = 'Stop'
 
-$solucion  = Join-Path $PSScriptRoot 'DigBit.sln'
-$exe       = Join-Path $PSScriptRoot "DigBit\bin\$Configuration\DigBit.exe"
-$vigilante = Join-Path $PSScriptRoot "DigBit.Vigilante\bin\$Configuration\DigBit.Vigilante.exe"
+$solucion  = Join-Path $PSScriptRoot 'DigLab.sln'
+$exe       = Join-Path $PSScriptRoot "DigLab\bin\$Configuration\DigLab.exe"
+$vigilante = Join-Path $PSScriptRoot "DigLab.Vigilante\bin\$Configuration\DigLab.Vigilante.exe"
 
 # --- Localizar MSBuild -------------------------------------------------------
 # vswhere es la via soportada; evita depender de una ruta de instalacion fija.
@@ -89,25 +89,25 @@ if ($LASTEXITCODE -ne 0) {
 # tambien los vigilantes en modo consola de esta sesion; el servicio instalado
 # (sesion 0, SYSTEM) no se toca desde aqui.
 $sesionActual = (Get-Process -Id $PID).SessionId
-$abiertos = Get-Process -Name 'DigBit', 'DigBit.Vigilante' -ErrorAction SilentlyContinue |
+$abiertos = Get-Process -Name 'DigLab', 'DigLab.Vigilante' -ErrorAction SilentlyContinue |
             Where-Object { $_.SessionId -eq $sesionActual }
 if ($abiertos -and -not $SinCerrar) {
-    Write-Host "Cerrando $($abiertos.Count) instancia(s) de DigBit / DigBit.Vigilante en ejecucion..." -ForegroundColor Yellow
+    Write-Host "Cerrando $($abiertos.Count) instancia(s) de DigLab / DigLab.Vigilante en ejecucion..." -ForegroundColor Yellow
     $abiertos | Stop-Process -Force
     Start-Sleep -Milliseconds 500
 }
 
 # Las credenciales no se versionan; en un clon nuevo hay que crearlas.
-$config = Join-Path $PSScriptRoot 'DigBit\connections.config'
+$config = Join-Path $PSScriptRoot 'DigLab\connections.config'
 if (-not (Test-Path $config)) {
-    Copy-Item (Join-Path $PSScriptRoot 'DigBit\connections.config.example') $config
-    Write-Host "Se creo DigBit\connections.config desde la plantilla. Edita los datos de la base de datos." -ForegroundColor Yellow
+    Copy-Item (Join-Path $PSScriptRoot 'DigLab\connections.config.example') $config
+    Write-Host "Se creo DigLab\connections.config desde la plantilla. Edita los datos de la base de datos." -ForegroundColor Yellow
 }
 
 # --- Compilar ----------------------------------------------------------------
 if ($Rebuild) { $target = 'Rebuild' } else { $target = 'Build' }
 
-Write-Host "Compilando DigBit ($Configuration, $target)..." -ForegroundColor Cyan
+Write-Host "Compilando DigLab ($Configuration, $target)..." -ForegroundColor Cyan
 & $msbuild $solucion -t:$target -p:Configuration=$Configuration -v:minimal -nologo -m
 
 if ($LASTEXITCODE -ne 0) {
@@ -123,7 +123,7 @@ if (-not (Test-Path $exe)) {
     throw "No se encontro el ejecutable en $exe"
 }
 
-Write-Host "Iniciando DigBit..." -ForegroundColor Cyan
+Write-Host "Iniciando DigLab..." -ForegroundColor Cyan
 if ($Wait) {
     Start-Process $exe -WorkingDirectory (Split-Path $exe) -Wait
 } else {

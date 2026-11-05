@@ -1,18 +1,18 @@
 <#
 .SYNOPSIS
-    Prepara un equipo del laboratorio para que DigBit sea el shell de Windows
+    Prepara un equipo del laboratorio para que DigLab sea el shell de Windows
     de la cuenta de laboratorio (fase 5).
 
 .DESCRIPTION
-    Ejecutar como administrador en cada equipo, con DigBit ya compilado en
+    Ejecutar como administrador en cada equipo, con DigLab ya compilado en
     Release (.\build.cmd -Configuration Release -NoRun). Hace, en orden:
 
-      1. Copia DigBit y el vigilante a la carpeta de destino (C:\DigBit).
+      1. Copia DigLab y el vigilante a la carpeta de destino (C:\DigLab).
       2. Activa el modo kiosco y el laboratorio del equipo en la configuracion
          desplegada, y escribe la cadena de conexion si se indica.
       3. Crea la cuenta local estandar del laboratorio si no existe, fija su
          contrasena y crea su perfil.
-      4. Registra DigBit como shell SOLO para esa cuenta (Winlogon\Shell en su
+      4. Registra DigLab como shell SOLO para esa cuenta (Winlogon\Shell en su
          perfil). Los administradores siguen entrando con explorer.exe.
       5. Directivas para esa cuenta: sin Administrador de tareas, sin Ejecutar
          (Win+R), sin bloquear el equipo, sin cambiar contrasena, sin cerrar
@@ -20,7 +20,7 @@
          con contrasena.
       6. Inicio de sesion automatico con esa cuenta y sin pedir contrasena al
          despertar.
-      7. Instala y arranca el servicio DigBit.Vigilante.
+      7. Instala y arranca el servicio DigLab.Vigilante.
 
     Para entrar como administrador en un equipo ya configurado: Ctrl+Alt+Supr
     -> Cambiar de usuario, o mantener Mayus pulsada mientras arranca (salta el
@@ -30,7 +30,7 @@
     -SoloMostrar escribe lo que haria sin cambiar nada (no necesita administrador).
 
 .EXAMPLE
-    .\configurar_equipo.ps1 -Cuenta laboratorio -Contrasena 'Lab-2026' -Laboratorio 'Laboratorio de Computo 1' -CadenaConexion 'Database=teschi_otru;Server=10.0.0.5;User Id=digbit;Password=xxx'
+    .\configurar_equipo.ps1 -Cuenta laboratorio -Contrasena 'Lab-2026' -Laboratorio 'Laboratorio de Computo 1' -CadenaConexion 'Database=teschi_otru;Server=10.0.0.5;User Id=diglab;Password=xxx'
     .\configurar_equipo.ps1 -Cuenta laboratorio -Contrasena 'Lab-2026' -Laboratorio 'Laboratorio de Computo 1' -SoloMostrar
     .\configurar_equipo.ps1 -Cuenta laboratorio -Revertir
 #>
@@ -65,21 +65,21 @@ param(
     [string]$NumeroMaquina,
 
     # Autoriza como llave de emergencia la memoria USB que este conectada en
-    # este momento (tiene que haber EXACTAMENTE UNA). Con ella, cuando DigBit no
+    # este momento (tiene que haber EXACTAMENTE UNA). Con ella, cuando DigLab no
     # pueda validar ningun codigo, se abre el equipo sin bitacora. El numero de
     # serie se guarda hasheado, nunca en claro.
     [switch]$AutorizarMemoria,
 
-    # Raiz del repositorio (o cualquier carpeta con DigBit\bin\Release y
-    # DigBit.Vigilante\bin\Release dentro).
+    # Raiz del repositorio (o cualquier carpeta con DigLab\bin\Release y
+    # DigLab.Vigilante\bin\Release dentro).
     [string]$Origen,
 
-    [string]$Destino = 'C:\DigBit',
+    [string]$Destino = 'C:\DigLab',
 
-    # Carpeta donde DigBit deja lo que NO se puede perder al reiniciar: las
+    # Carpeta donde DigLab deja lo que NO se puede perder al reiniciar: las
     # bitacoras que aun no llegaron al servidor, la copia local del horario y los
     # registros. En un equipo con Deep Freeze tiene que estar FUERA del disco
-    # congelado: un ThawSpace (por convencion T:\DigBitDatos) o una particion sin
+    # congelado: un ThawSpace (por convencion T:\DigLabDatos) o una particion sin
     # congelar. Vacio: el perfil del usuario, que Deep Freeze borra cada noche.
     [string]$CarpetaDatos,
 
@@ -156,10 +156,10 @@ if (-not $Revertir -and -not $SoloMostrar) {
     # se exigia la carpeta, el instalador no podia con esos equipos, porque no la
     # pide para ellos.
     if (-not $esKiosco -and $deepFreeze.Presente) {
-        Write-Warning 'Con Deep Freeze, los registros locales de DigBit se pierden al reiniciar. Las bitacoras no: van al servidor.'
+        Write-Warning 'Con Deep Freeze, los registros locales de DigLab se pierden al reiniciar. Las bitacoras no: van al servidor.'
     }
     if ($esKiosco -and $deepFreeze.Presente -and -not $CarpetaDatos -and -not $AceptarSinPersistencia) {
-        throw 'Este equipo tiene Deep Freeze y no indicaste -CarpetaDatos. Las bitacoras registradas sin servidor, el horario local y los registros viven en el perfil del usuario, que se borra en cada reinicio: se perderian datos de estudiantes. Indica -CarpetaDatos con un ThawSpace (por ejemplo T:\DigBitDatos) o una particion sin congelar. Si este equipo nunca se queda sin servidor y aceptas perder los registros, repite con -AceptarSinPersistencia.'
+        throw 'Este equipo tiene Deep Freeze y no indicaste -CarpetaDatos. Las bitacoras registradas sin servidor, el horario local y los registros viven en el perfil del usuario, que se borra en cada reinicio: se perderian datos de estudiantes. Indica -CarpetaDatos con un ThawSpace (por ejemplo T:\DigLabDatos) o una particion sin congelar. Si este equipo nunca se queda sin servidor y aceptas perder los registros, repite con -AceptarSinPersistencia.'
     }
 }
 
@@ -227,16 +227,16 @@ if (-not $Revertir) {
     }
 }
 
-$nombreServicio = 'DigBitVigilante'
+$nombreServicio = 'DigLabVigilante'
 $claveWinlogon  = 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 $clavePasswordLess = 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device'
-$exeDigBit      = Join-Path $Destino 'DigBit.exe'
-$exeVigilante   = Join-Path $Destino 'Vigilante\DigBit.Vigilante.exe'
+$exeDigLab      = Join-Path $Destino 'DigLab.exe'
+$exeVigilante   = Join-Path $Destino 'Vigilante\DigLab.Vigilante.exe'
 $instalador     = Join-Path $PSScriptRoot 'instalar_vigilante.ps1'
 
 # Lo que se escribe en el perfil de la cuenta (rutas relativas a su HKU\<SID>).
 $valoresUsuario = @(
-    @{ Clave = 'Software\Microsoft\Windows NT\CurrentVersion\Winlogon';           Nombre = 'Shell';                 Tipo = 'REG_SZ';    Valor = $exeDigBit; Que = 'DigBit como shell de la cuenta' }
+    @{ Clave = 'Software\Microsoft\Windows NT\CurrentVersion\Winlogon';           Nombre = 'Shell';                 Tipo = 'REG_SZ';    Valor = $exeDigLab; Que = 'DigLab como shell de la cuenta' }
     @{ Clave = 'Software\Microsoft\Windows\CurrentVersion\Policies\System';        Nombre = 'DisableTaskMgr';        Tipo = 'REG_DWORD'; Valor = '1';        Que = 'sin Administrador de tareas' }
     @{ Clave = 'Software\Microsoft\Windows\CurrentVersion\Policies\System';        Nombre = 'DisableLockWorkstation'; Tipo = 'REG_DWORD'; Valor = '1';       Que = 'sin bloquear el equipo' }
     @{ Clave = 'Software\Microsoft\Windows\CurrentVersion\Policies\System';        Nombre = 'DisableChangePassword'; Tipo = 'REG_DWORD'; Valor = '1';        Que = 'sin cambiar contrasena' }
@@ -307,7 +307,7 @@ function ObtenerPerfil([string]$sid) {
 }
 
 # Raiz del registro de la cuenta: su HKU\<SID> si tiene sesion abierta, o el
-# NTUSER.DAT cargado a mano en HKU\DigBitLab si no.
+# NTUSER.DAT cargado a mano en HKU\DigLabCuenta si no.
 $script:raizUsuario = $null
 $script:hiveCargado = $false
 
@@ -327,8 +327,8 @@ function AbrirRegistroCuenta {
         throw "No se encontro $ntuser."
     }
 
-    Reg @('load', 'HKU\DigBitLab', $ntuser)
-    $script:raizUsuario = 'HKU\DigBitLab'
+    Reg @('load', 'HKU\DigLabCuenta', $ntuser)
+    $script:raizUsuario = 'HKU\DigLabCuenta'
     $script:hiveCargado = $true
 }
 
@@ -336,7 +336,7 @@ function CerrarRegistroCuenta {
     if ($script:hiveCargado) {
         [GC]::Collect()
         [GC]::WaitForPendingFinalizers()
-        Reg @('unload', 'HKU\DigBitLab')
+        Reg @('unload', 'HKU\DigLabCuenta')
         $script:hiveCargado = $false
     }
     $script:raizUsuario = $null
@@ -353,7 +353,7 @@ function DescribirRaiz {
 if ($Revertir) {
     Paso "Revertir la configuracion de laboratorio de '$Cuenta' en $env:COMPUTERNAME"
 
-    Hacer 'Quitar el servicio DigBit.Vigilante' {
+    Hacer 'Quitar el servicio DigLab.Vigilante' {
         if (Get-Service -Name $nombreServicio -ErrorAction SilentlyContinue) {
             & $instalador -Desinstalar
         }
@@ -361,7 +361,7 @@ if ($Revertir) {
 
     Hacer "Quitar la exclusion de $Destino en Microsoft Defender" {
         if (Get-Command Remove-MpPreference -ErrorAction SilentlyContinue) {
-            foreach ($exe in @((Join-Path $Destino 'DigBit.exe'), $exeVigilante)) {
+            foreach ($exe in @((Join-Path $Destino 'DigLab.exe'), $exeVigilante)) {
                 try { Remove-MpPreference -ExclusionProcess $exe -ErrorAction Stop } catch { }
             }
             try { Remove-MpPreference -ExclusionPath $Destino -ErrorAction Stop } catch { }
@@ -414,17 +414,17 @@ if ($SoloMostrar) {
 
 # --- 1. Archivos ---------------------------------------------------------------
 Paso "1. Archivos -> $Destino"
-$origenDigBit    = Join-Path $Origen 'DigBit\bin\Release'
-$origenVigilante = Join-Path $Origen 'DigBit.Vigilante\bin\Release'
-foreach ($carpeta in @($origenDigBit, $origenVigilante)) {
+$origenDigLab    = Join-Path $Origen 'DigLab\bin\Release'
+$origenVigilante = Join-Path $Origen 'DigLab.Vigilante\bin\Release'
+foreach ($carpeta in @($origenDigLab, $origenVigilante)) {
     if (-not (Test-Path (Join-Path $carpeta '*.exe'))) {
         $mensaje = "No hay compilacion Release en $carpeta. Ejecuta .\build.cmd -Configuration Release -NoRun o indica -Origen."
         if ($SoloMostrar) { Write-Warning $mensaje } else { throw $mensaje }
     }
 }
 
-Hacer 'Detener DigBit y el vigilante si estan corriendo' {
-    Get-Process -Name 'DigBit', 'DigBit.Vigilante' -ErrorAction SilentlyContinue | Stop-Process -Force
+Hacer 'Detener DigLab y el vigilante si estan corriendo' {
+    Get-Process -Name 'DigLab', 'DigLab.Vigilante' -ErrorAction SilentlyContinue | Stop-Process -Force
     $servicio = Get-Service -Name $nombreServicio -ErrorAction SilentlyContinue
     if ($servicio -and $servicio.Status -ne 'Stopped') {
         # Si el servicio acaba de arrancar esta en StartPending, y Stop-Service
@@ -457,7 +457,7 @@ if (Test-Path $rutaConexion) {
     $conexionGuardada = Get-Content -Raw $rutaConexion
 }
 
-# Defender detecta a DigBit como "Trojan:Win32/Bearfoos.A!ml" y lo pone en
+# Defender detecta a DigLab como "Trojan:Win32/Bearfoos.A!ml" y lo pone en
 # cuarentena. Es un falso positivo del modelo de aprendizaje automatico, y lo que
 # lo dispara es lo que hacemos: un ejecutable SIN FIRMAR que se registra como
 # shell de Winlogon y cierra sesiones. Se excluye ANTES de copiar, o se lleva el
@@ -466,17 +466,17 @@ if (Test-Path $rutaConexion) {
 if (Get-Command Add-MpPreference -ErrorAction SilentlyContinue) {
     Hacer "Excluir $Destino en Microsoft Defender (falso positivo conocido)" {
         Add-MpPreference -ExclusionPath $Destino
-        Add-MpPreference -ExclusionProcess (Join-Path $Destino 'DigBit.exe')
+        Add-MpPreference -ExclusionProcess (Join-Path $Destino 'DigLab.exe')
         Add-MpPreference -ExclusionProcess $exeVigilante
     }
 }
 else {
-    Write-Warning 'Sin comandos de Microsoft Defender en este equipo. Si usa otro antivirus, excluye la carpeta en el suyo o pondra DigBit en cuarentena.'
+    Write-Warning 'Sin comandos de Microsoft Defender en este equipo. Si usa otro antivirus, excluye la carpeta en el suyo o pondra DigLab en cuarentena.'
 }
 
-Hacer "Copiar DigBit desde $origenDigBit" {
+Hacer "Copiar DigLab desde $origenDigLab" {
     New-Item -ItemType Directory -Force $Destino | Out-Null
-    Copy-Item (Join-Path $origenDigBit '*') $Destino -Recurse -Force
+    Copy-Item (Join-Path $origenDigLab '*') $Destino -Recurse -Force
 }
 
 Hacer "Copiar el vigilante desde $origenVigilante" {
@@ -486,8 +486,8 @@ Hacer "Copiar el vigilante desde $origenVigilante" {
 
 # --- 2. Configuracion desplegada -----------------------------------------------
 Paso '2. Configuracion desplegada'
-$config          = Join-Path $Destino 'DigBit.exe.config'
-$configVigilante = Join-Path $Destino 'Vigilante\DigBit.Vigilante.exe.config'
+$config          = Join-Path $Destino 'DigLab.exe.config'
+$configVigilante = Join-Path $Destino 'Vigilante\DigLab.Vigilante.exe.config'
 
 # Escribe (o crea) claves de appSettings sin tocar el resto del archivo.
 function EscribirAjustes([string]$archivo, [hashtable[]]$ajustes) {
@@ -529,19 +529,19 @@ if ($CarpetaDatos) {
 # CarpetaDatos solo se escribe si se indico. Si no, una reinstalacion sin ese
 # parametro dejaria el equipo apuntando otra vez al perfil, en silencio, y las
 # bitacoras pendientes volverian a perderse cada noche.
-$ajustesDigBit = @(
+$ajustesDigLab = @(
     @{ Clave = 'ModoKiosco';  Valor = $(if ($esKiosco) { 'true' } else { 'false' }) }
     @{ Clave = 'Laboratorio'; Valor = $Laboratorio }
 )
-if ($CarpetaDatos)  { $ajustesDigBit += @{ Clave = 'CarpetaDatos';  Valor = $CarpetaDatos } }
-if ($NumeroMaquina) { $ajustesDigBit += @{ Clave = 'NumeroMaquina'; Valor = $NumeroMaquina } }
+if ($CarpetaDatos)  { $ajustesDigLab += @{ Clave = 'CarpetaDatos';  Valor = $CarpetaDatos } }
+if ($NumeroMaquina) { $ajustesDigLab += @{ Clave = 'NumeroMaquina'; Valor = $NumeroMaquina } }
 
-Hacer "$(($ajustesDigBit | ForEach-Object { "$($_.Clave)='$($_.Valor)'" }) -join ', ') en $config" {
-    EscribirAjustes $config $ajustesDigBit
+Hacer "$(($ajustesDigLab | ForEach-Object { "$($_.Clave)='$($_.Valor)'" }) -join ', ') en $config" {
+    EscribirAjustes $config $ajustesDigLab
 }
 
 if ($CarpetaDatos) {
-    Hacer "CarpetaDatos='$CarpetaDatos' en los dos config (DigBit y vigilante)" {
+    Hacer "CarpetaDatos='$CarpetaDatos' en los dos config (DigLab y vigilante)" {
         EscribirAjustes $configVigilante @(@{ Clave = 'CarpetaDatos'; Valor = $CarpetaDatos })
     }
 }
@@ -551,7 +551,7 @@ if ($CadenaConexion) {
         $cadenaXml = [Security.SecurityElement]::Escape($CadenaConexion)
         $texto = "<?xml version=`"1.0`" encoding=`"utf-8`"?>`r`n" +
                  "<connectionStrings>`r`n" +
-                 "  <add name=`"DigBit`" connectionString=`"$cadenaXml`" providerName=`"MySql.Data.MySqlClient`" />`r`n" +
+                 "  <add name=`"DigLab`" connectionString=`"$cadenaXml`" providerName=`"MySql.Data.MySqlClient`" />`r`n" +
                  "</connectionStrings>`r`n"
         [IO.File]::WriteAllText($rutaConexion, $texto, (New-Object Text.UTF8Encoding $false))
     }
@@ -566,9 +566,9 @@ else {
 }
 
 # Una carpeta creada en la raiz de C: hereda "Authenticated Users:(M)", asi que
-# por defecto el alumno puede REESCRIBIR C:\DigBit\DigBit.exe. Como ese binario es
+# por defecto el alumno puede REESCRIBIR C:\DigLab\DigLab.exe. Como ese binario es
 # el shell de su sesion, renombrarlo y dejar un cmd.exe con ese nombre le da un
-# simbolo del sistema en el siguiente inicio automatico; editar DigBit.exe.config
+# simbolo del sistema en el siguiente inicio automatico; editar DigLab.exe.config
 # le basta para apagar el modo kiosco. Y encima esta carpeta esta excluida del
 # antivirus. Se rompe la herencia y se deja en solo lectura para Usuarios.
 # Comprobado: icacls C:\ muestra Authenticated Users:(OI)(CI)(IO)(M), y una
@@ -587,11 +587,11 @@ Hacer "Dejar $Destino en solo lectura para los usuarios normales" {
 
 # --- Fin para los equipos que NO son del laboratorio -------------------------------
 # De aqui abajo todo es del kiosco: comprobar el laboratorio, crear la cuenta,
-# poner DigBit como shell, las directivas, el inicio de sesion automatico y el
+# poner DigLab como shell, las directivas, el inicio de sesion automatico y el
 # vigilante. Un equipo de administrador o de profesor no necesita nada de eso;
 # es la MISMA aplicacion, solo que sin bloquear la pantalla.
 if (-not $esKiosco) {
-    # En un equipo de laboratorio DigBit ES el escritorio, asi que no hace falta
+    # En un equipo de laboratorio DigLab ES el escritorio, asi que no hace falta
     # nada para abrirlo. En el del administrador o el del profesor es un programa
     # normal, y sin esto quedaba una carpeta en C: que hay que saber que existe.
     # Que es lo unico que estos dos equipos necesitan: la copia, la conexion y
@@ -599,13 +599,13 @@ if (-not $esKiosco) {
     Paso 'Acceso directo en el escritorio'
     $escritorio = [Environment]::GetFolderPath('CommonDesktopDirectory')
     if (-not $escritorio) { $escritorio = [Environment]::GetFolderPath('Desktop') }
-    $enlace = Join-Path $escritorio 'DigBit.lnk'
+    $enlace = Join-Path $escritorio 'DigLab.lnk'
     Hacer "Crear $enlace" {
         $shell = New-Object -ComObject WScript.Shell
         $acceso = $shell.CreateShortcut($enlace)
-        $acceso.TargetPath = $exeDigBit
+        $acceso.TargetPath = $exeDigLab
         $acceso.WorkingDirectory = $Destino
-        $acceso.Description = "DigBit - bitacora de laboratorios ($equipoDe)"
+        $acceso.Description = "DigLab - bitacora de laboratorios ($equipoDe)"
         $acceso.Save()
         [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
     }
@@ -620,12 +620,12 @@ if (-not $esKiosco) {
 
     Write-Host ''
     Write-Host "Listo: $equipoDe preparado." -ForegroundColor Green
-    Write-Host "  - Abrelo con el acceso directo 'DigBit' del escritorio."
-    Write-Host "  - DigBit esta en $Destino y se abre como cualquier programa."
+    Write-Host "  - Abrelo con el acceso directo 'DigLab' del escritorio."
+    Write-Host "  - DigLab esta en $Destino y se abre como cualquier programa."
     Write-Host '  - Sin kiosco: la pantalla no se bloquea y Windows funciona normal.'
     Write-Host '  - Sin cuenta de laboratorio, sin inicio de sesion automatico y sin vigilante.'
     if ($Modo -eq 'adm') {
-        Write-Host '  - Entra con la cuenta de la administracion de DigBit (tipo 3) para gestionar horarios.'
+        Write-Host '  - Entra con la cuenta de la administracion de DigLab (tipo 3) para gestionar horarios.'
     } else {
         Write-Host '  - Entra con tu cuenta docente para ver tus clases y sus bitacoras.'
     }
@@ -635,7 +635,7 @@ if (-not $esKiosco) {
 
 # --- 2c. Acceso de emergencia -----------------------------------------------------
 # Los dos factores se guardan HASHEADOS con el mismo PBKDF2 que las contrasenas
-# de los usuarios, llamando al codigo de verdad (DigBit.exe) en vez de reescribir
+# de los usuarios, llamando al codigo de verdad (DigLab.exe) en vez de reescribir
 # el algoritmo aqui: si algun dia cambian las iteraciones, esto sigue valiendo.
 if ($AutorizarMemoria -and -not $SoloMostrar) {
     Paso '2c. Autorizar la memoria de emergencia'
@@ -652,7 +652,7 @@ if ($AutorizarMemoria -and -not $SoloMostrar) {
         throw "Hay $($series.Count) memorias USB conectadas y no se cual autorizar. Deja conectada SOLO la que quieras y repite."
     }
 
-    $global:CarpetaDigBit = $Destino
+    $global:CarpetaDigLab = $Destino
     $global:Resolviendo = @{}
     [AppDomain]::CurrentDomain.add_AssemblyResolve([ResolveEventHandler] {
         param($remitente, $evento)
@@ -660,16 +660,16 @@ if ($AutorizarMemoria -and -not $SoloMostrar) {
         if ($global:Resolviendo.ContainsKey($corto)) { return $null }
         $global:Resolviendo[$corto] = $true
         try {
-            $dll = Join-Path $global:CarpetaDigBit "$corto.dll"
+            $dll = Join-Path $global:CarpetaDigLab "$corto.dll"
             if (Test-Path $dll) { return [Reflection.Assembly]::LoadFrom($dll) }
             return $null
         } finally { $global:Resolviendo.Remove($corto) }
     })
 
-    $ensamblado = [Reflection.Assembly]::LoadFrom((Join-Path $Destino 'DigBit.exe'))
-    $tipo = $ensamblado.GetType('DigBit.conexion.Contrasenas')
+    $ensamblado = [Reflection.Assembly]::LoadFrom((Join-Path $Destino 'DigLab.exe'))
+    $tipo = $ensamblado.GetType('DigLab.conexion.Contrasenas')
     $metodo = $tipo.GetMethod('Hash', [Reflection.BindingFlags]'Public,NonPublic,Static')
-    if (-not $metodo) { throw 'No se encontro Contrasenas.Hash en DigBit.exe.' }
+    if (-not $metodo) { throw 'No se encontro Contrasenas.Hash en DigLab.exe.' }
 
     Hacer 'Guardar la memoria autorizada (hasheada, nunca en claro)' {
         EscribirAjustes $config @(
@@ -691,7 +691,7 @@ if (-not $SoloMostrar) {
 
     $cadena = $CadenaConexion
     if (-not $cadena -and (Test-Path $rutaConexion)) {
-        $nodo = ([xml](Get-Content -Raw $rutaConexion)).connectionStrings.add | Where-Object { $_.name -eq 'DigBit' }
+        $nodo = ([xml](Get-Content -Raw $rutaConexion)).connectionStrings.add | Where-Object { $_.name -in 'DigLab', 'DigBit' }
         if ($nodo) { $cadena = $nodo.connectionString }
     }
 
@@ -701,7 +701,7 @@ if (-not $SoloMostrar) {
     else {
         # Las dependencias de MySql.Data viven junto al DLL, no junto a
         # powershell.exe, asi que hay que decirle al CLR donde buscarlas.
-        $global:CarpetaDigBit = $Destino
+        $global:CarpetaDigLab = $Destino
         $global:Resolviendo = @{}
         [AppDomain]::CurrentDomain.add_AssemblyResolve([ResolveEventHandler] {
             param($remitente, $evento)
@@ -709,7 +709,7 @@ if (-not $SoloMostrar) {
             if ($global:Resolviendo.ContainsKey($corto)) { return $null }
             $global:Resolviendo[$corto] = $true
             try {
-                $dll = Join-Path $global:CarpetaDigBit "$corto.dll"
+                $dll = Join-Path $global:CarpetaDigLab "$corto.dll"
                 if (Test-Path $dll) { return [Reflection.Assembly]::LoadFrom($dll) }
                 return $null
             } finally { $global:Resolviendo.Remove($corto) }
@@ -779,7 +779,7 @@ if (Get-LocalUser -Name $Cuenta -ErrorAction SilentlyContinue) {
 }
 else {
     Hacer 'Crear la cuenta (sin privilegios, contrasena sin caducidad)' {
-        New-LocalUser -Name $Cuenta -Password $segura -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -Description 'Cuenta de laboratorio DigBit' | Out-Null
+        New-LocalUser -Name $Cuenta -Password $segura -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -Description 'Cuenta de laboratorio DigLab' | Out-Null
     }
 }
 
@@ -819,12 +819,12 @@ try {
 
     # La clave Shell vive en la colmena del PROPIO alumno, que la hereda con
     # control total: puede poner Shell=explorer.exe y entrar a un escritorio
-    # completo sin pasar por DigBit. Y no hace falta reiniciar (Deep Freeze no
+    # completo sin pasar por DigLab. Y no hace falta reiniciar (Deep Freeze no
     # salva), porque el relevo entre alumnos es un cierre de sesion.
     # Windows ya protege asi la clave de Policies: herencia rota, dueno SYSTEM,
     # Usuarios solo lectura. Se copia ese mismo patron sobre Winlogon.
     Hacer "Impedir que la cuenta cambie su propio Shell ($(DescribirRaiz)\Software\Microsoft\Windows NT\CurrentVersion\Winlogon)" {
-        $ramaCuenta = $script:raizUsuario.Split([char]92)[-1]   # 'HKU\<SID>' o 'HKU\DigBitLab' -> lo de despues de la barra
+        $ramaCuenta = $script:raizUsuario.Split([char]92)[-1]   # 'HKU\<SID>' o 'HKU\DigLabCuenta' -> lo de despues de la barra
         $clave = "Registry::HKEY_USERS\$ramaCuenta\Software\Microsoft\Windows NT\CurrentVersion\Winlogon"
         $sidCuenta = (Get-LocalUser -Name $Cuenta).SID
 
@@ -885,7 +885,7 @@ Hacer "Winlogon: AutoAdminLogon=1, DefaultUserName=$Cuenta, DefaultDomainName=$e
     RegBorrarValor $claveWinlogon 'AutoLogonCount'
 }
 
-Hacer 'Winlogon: AutoRestartShell=1 (si DigBit termina, Windows lo relanza)' {
+Hacer 'Winlogon: AutoRestartShell=1 (si DigLab termina, Windows lo relanza)' {
     Reg @('add', $claveWinlogon, '/v', 'AutoRestartShell', '/t', 'REG_DWORD', '/d', '1', '/f')
 }
 
@@ -914,7 +914,7 @@ Hacer 'No pedir contrasena al despertar (powercfg CONSOLELOCK=0)' {
 }
 
 # --- 7. Servicio -----------------------------------------------------------------
-Paso '7. Servicio DigBit.Vigilante'
+Paso '7. Servicio DigLab.Vigilante'
 Hacer "Instalar y arrancar desde $exeVigilante" {
     & $instalador -Ruta $exeVigilante
 }
@@ -934,14 +934,14 @@ Hacer "Escribir $(Join-Path $Destino '.instalado')" {
 # --- Resumen ---------------------------------------------------------------------
 Write-Host ''
 Write-Host 'Equipo preparado. Reinicia para comprobarlo:' -ForegroundColor Green
-Write-Host "  - Windows entrara solo como '$Cuenta' y arrancara DigBit sin escritorio."
+Write-Host "  - Windows entrara solo como '$Cuenta' y arrancara DigLab sin escritorio."
 Write-Host '  - Tras guardar la bitacora aparece el escritorio; a la hora de salida se cierra la sesion.'
 Write-Host '  - Para entrar como administrador: Ctrl+Alt+Supr -> Cambiar de usuario, o Mayus pulsada durante el arranque.'
 if ($CarpetaDatos) {
     Write-Host "  - Datos y logs: $CarpetaDatos (fuera del disco congelado; ahi quedan las bitacoras sin enviar)."
 }
 else {
-    Write-Host "  - Logs: %LOCALAPPDATA%\DigBit\logs (DigBit, en el perfil de '$Cuenta') y %ProgramData%\DigBit\logs (vigilante)."
+    Write-Host "  - Logs: %LOCALAPPDATA%\DigLab\logs (DigLab, en el perfil de '$Cuenta') y %ProgramData%\DigLab\logs (vigilante)."
 }
 if ($deepFreeze.Presente) {
     Write-Host ''

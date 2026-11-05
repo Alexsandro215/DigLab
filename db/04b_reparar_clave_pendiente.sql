@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Reponer la clave foranea que la migracion 04 quita un momento
+-- DigLab 2.0 - Reponer la clave foranea que la migracion 04 quita un momento
 -- =============================================================================
 -- La 04 tiene que quitar el UNIQUE de codigos_accesos.codigo, y para eso quita
 -- antes la clave foranea que otra tabla (en el TESCHI, reportess) tiene hacia

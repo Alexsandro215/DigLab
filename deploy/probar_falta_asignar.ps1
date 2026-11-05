@@ -4,7 +4,7 @@
     contra una base de DESARROLLO (MySQL 8 o MariaDB 5.5).
 
 .DESCRIPTION
-    Carga DigBit.exe por reflexion y recorre la parte de HorariosDatos de
+    Carga DigLab.exe por reflexion y recorre la parte de HorariosDatos de
     HorariosDatos.PorAsignar.cs:
       - sin db/25 (la tabla escondida un momento): todo como antes, poner
         encima de otra clase sigue chocando, "Quitar horas" no deja nada
@@ -46,7 +46,7 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
 
-    # Otro DigBit.exe; por defecto, el de DigBit\bin\<Configuration>.
+    # Otro DigLab.exe; por defecto, el de DigLab\bin\<Configuration>.
     [string]$Exe,
 
     # numero_identificador de la cuenta de la administracion que firma los cambios.
@@ -58,14 +58,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if ($CadenaConexion -match 'teschi\.edu\.mx') { throw 'Esta prueba escribe en la base: nunca contra la de la escuela.' }
-if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "..\DigBit\bin\$Configuration\DigBit.exe" }
+if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "..\DigLab\bin\$Configuration\DigLab.exe" }
 $Exe = (Resolve-Path $Exe).Path
 $script:carpeta = Split-Path $Exe
 
-$env:DIGBIT_CONNECTION_STRING = $CadenaConexion
+$env:DIGLAB_CONNECTION_STRING = $CadenaConexion
 # El log de la prueba, fuera de la carpeta de datos real (se mira que diga por que falta db/25).
-$env:DIGBIT_CARPETA_DATOS = Join-Path $env:TEMP ('digbit_probar_falta_asignar_' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
-New-Item -ItemType Directory -Force $env:DIGBIT_CARPETA_DATOS | Out-Null
+$env:DIGLAB_CARPETA_DATOS = Join-Path $env:TEMP ('diglab_probar_falta_asignar_' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Force $env:DIGLAB_CARPETA_DATOS | Out-Null
 
 [AppDomain]::CurrentDomain.add_AssemblyResolve({
     param($origen, $pedido)
@@ -77,10 +77,10 @@ $app = [Reflection.Assembly]::LoadFrom($Exe)
 $null = [Reflection.Assembly]::LoadFrom((Join-Path $script:carpeta 'MySql.Data.dll'))
 $bf = [Reflection.BindingFlags]'Public,NonPublic,Instance,Static'
 function T([string]$n) { $app.GetType($n, $true) }
-$tH = T 'DigBit.conexion.HorariosDatos'
-$tUsuario = T 'DigBit.conexion.Datos_User'
-$tConexion = T 'DigBit.Conexion'
-$tEsquema = T 'DigBit.conexion.Esquema'
+$tH = T 'DigLab.conexion.HorariosDatos'
+$tUsuario = T 'DigLab.conexion.Datos_User'
+$tConexion = T 'DigLab.Conexion'
+$tEsquema = T 'DigLab.conexion.Esquema'
 $h = [Activator]::CreateInstance($tH, $true)
 
 $script:total = 0
@@ -265,7 +265,7 @@ try {
         Falla 'CrearFranja encima de otra clase sigue chocando' (Llamar 'CrearFranja' @([int], [int], [int], $ts, $ts, $nDate) @($cB, $lab1, 7, [TimeSpan]'20:00', [TimeSpan]'21:00', $null)) 'InvalidOperationException' 'Se solapa con .*mismo laboratorio'
         Bien 'BorrarFranja(porAsignar = true) borra como antes' (Borrar $x0 $true) | Out-Null
         Ver '... sin la franja' ("$(Uno "SELECT COUNT(*) FROM horarios WHERE idhorarios = $x0")" -eq '0')
-        $log = @(Get-ChildItem $env:DIGBIT_CARPETA_DATOS -Recurse -Filter *.log -ErrorAction SilentlyContinue | Get-Content -ErrorAction SilentlyContinue) -join "`n"
+        $log = @(Get-ChildItem $env:DIGLAB_CARPETA_DATOS -Recurse -Filter *.log -ErrorAction SilentlyContinue | Get-Content -ErrorAction SilentlyContinue) -join "`n"
         Ver 'el log dice por que (falta db/25_horas_por_asignar.sql)' ($log -match 'falta db/25_horas_por_asignar\.sql')
     }
     finally {
@@ -424,7 +424,7 @@ try {
         Write-Host "`n== Solo consulta (persona responsable del laboratorio) ==" -ForegroundColor Cyan
         $conexionEquipo = $tConexion.GetMethod('GetConexion').Invoke([Activator]::CreateInstance($tConexion, $true), [object[]]@())
         $argsPreparar = [object[]]@($conexionEquipo, $null)
-        $problema = (T 'DigBit.conexion.CuentaDeConsulta').GetMethod('Preparar', $bf).Invoke($null, $argsPreparar)
+        $problema = (T 'DigLab.conexion.CuentaDeConsulta').GetMethod('Preparar', $bf).Invoke($null, $argsPreparar)
         $conexionEquipo.Dispose()
         if ($problema) {
             Write-Host "Se salta: $problema" -ForegroundColor Yellow
@@ -465,7 +465,7 @@ finally {
     $null = Sql "DELETE FROM configuracion WHERE clave = 'franjas_con_fecha'"
     if ($conFechaAntes -ne $null) { $null = Sql "INSERT INTO configuracion (clave, valor) VALUES ('franjas_con_fecha', '$conFechaAntes')" }
     Ver 'no quedan datos de la prueba' ("$(Uno "SELECT COUNT(*) FROM clases WHERE codigo LIKE 'TSTFA%'")" -eq '0' -and "$(Uno "SELECT COUNT(*) FROM laboratorios WHERE nombre_laboratorio LIKE 'PRUEBA FA %'")" -eq '0')
-    Remove-Item -Recurse -Force $env:DIGBIT_CARPETA_DATOS -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force $env:DIGLAB_CARPETA_DATOS -ErrorAction SilentlyContinue
 }
 
 Write-Host "`nResultado: $($script:total - $script:malos)/$($script:total) correctas" -ForegroundColor $(if ($script:malos -eq 0) { 'Green' } else { 'Red' })

@@ -12,7 +12,7 @@
     aqui). Si llegan asi por datos viejos o copiados, "se enciman" y no dejan
     aplicar.
 
-    Carga DigBit.exe por reflexion y recorre:
+    Carga DigLab.exe por reflexion y recorre:
       - en memoria, sin la base: RevisionCiclo.Choques/Encimadas/Revisar
         (mismo docente en otro laboratorio = choque, mismo grupo en otro
         laboratorio = choque, los dos, mismo laboratorio = no es choque sino
@@ -56,7 +56,7 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
 
-    # Otro DigBit.exe; por defecto, el de DigBit\bin\<Configuration>.
+    # Otro DigLab.exe; por defecto, el de DigLab\bin\<Configuration>.
     [string]$Exe,
 
     # numero_identificador de la cuenta de la administracion que firma los cambios.
@@ -68,13 +68,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if ($CadenaConexion -match 'teschi\.edu\.mx') { throw 'Esta prueba escribe en la base: nunca contra la de la escuela.' }
-if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "..\DigBit\bin\$Configuration\DigBit.exe" }
+if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "..\DigLab\bin\$Configuration\DigLab.exe" }
 $Exe = (Resolve-Path $Exe).Path
 $script:carpeta = Split-Path $Exe
 
-$env:DIGBIT_CONNECTION_STRING = $CadenaConexion
-$env:DIGBIT_CARPETA_DATOS = Join-Path $env:TEMP 'digbit_probar_choques'
-New-Item -ItemType Directory -Force $env:DIGBIT_CARPETA_DATOS | Out-Null
+$env:DIGLAB_CONNECTION_STRING = $CadenaConexion
+$env:DIGLAB_CARPETA_DATOS = Join-Path $env:TEMP 'diglab_probar_choques'
+New-Item -ItemType Directory -Force $env:DIGLAB_CARPETA_DATOS | Out-Null
 
 [AppDomain]::CurrentDomain.add_AssemblyResolve({
     param($origen, $pedido)
@@ -86,20 +86,20 @@ $app = [Reflection.Assembly]::LoadFrom($Exe)
 $null = [Reflection.Assembly]::LoadFrom((Join-Path $script:carpeta 'MySql.Data.dll'))
 $bf = [Reflection.BindingFlags]'Public,NonPublic,Instance,Static'
 function T([string]$n) { $app.GetType($n, $true) }
-$tDatos    = T 'DigBit.conexion.CicloPreliminarDatos'
-$tRevision = T 'DigBit.conexion.RevisionCiclo'
-$tRevAp    = T 'DigBit.conexion.RevisionAplicacion'
-$tFuente   = T 'DigBit.conexion.FuentePreparacion'
-$tFranja   = T 'DigBit.conexion.FranjaCiclo'
-$tCarga    = T 'DigBit.conexion.CargaCiclo'
-$tLeido    = T 'DigBit.conexion.CicloLeido'
-$tFiltro   = T 'DigBit.conexion.FiltroClases'
-$tFI       = T 'DigBit.conexion.FranjaInfo'
-$tH        = T 'DigBit.conexion.HorariosDatos'
-$tUsuario  = T 'DigBit.conexion.Datos_User'
-$tEnUso    = T 'DigBit.ChoqueEnUso'
-$tConfirma = T 'DigBit.ConfirmarReemplazoEnPreparacion'
-$tTextos   = T 'DigBit.TextosDelHorario'
+$tDatos    = T 'DigLab.conexion.CicloPreliminarDatos'
+$tRevision = T 'DigLab.conexion.RevisionCiclo'
+$tRevAp    = T 'DigLab.conexion.RevisionAplicacion'
+$tFuente   = T 'DigLab.conexion.FuentePreparacion'
+$tFranja   = T 'DigLab.conexion.FranjaCiclo'
+$tCarga    = T 'DigLab.conexion.CargaCiclo'
+$tLeido    = T 'DigLab.conexion.CicloLeido'
+$tFiltro   = T 'DigLab.conexion.FiltroClases'
+$tFI       = T 'DigLab.conexion.FranjaInfo'
+$tH        = T 'DigLab.conexion.HorariosDatos'
+$tUsuario  = T 'DigLab.conexion.Datos_User'
+$tEnUso    = T 'DigLab.ChoqueEnUso'
+$tConfirma = T 'DigLab.ConfirmarReemplazoEnPreparacion'
+$tTextos   = T 'DigLab.TextosDelHorario'
 $datos = [Activator]::CreateInstance($tDatos, $true)
 $h = [Activator]::CreateInstance($tH, $true)
 $publico = [Reflection.BindingFlags]'Public,Instance'

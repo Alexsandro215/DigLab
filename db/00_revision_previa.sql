@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Revision previa a las migraciones
+-- DigLab 2.0 - Revision previa a las migraciones
 -- =============================================================================
 -- NO CAMBIA NADA. Solo mira y dictamina. Ejecutalo ANTES de las migraciones
 -- (03 a 21) sobre la base real del TESCHI, y no sigas si alguna fila dice BLOQUEA.
@@ -106,7 +106,7 @@ UNION ALL SELECT
     IF((SELECT COUNT(*) FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME IN ('usuarios','codigos_accesos','registros_bitacoras','laboratorios','grupos','materias','semestres','carreras','carrera_grupo_semestre')) = 9,
-       'ok', 'BLOQUEA: falta alguna tabla base; esta no es la base de DigBit')
+       'ok', 'BLOQUEA: falta alguna tabla base; esta no es la base de DigLab')
 
 UNION ALL SELECT '=== QUE MIGRACIONES YA ESTAN ===', '', ''
 UNION ALL SELECT

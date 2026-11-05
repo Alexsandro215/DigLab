@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: cada franja con su propia vigencia
+-- DigLab 2.0 - Migracion: cada franja con su propia vigencia
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas.
@@ -16,9 +16,9 @@
 -- empieza en la fecha que diga el administrador. Lo pasado queda como fue.
 --
 -- ORDEN: aplicarla no cambia nada para nadie (las franjas de hoy quedan con
--- NULL, es decir, como estaban). DigBit solo parte franjas cuando, ademas, el
+-- NULL, es decir, como estaban). DigLab solo parte franjas cuando, ademas, el
 -- administrador enciende en Ajustes "Los cambios de horario aplican desde una
--- fecha" (configuracion.franjas_con_fecha = '1'): un DigBit viejo no conoce
+-- fecha" (configuracion.franjas_con_fecha = '1'): un DigLab viejo no conoce
 -- estas columnas y veria a la vez la franja terminada y la nueva. Primero se
 -- actualizan TODOS los equipos y despues se enciende.
 --

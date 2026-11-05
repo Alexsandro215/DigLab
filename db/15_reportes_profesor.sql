@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: fallas que reporta el profesor durante su clase
+-- DigLab 2.0 - Migracion: fallas que reporta el profesor durante su clase
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas.
@@ -20,7 +20,7 @@
 -- encargados de laboratorio, solo la lee (sus Alertas ensenan estas fallas):
 -- si ya existe, tambien se le da aqui; si no, se lo da la 18 al crearla.
 --
--- ORDEN: aplicarla no cambia nada para nadie. Los equipos con DigBit 1.1 la
+-- ORDEN: aplicarla no cambia nada para nadie. Los equipos con DigLab 1.1 la
 -- notan solos y desde entonces muestran "Reportar una falla"; sin ella, el
 -- boton no aparece.
 --
@@ -82,7 +82,7 @@ SET @sql := CASE
 END;
 PREPARE ejecutar FROM @sql; EXECUTE ejecutar; DEALLOCATE PREPARE ejecutar;
 
--- Lo mismo para digbit_consulta (db/18), pero SOLO leer: DigBit no deja entrar
+-- Lo mismo para digbit_consulta (db/18), pero SOLO leer: DigLab no deja entrar
 -- a los encargados con esa cuenta si puede escribir algo. Si se aplica esta
 -- migracion despues de la 18, sin esto sus Alertas no ensenan las fallas que
 -- reporta el profesor.

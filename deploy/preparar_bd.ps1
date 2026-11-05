@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
     Deja una base MySQL lista DENTRO de esta maquina, con el esquema y los datos
-    de prueba de DigBit, y la registra como servicio de Windows.
+    de prueba de DigLab, y la registra como servicio de Windows.
 
 .DESCRIPTION
-    Pensado para la maquina virtual de pruebas: DigBit va a ser el shell, asi que
+    Pensado para la maquina virtual de pruebas: DigLab va a ser el shell, asi que
     no habra escritorio desde donde arrancar nada a mano. Por eso MySQL tiene que
     quedar como servicio automatico.
 
@@ -14,14 +14,14 @@
 
 .EXAMPLE
     .\preparar_bd.ps1
-    .\preparar_bd.ps1 -Destino D:\DigBitDB -Puerto 3306
+    .\preparar_bd.ps1 -Destino D:\DigLabDB -Puerto 3306
     .\preparar_bd.ps1 -Quitar
 #>
 [CmdletBinding()]
 param(
-    [string]$Destino = 'C:\DigBitDB',
+    [string]$Destino = 'C:\DigLabDB',
     [int]$Puerto = 3306,
-    [string]$Servicio = 'DigBitMySQL',
+    [string]$Servicio = 'DigLabMySQL',
 
     # Solo para probar el guion fuera de la virtual: no instala servicio, deja el
     # servidor en primer plano hasta que lo pares.
@@ -89,7 +89,7 @@ foreach ($candidata in @((Join-Path $PSScriptRoot 'mysql'), (Join-Path $PSScript
     if (Test-Path (Join-Path $candidata 'bin\mysqld.exe')) { $origen = [IO.Path]::GetFullPath($candidata); break }
 }
 if (-not $origen) {
-    throw "No encuentro mysqld.exe. Este guion necesita la carpeta 'mysql' (los binarios portatiles de MySQL) a su lado o un nivel por encima. Vienen en el paquete DigBit-VM.zip; no se versionan porque son 94 MB."
+    throw "No encuentro mysqld.exe. Este guion necesita la carpeta 'mysql' (los binarios portatiles de MySQL) a su lado o un nivel por encima. Vienen en el paquete DigLab-VM.zip; no se versionan porque son 94 MB."
 }
 if ($Rehacer -and (Test-Path $Destino)) {
     if (Get-Service -Name $Servicio -ErrorAction SilentlyContinue) {
@@ -197,7 +197,7 @@ Write-Host "   $cuenta cuentas en la base"
 $cadena = "Database=teschi_otru;Server=127.0.0.1;Port=$Puerto;User Id=root;Password="
 Write-Host ''
 Write-Host 'Base lista.' -ForegroundColor Green
-Write-Host "  Cadena de conexion para DigBit:"
+Write-Host "  Cadena de conexion para DigLab:"
 Write-Host "    $cadena" -ForegroundColor Yellow
 if ($SinServicio) {
     Write-Host "  Servidor en primer plano, pid $($proceso.Id). Paralo con: Stop-Process -Id $($proceso.Id)"

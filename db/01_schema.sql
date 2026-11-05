@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Esquema de base de datos
+-- DigLab 2.0 - Esquema de base de datos
 -- =============================================================================
 -- Reconstruido a partir de las consultas de conexion/Consultas.cs,
 -- conexion/InsercionDatos.cs y conexion/Borrar.cs.
@@ -397,7 +397,7 @@ CREATE TABLE reportes_profesor (
 ) ENGINE=InnoDB;
 
 -- Codigos para recuperar la contrasena por correo (db/13): los pide y los
--- comprueba la API de recuperacion (api/, en un hosting con PHP), no DigBit.
+-- comprueba la API de recuperacion (api/, en un hosting con PHP), no DigLab.
 -- Guarda el HMAC-SHA256 del codigo con el secreto de la API, nunca el codigo.
 -- usuario_id NULL: una matricula que no existe (solo para limitar por IP).
 CREATE TABLE recuperacion_contrasena (
@@ -412,7 +412,7 @@ CREATE TABLE recuperacion_contrasena (
     intentos        INT          NOT NULL DEFAULT 0,
     usado_en        DATETIME     NULL,
     ip              VARCHAR(45)  NULL,
-    -- El equipo que lo pidio ("numero @ laboratorio", lo manda DigBit): limite por equipo.
+    -- El equipo que lo pidio ("numero @ laboratorio", lo manda DigLab): limite por equipo.
     equipo          VARCHAR(60)  NULL,
     PRIMARY KEY (idrecuperacion),
     KEY ix_recuperacion_usuario (usuario_id, creado_en),
@@ -424,9 +424,9 @@ CREATE TABLE recuperacion_contrasena (
         ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
--- Ajustes de toda la escuela que DigBit lee de la base (db/13), para no tocar
+-- Ajustes de toda la escuela que DigLab lee de la base (db/13), para no tocar
 -- cada equipo: la direccion de la API de recuperacion ('recuperacion_url') y la
--- clave que le manda DigBit ('recuperacion_clave'). Los pone el administrador.
+-- clave que le manda DigLab ('recuperacion_clave'). Los pone el administrador.
 -- digbit_equipo solo puede leerla (db/07).
 CREATE TABLE configuracion (
     clave  VARCHAR(64)   NOT NULL,
@@ -500,10 +500,10 @@ CREATE TABLE asistencias_dadas (
 
 -- Configuraciones de horario (db/16 y db/23): copias con nombre del horario
 -- (cada docente con sus clases y sus horas en cada laboratorio) que solo usa
--- el DigBit de la administracion (Horarios > Configuraciones y Aplicacion).
+-- el DigLab de la administracion (Horarios > Configuraciones y Aplicacion).
 -- Una en preparacion ('borrador', como mucho una), las guardadas ('guardado')
 -- y las aplicadas ('publicado'), que quedan como registro. Al aplicarse una,
--- DigBit crea clases y franjas normales con su vigencia. digbit_equipo no
+-- DigLab crea clases y franjas normales con su vigencia. digbit_equipo no
 -- tiene permiso sobre estas tablas (db/07); digbit_consulta solo las lee (db/18).
 CREATE TABLE ciclos_preliminares (
     idciclo        INT          NOT NULL AUTO_INCREMENT,
@@ -520,7 +520,7 @@ CREATE TABLE ciclos_preliminares (
     estado         ENUM('borrador','publicado','guardado') NOT NULL DEFAULT 'borrador',
     creado_por     INT          NULL,
     creado_en      DATETIME     NOT NULL,
-    -- El ultimo cambio (lo pone DigBit con NOW()).
+    -- El ultimo cambio (lo pone DigLab con NOW()).
     cambiado_en    DATETIME     NULL,
     cambiado_por   INT          NULL,
     -- Al aplicarla: el ultimo dia que se dio a las clases de antes.
@@ -638,7 +638,7 @@ CREATE TABLE ciclo_recortes (
 -- circulo), un color y un nombre corto. Solo lo ven sus pantallas; la clase no
 -- cambia. fk_grupo = 0 vale para todos sus grupos de esa materia (tambien los
 -- del ciclo siguiente); un grupo con su propia fila no sigue a la de la
--- materia. La imagen ya llega recortada por DigBit (128 x 128, 60 000 bytes
+-- materia. La imagen ya llega recortada por DigLab (128 x 128, 60 000 bytes
 -- como mucho). digbit_equipo la lee, inserta, cambia y borra (db/07).
 CREATE TABLE personalizacion_clases (
     fk_profesor     INT          NOT NULL,
@@ -664,11 +664,11 @@ CREATE TABLE personalizacion_clases (
 -- Quien cambio que y cuando (db/21): cada alta, cambio, fin o baja de franjas y
 -- clases, cada cancelacion y sesion extra que se pone o se quita, cada
 -- correccion de una bitacora y cada cambio de un laboratorio o de su forma de
--- entrar. Lo escribe DigBit en la misma transaccion que el cambio y nunca lo
+-- entrar. Lo escribe DigLab en la misma transaccion que el cambio y nunca lo
 -- cambia ni lo borra. De ahi salen las alertas "Cambio de horario" y el
 -- historial de Alertas. Sin claves foraneas: no se borra con nada. "cuando" sin
 -- DEFAULT (MariaDB 5.5 no admite DEFAULT CURRENT_TIMESTAMP en DATETIME): lo
--- pone DigBit con NOW(). digbit_admin lo escribe, digbit_consulta solo lo lee
+-- pone DigLab con NOW(). digbit_admin lo escribe, digbit_consulta solo lo lee
 -- (db/18) y digbit_equipo solo anade el alta de un estudiante con el SIIA
 -- (db/07 y db/24).
 CREATE TABLE historial_cambios (
@@ -733,7 +733,7 @@ CREATE TABLE siia_solicitudes (
 -- bajan solas al ponerle horas a la clase (lo mas antiguo primero) o se dan
 -- por resueltas ("Ya no hace falta"). Nunca se borra un renglon. Sin claves
 -- foraneas, como el historial. Fechas sin DEFAULT (MariaDB 5.5): las pone
--- DigBit con NOW(). digbit_admin la escribe, digbit_consulta solo la lee
+-- DigLab con NOW(). digbit_admin la escribe, digbit_consulta solo la lee
 -- (db/18) y digbit_equipo nada.
 CREATE TABLE horas_por_asignar (
     idhoras_por_asignar  INT           NOT NULL AUTO_INCREMENT,

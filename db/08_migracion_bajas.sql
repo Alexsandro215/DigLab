@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: dar de baja usuarios sin borrar su historial
+-- DigLab 2.0 - Migracion: dar de baja usuarios sin borrar su historial
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
 -- necesitas.

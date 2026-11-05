@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-    Deja este equipo como si DigBit nunca se hubiera instalado.
+    Deja este equipo como si DigLab nunca se hubiera instalado.
 
 .DESCRIPTION
     Lo que ya existia se queda corto para esto:
       - configurar_equipo.ps1 -Revertir quita el kiosco, pero conserva a
         proposito los archivos, la cuenta y la carpeta de datos.
       - preparar_bd.ps1 -Quitar borra el servicio de MySQL, pero deja
-        C:\DigBitDB entera en el disco.
+        C:\DigLabDB entera en el disco.
     Asi que despues de "desinstalar" seguian quedando rastros, y volver a
     instalar desde cero chocaba con ellos. Este guion cierra ese hueco.
 
@@ -32,18 +32,18 @@
 param(
     # Cuenta local del laboratorio, si este equipo tenia kiosco. Sin esto no se
     # toca nada de Winlogon: en el equipo del administrador el inicio de sesion
-    # automatico puede ser suyo y no de DigBit.
+    # automatico puede ser suyo y no de DigLab.
     [string]$Cuenta,
 
-    [string]$Destino = 'C:\DigBit',
+    [string]$Destino = 'C:\DigLab',
 
     # Carpeta de datos, si se configuro con -CarpetaDatos. Si no se pasa se
     # miran igualmente las habituales.
     [string]$CarpetaDatos,
 
-    [string]$DestinoBd = 'C:\DigBitDB',
+    [string]$DestinoBd = 'C:\DigLabDB',
 
-    # Borra el servicio DigBitMySQL y C:\DigBitDB: se va la base entera.
+    # Borra el servicio DigLabMySQL y C:\DigLabDB: se va la base entera.
     [switch]$BorrarBase,
 
     # Borra la carpeta de datos: se van las bitacoras sin enviar.
@@ -94,17 +94,17 @@ function NoHabia([string]$texto) {
 
 $quedaron = New-Object Collections.Generic.List[string]
 
-Paso "Limpiar DigBit de $env:COMPUTERNAME"
+Paso "Limpiar DigLab de $env:COMPUTERNAME"
 if ($SoloMostrar) { Write-Host '   (modo SoloMostrar: no se cambia nada)' -ForegroundColor Yellow }
 if (-not $BorrarBase)  { Write-Host '   la base de datos NO se toca (falta -BorrarBase)' -ForegroundColor Yellow }
 if (-not $BorrarDatos) { Write-Host '   la carpeta de datos NO se toca (falta -BorrarDatos)' -ForegroundColor Yellow }
 
 # --- 1. Procesos --------------------------------------------------------------
-# Antes que nada: mientras DigBit.exe corra, su carpeta no se puede borrar.
+# Antes que nada: mientras DigLab.exe corra, su carpeta no se puede borrar.
 Paso '1. Detener lo que este corriendo'
-$vivos = @(Get-Process -Name 'DigBit', 'DigBit.Vigilante' -ErrorAction SilentlyContinue)
+$vivos = @(Get-Process -Name 'DigLab', 'DigLab.Vigilante' -ErrorAction SilentlyContinue)
 if ($vivos.Count -eq 0) {
-    NoHabia 'no habia ningun proceso de DigBit'
+    NoHabia 'no habia ningun proceso de DigLab'
 } else {
     foreach ($p in $vivos) {
         Hacer ("detener {0} (pid {1}, sesion {2})" -f $p.ProcessName, $p.Id, $p.SessionId) {
@@ -114,11 +114,11 @@ if ($vivos.Count -eq 0) {
 }
 
 # --- 2. Servicio del vigilante ------------------------------------------------
-Paso '2. Servicio DigBitVigilante'
-if (Get-Service -Name 'DigBitVigilante' -ErrorAction SilentlyContinue) {
+Paso '2. Servicio DigLabVigilante'
+if (Get-Service -Name 'DigLabVigilante' -ErrorAction SilentlyContinue) {
     Hacer 'detener y borrar el servicio' {
-        Stop-Service -Name 'DigBitVigilante' -Force -ErrorAction SilentlyContinue
-        $null = & sc.exe delete 'DigBitVigilante'
+        Stop-Service -Name 'DigLabVigilante' -Force -ErrorAction SilentlyContinue
+        $null = & sc.exe delete 'DigLabVigilante'
     }
 } else {
     NoHabia 'no estaba instalado'
@@ -128,7 +128,7 @@ if (Get-Service -Name 'DigBitVigilante' -ErrorAction SilentlyContinue) {
 # se registran en otra rama y sc.exe delete no las toca.
 foreach ($rama in 'HKLM:\SYSTEM\CurrentControlSet\Control\SafeBoot\Minimal',
                   'HKLM:\SYSTEM\CurrentControlSet\Control\SafeBoot\Network') {
-    $clave = Join-Path $rama 'DigBitVigilante'
+    $clave = Join-Path $rama 'DigLabVigilante'
     if (Test-Path $clave) {
         Hacer "quitar $clave" { Remove-Item -Path $clave -Recurse -Force }.GetNewClosure()
     }
@@ -141,7 +141,7 @@ if (-not $Cuenta) {
     $w = Get-ItemProperty -Path $winlogon -ErrorAction SilentlyContinue
     if ($w.AutoAdminLogon -eq '1' -or $w.ForceAutoLogon) {
         Write-Host ("   hay inicio automatico para '{0}', pero sin -Cuenta no se toca." -f $w.DefaultUserName) -ForegroundColor Yellow
-        Write-Host '   Si era de DigBit, repite con -Cuenta <esa cuenta>.' -ForegroundColor Yellow
+        Write-Host '   Si era de DigLab, repite con -Cuenta <esa cuenta>.' -ForegroundColor Yellow
         $quedaron.Add("inicio de sesion automatico de '$($w.DefaultUserName)'")
     } else {
         NoHabia 'sin -Cuenta no hay kiosco que deshacer, y no hay inicio automatico'
@@ -177,15 +177,15 @@ if (-not $Cuenta) {
 }
 
 # --- 4. Exclusiones de Defender -----------------------------------------------
-# configurar_equipo.ps1 las anade porque DigBit.exe da un falso positivo. Si se
+# configurar_equipo.ps1 las anade porque DigLab.exe da un falso positivo. Si se
 # quedan, apuntan a una carpeta que ya no existe: no hacen dano, pero ensucian.
 Paso '4. Exclusiones de Microsoft Defender'
 if (Get-Command Get-MpPreference -ErrorAction SilentlyContinue) {
     $pref = Get-MpPreference
-    $rutas = @($pref.ExclusionPath | Where-Object { $_ -like '*DigBit*' })
-    $procesos = @($pref.ExclusionProcess | Where-Object { $_ -like '*DigBit*' })
+    $rutas = @($pref.ExclusionPath | Where-Object { $_ -like '*DigLab*' })
+    $procesos = @($pref.ExclusionProcess | Where-Object { $_ -like '*DigLab*' })
     if ($rutas.Count -eq 0 -and $procesos.Count -eq 0) {
-        NoHabia 'no habia ninguna que mencione DigBit'
+        NoHabia 'no habia ninguna que mencione DigLab'
     }
     foreach ($r in $rutas) {
         Hacer "quitar exclusion de carpeta $r" { Remove-MpPreference -ExclusionPath $r -ErrorAction SilentlyContinue }.GetNewClosure()
@@ -213,7 +213,7 @@ $sitios = @(
     [Environment]::GetFolderPath('Desktop'),
     [Environment]::GetFolderPath('StartMenu')
 ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
-$enlaces = @(Get-ChildItem -Path $sitios -Filter '*DigBit*.lnk' -Recurse -ErrorAction SilentlyContinue)
+$enlaces = @(Get-ChildItem -Path $sitios -Filter '*DigLab*.lnk' -Recurse -ErrorAction SilentlyContinue)
 if ($enlaces.Count -eq 0) {
     NoHabia 'no habia ninguno'
 } else {
@@ -226,10 +226,10 @@ if ($enlaces.Count -eq 0) {
 Paso '7. Carpeta de datos'
 $candidatas = New-Object Collections.Generic.List[string]
 if ($CarpetaDatos) { $candidatas.Add($CarpetaDatos) }
-$candidatas.Add('C:\DigBitDatos')
-$candidatas.Add((Join-Path $env:ProgramData 'DigBit'))
+$candidatas.Add('C:\DigLabDatos')
+$candidatas.Add((Join-Path $env:ProgramData 'DigLab'))
 foreach ($perfil in Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue) {
-    $candidatas.Add((Join-Path $perfil.FullName 'AppData\Local\DigBit'))
+    $candidatas.Add((Join-Path $perfil.FullName 'AppData\Local\DigLab'))
 }
 $encontradas = @($candidatas | Select-Object -Unique | Where-Object { Test-Path $_ })
 if ($encontradas.Count -eq 0) {
@@ -247,18 +247,18 @@ if ($encontradas.Count -eq 0) {
 
 # --- 8. Base de datos ---------------------------------------------------------
 Paso "8. Base de datos ($DestinoBd)"
-$servicioBd = Get-Service -Name 'DigBitMySQL' -ErrorAction SilentlyContinue
+$servicioBd = Get-Service -Name 'DigLabMySQL' -ErrorAction SilentlyContinue
 if (-not $servicioBd -and -not (Test-Path $DestinoBd)) {
     NoHabia 'no hay base portatil en este equipo'
 } elseif (-not $BorrarBase) {
-    if ($servicioBd) { Write-Host "   se conserva el servicio DigBitMySQL ($($servicioBd.Status))" -ForegroundColor Yellow }
+    if ($servicioBd) { Write-Host "   se conserva el servicio DigLabMySQL ($($servicioBd.Status))" -ForegroundColor Yellow }
     if (Test-Path $DestinoBd) { Write-Host "   se conserva $DestinoBd" -ForegroundColor Yellow }
     $quedaron.Add("la base de datos en $DestinoBd (usa -BorrarBase)")
 } else {
     if ($servicioBd) {
-        Hacer 'detener y borrar el servicio DigBitMySQL' {
-            Stop-Service -Name 'DigBitMySQL' -Force -ErrorAction SilentlyContinue
-            $null = & sc.exe delete 'DigBitMySQL'
+        Hacer 'detener y borrar el servicio DigLabMySQL' {
+            Stop-Service -Name 'DigLabMySQL' -Force -ErrorAction SilentlyContinue
+            $null = & sc.exe delete 'DigLabMySQL'
             Start-Sleep -Seconds 2
         }
     }
@@ -283,7 +283,7 @@ if (-not $servicioBd -and -not (Test-Path $DestinoBd)) {
         Hacer "quitar regla de cortafuegos '$($r.DisplayName)'" { Remove-NetFirewallRule -Name $r.Name }.GetNewClosure()
     }
     # Esta la crea abrir_bd_en_red.ps1 por su nombre, no por programa.
-    foreach ($r in @(Get-NetFirewallRule -DisplayName 'DigBit MySQL' -ErrorAction SilentlyContinue)) {
+    foreach ($r in @(Get-NetFirewallRule -DisplayName 'DigLab MySQL' -ErrorAction SilentlyContinue)) {
         Hacer "quitar regla de cortafuegos '$($r.DisplayName)'" { Remove-NetFirewallRule -Name $r.Name }.GetNewClosure()
     }
 }

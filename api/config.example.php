@@ -1,12 +1,12 @@
 <?php
-// DigBit - configuracion de la API de recuperacion de contrasena.
+// DigLab - configuracion de la API de recuperacion de contrasena.
 //
 // Copia este archivo como config.php, en esta misma carpeta, y llena los datos.
 // config.php lleva contrasenas: NO se sube a git (.gitignore) ni se comparte, y
 // el .htaccess de esta carpeta impide abrirlo desde el navegador.
 
 return array(
-    // --- Base de datos de la escuela (la misma de DigBit) ---------------------
+    // --- Base de datos de la escuela (la misma de DigLab) ---------------------
     'bd_servidor'   => 'sql.teschi.edu.mx',
     'bd_puerto'     => 3306,
     'bd_nombre'     => 'teschi_otru',
@@ -16,7 +16,7 @@ return array(
     'bd_contrasena' => 'CAMBIA_ESTO',
 
     // --- Correo que envia los codigos -----------------------------------------
-    // La cuenta de Gmail de DigBit. La contrasena NO es la de la cuenta: es una
+    // La cuenta de Gmail de DigLab. La contrasena NO es la de la cuenta: es una
     // "contrasena de aplicacion" de 16 letras (Cuenta de Google > Seguridad >
     // Verificacion en dos pasos > Contrasenas de aplicaciones). Sin la
     // verificacion en dos pasos, Gmail no deja crearla.
@@ -28,7 +28,7 @@ return array(
     'smtp_contrasena'  => 'CONTRASENA_DE_APLICACION',
     // Con Gmail, el mismo correo de la cuenta (si no, Gmail lo cambia).
     'remitente'        => 'digbit.teschi@gmail.com',
-    'nombre_remitente' => 'DigBit TESCHI',
+    'nombre_remitente' => 'DigLab TESCHI',
     // Si smtp_servidor se deja vacio se usa mail() del hosting (peor: suele
     // acabar en spam). Solo si el hosting no deja salir al puerto 587 ni al 465.
 
@@ -40,7 +40,7 @@ return array(
     // ya enviados dejan de valer (nada mas).
     'secreto' => 'CAMBIA_ESTO_POR_32_O_MAS_CARACTERES_AL_AZAR',
 
-    // La que manda DigBit en cada peticion: la misma que pongas en DigBit, en
+    // La que manda DigLab en cada peticion: la misma que pongas en DigLab, en
     // Ajustes (arriba en el panel de administracion), junto con la direccion de
     // recuperar.php. No es un secreto fuerte (la pueden leer los equipos), pero
     // frena a quien encuentre la direccion. Mientras sea la de ejemplo, la API no
@@ -53,7 +53,7 @@ return array(
 
     // --- Aviso de privacidad ---------------------------------------------------
     // La direccion del aviso de privacidad integral del TESCHI (la misma que en
-    // DigBit, Ajustes > Aviso de privacidad), completa y con https://. El correo
+    // DigLab, Ajustes > Aviso de privacidad), completa y con https://. El correo
     // del codigo la pone al pie: "Tus datos se tratan conforme al aviso de
     // privacidad del TESCHI: leer el aviso de privacidad completo". Vacia (o sin
     // esta linea), el correo sale sin ese pie. Si no es una direccion http(s)
@@ -64,7 +64,7 @@ return array(
     'minutos_codigo' => 15,                // lo que vale cada codigo
     'intentos_por_codigo' => 5,            // codigos equivocados antes de anularlo
     'solicitudes_por_usuario_hora' => 3,   // codigos por cuenta en una hora
-    'codigos_por_equipo_hora' => 6,        // codigos pedidos desde un mismo equipo (lo dice DigBit) en una hora
+    'codigos_por_equipo_hora' => 6,        // codigos pedidos desde un mismo equipo (lo dice DigLab) en una hora
     // Codigos ENVIADOS desde una misma IP en una hora. Todos los equipos de la
     // escuela pueden salir a internet por la misma IP: no lo bajes mucho.
     'solicitudes_por_ip_hora' => 60,

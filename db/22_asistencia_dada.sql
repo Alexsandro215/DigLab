@@ -1,5 +1,5 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: asistencias que da el profesor a quien no pudo
+-- DigLab 2.0 - Migracion: asistencias que da el profesor a quien no pudo
 -- registrar su bitacora
 -- =============================================================================
 -- Si creaste la base con db/01_schema.sql despues de esta migracion, no la
@@ -28,7 +28,7 @@
 -- lee: si ya existe, tambien se le da aqui; si no, se lo da la 18 al crearla.
 --
 -- ORDEN: primero se actualizan TODOS los equipos (laboratorios, profesores y
--- administracion) y despues se aplica esta migracion con root. Un DigBit
+-- administracion) y despues se aplica esta migracion con root. Un DigLab
 -- anterior no lee la tabla: veria falta donde hay asistencia dada, y su
 -- Horarios podria mover una sesion que solo tiene asistencias dadas. Es un
 -- CREATE TABLE que no copia ni bloquea ninguna otra tabla: se puede aplicar en
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS asistencias_dadas (
     fk_codigo_accesos    INT           NOT NULL,
     -- El profesor que la dio.
     fk_profesor          INT           NOT NULL,
-    -- Reloj del servidor (NOW() en la conexion de DigBit, -06:00). Sin DEFAULT: 5.5 no lo admite.
+    -- Reloj del servidor (NOW() en la conexion de DigLab, -06:00). Sin DEFAULT: 5.5 no lo admite.
     dada_en              DATETIME      NOT NULL,
     -- sin_internet | equipo | sin_equipo | otro. VARCHAR y no ENUM: con sql_mode vacio un ENUM invalido seria ''.
     motivo               VARCHAR(20)   NOT NULL,
@@ -121,7 +121,7 @@ SET @sql := IF(@equipo IS NOT NULL AND @puede_dar,
     'SELECT 1 FROM DUAL WHERE 1 = 0');
 PREPARE ejecutar FROM @sql; EXECUTE ejecutar; DEALLOCATE PREPARE ejecutar;
 
--- Lo mismo para digbit_consulta (db/18), pero SOLO leer: DigBit no deja entrar
+-- Lo mismo para digbit_consulta (db/18), pero SOLO leer: DigLab no deja entrar
 -- a los encargados con esa cuenta si puede escribir algo.
 SET @consulta := (SELECT GRANTEE FROM information_schema.USER_PRIVILEGES
                   WHERE GRANTEE LIKE '''digbit\_consulta''@%' LIMIT 1);

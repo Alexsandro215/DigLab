@@ -1,12 +1,12 @@
 -- =============================================================================
--- DigBit 2.0 - Migracion: encargado de laboratorio (tipo 4) y su cuenta de
+-- DigLab 2.0 - Migracion: encargado de laboratorio (tipo 4) y su cuenta de
 -- MySQL de solo consulta
 -- =============================================================================
 -- El encargado de laboratorio (y quien le ayuda del servicio social) entra al
 -- panel del administrador en SOLO CONSULTA: ve los laboratorios en vivo, las
 -- alertas, las bitacoras, los alumnos, los profesores, los laboratorios y los
 -- horarios, pero no cambia nada. Puede entrar desde CUALQUIER equipo con
--- DigBit: al reconocerlo, DigBit deja la cuenta de MySQL del equipo y hace toda
+-- DigLab: al reconocerlo, DigLab deja la cuenta de MySQL del equipo y hace toda
 -- su sesion con digbit_consulta, que solo puede leer. Asi no depende solo de la
 -- pantalla: la base le rechaza cualquier cambio.
 --
@@ -24,9 +24,9 @@
 -- PERMISOS: crear la cuenta y darle permisos lo hace root. Con otro usuario
 -- (por ejemplo teschi_otru) se hace solo el paso 1 y se avisa.
 --
--- ORDEN: 1) esta migracion (con root); 2) actualizar DigBit en los equipos
+-- ORDEN: 1) esta migracion (con root); 2) actualizar DigLab en los equipos
 -- donde entraran los encargados; 3) darlos de alta en Profesores > Encargados
--- de laboratorio. Un DigBit anterior no conoce el tipo 4: avisa "Tipo de
+-- de laboratorio. Un DigLab anterior no conoce el tipo 4: avisa "Tipo de
 -- usuario no manejado" y se queda sin ventana. No le da ningun permiso, pero
 -- que no entren en esos equipos.
 --

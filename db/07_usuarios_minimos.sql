@@ -1,15 +1,15 @@
 -- =============================================================================
--- DigBit 2.0 - Dos usuarios de MySQL con permisos minimos
+-- DigLab 2.0 - Dos usuarios de MySQL con permisos minimos
 -- =============================================================================
 -- POR QUE
 --
 -- Cada equipo del laboratorio lleva su connections.config con un usuario y una
--- contrasena de MySQL. Ese archivo el alumno PUEDE LEERLO: DigBit corre con su
+-- contrasena de MySQL. Ese archivo el alumno PUEDE LEERLO: DigLab corre con su
 -- propia sesion de Windows, asi que todo lo que la aplicacion necesita leer
 -- para conectarse, lo puede leer el. No hay forma de esconderselo, y ocultar la
 -- carpeta no sirve de nada (oculto es un atributo, no un permiso).
 --
--- Por eso el ataque realista no es una inyeccion de SQL --DigBit usa parametros
+-- Por eso el ataque realista no es una inyeccion de SQL --DigLab usa parametros
 -- en sus 165 consultas, se reviso una por una-- sino mucho mas simple: leer las
 -- credenciales y conectarse DIRECTO a la base desde cualquier cliente, sin
 -- pasar por la aplicacion. Contra eso, lo unico que sirve es que ese usuario no
@@ -24,7 +24,7 @@
 -- db/18_encargados.sql (tambien con root), solo con SELECT en las tablas que
 -- ensena el panel del administrador. Con ella trabaja la sesion de un
 -- encargado de laboratorio (tipo 4, solo consulta) en cualquier equipo. No va
--- en ningun connections.config: DigBit arma su cadena con el servidor del
+-- en ningun connections.config: DigLab arma su cadena con el servidor del
 -- equipo y la contrasena que la 18 guarda en configuracion. Volver a pasar esta
 -- migracion no la toca.
 --
@@ -278,7 +278,7 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 SELECT 'Equipos del laboratorio (deploy\\configurar_equipo.ps1 -CadenaConexion)' AS donde,
        CONCAT('Database=teschi_otru;Server=SERVIDOR;Port=3306;User Id=digbit_equipo;Password=', @clave_equipo) AS cadena
 UNION ALL
-SELECT 'Maquina del administrador (DigBit\\connections.config)',
+SELECT 'Maquina del administrador (DigLab\\connections.config)',
        CONCAT('Database=teschi_otru;Server=SERVIDOR;Port=3306;User Id=digbit_admin;Password=', @clave_admin);
 
 -- -----------------------------------------------------------------------------
@@ -322,7 +322,7 @@ SELECT 'Maquina del administrador (DigBit\\connections.config)',
 -- (personalizacion_clases, db/19: imagen, color y nombre corto). Solo lo ve ese
 -- profesor en sus pantallas y no toca la clase; es del mismo tipo que lo que ya
 -- se acepta arriba (puede cambiar la contrasena de un profesor). Cada guardado
--- desde DigBit queda en el log con el numero de empleado, y el profesor lo
+-- desde DigLab queda en el log con el numero de empleado, y el profesor lo
 -- deshace con Restablecer.
 --
 -- Y puede anadir solicitudes de enlace con el SIIA falsas (db/24): salen en
@@ -332,10 +332,10 @@ SELECT 'Maquina del administrador (DigBit\\connections.config)',
 --
 -- Y puede dar y anular asistencias (db/22) en cualquier sesion y a nombre de
 -- cualquier profesor: la base no comprueba la hora ni quien es (eso lo hace
--- DigBit). Con el permiso de anular (activa, anulada_en, anulada_por) tambien
+-- DigLab). Con el permiso de anular (activa, anulada_en, anulada_por) tambien
 -- podria volver a poner en 1 una anulada o cambiar cuando se anulo; el UNIQUE
 -- sigue sin dejar dos que cuenten el mismo dia. Sin DELETE ni UPDATE del resto
 -- de las columnas, lo dado no se borra ni se reescribe. Es del mismo tipo que
 -- meter bitacoras falsas o quitar asistencias (db/17). Si los equipos entran
 -- con un usuario que puede todo en la base (como hoy en la escuela), ese
--- usuario si puede borrarlas o reescribirlas: ahi solo valida DigBit.
+-- usuario si puede borrarlas o reescribirlas: ahi solo valida DigLab.

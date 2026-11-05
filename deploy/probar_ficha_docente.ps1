@@ -4,7 +4,7 @@
     (127.0.0.1, puerto 3317 o 3318). Nunca contra la de la escuela. SOLO LEE.
 
 .DESCRIPTION
-    Carga DigBit.exe por reflexion. Nunca ensena una ventana que se active: la ficha va dentro
+    Carga DigLab.exe por reflexion. Nunca ensena una ventana que se active: la ficha va dentro
     (TopLevel = false) de un formulario que no se activa, fuera de la pantalla y transparente, y
     sus fotos se sacan con DrawToBitmap (nunca la pantalla). En la salida no van nombres ni
     matriculas: los docentes van por su id.
@@ -17,14 +17,14 @@
                       Docentes (parte de T13); con fotos a 1920x1040, 1366x728 y 1000x560.
       -Modo Consulta  T10: con la cuenta digbit_consulta, 10 fichas con todas sus pestanas, sin PDF
                       ni archivos, sin botones que escriban ni codigos, y CHECKSUM igual antes y despues.
-      -Modo Kiosco    T12 (en otro proceso, con DIGBIT_MODO_KIOSCO=1): sin PDF ni CSV, Ctrl+C no copia y,
+      -Modo Kiosco    T12 (en otro proceso, con DIGLAB_MODO_KIOSCO=1): sin PDF ni CSV, Ctrl+C no copia y,
                       si el portapapeles estaba vacio, queda vacio al cerrar.
       -Modo Todo      Los cuatro, cada uno en su proceso.
 
     En todos: CHECKSUM TABLE de las tablas que la ficha lee, antes y despues (nada cambio).
 
 .EXAMPLE
-    powershell -NoProfile -File deploy\probar_ficha_docente.ps1 -Modo Todo -Exe ...\ficha1\DigBit.exe -Base teschi_demo
+    powershell -NoProfile -File deploy\probar_ficha_docente.ps1 -Modo Todo -Exe ...\ficha1\DigLab.exe -Base teschi_demo
 #>
 [CmdletBinding()]
 param(
@@ -63,12 +63,12 @@ if ($Modo -eq 'Todo') {
     return
 }
 
-$env:DIGBIT_CONNECTION_STRING = $cadena
-$env:DIGBIT_MODO_KIOSCO = $(if ($Modo -eq 'Kiosco') { '1' } else { 'false' })
-$env:DIGBIT_CARPETA_DATOS = Join-Path $env:TEMP ('digbit_ficha_' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
-New-Item -ItemType Directory -Force $env:DIGBIT_CARPETA_DATOS | Out-Null
+$env:DIGLAB_CONNECTION_STRING = $cadena
+$env:DIGLAB_MODO_KIOSCO = $(if ($Modo -eq 'Kiosco') { '1' } else { 'false' })
+$env:DIGLAB_CARPETA_DATOS = Join-Path $env:TEMP ('diglab_ficha_' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Force $env:DIGLAB_CARPETA_DATOS | Out-Null
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-# Como DigBit (Program.cs): estilos visuales y el texto con GDI (sin esto las etiquetas se dibujan con
+# Como DigLab (Program.cs): estilos visuales y el texto con GDI (sin esto las etiquetas se dibujan con
 # GDI+ y las fotos no son como la pantalla de verdad: lineas cortadas a la mitad, otros anchos).
 try { [System.Windows.Forms.Application]::EnableVisualStyles(); [System.Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false) } catch { }
 
@@ -225,20 +225,20 @@ public static class PruebaFicha
         Application.ThreadException += (s, e) => excepciones.Add(e.Exception.ToString());
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         asm = Assembly.LoadFrom(exe);
-        Datos = T("DigBit.conexion.EstadisticasDatos");
-        tFichaDatos = T("DigBit.conexion.FichaDocenteDatos");
-        T("DigBit.Infraestructura.Log").GetMethod("Configurar", TI).Invoke(null, new object[] { datos, "ficha" });
-        Type du = T("DigBit.conexion.Datos_User");
+        Datos = T("DigLab.conexion.EstadisticasDatos");
+        tFichaDatos = T("DigLab.conexion.FichaDocenteDatos");
+        T("DigLab.Infraestructura.Log").GetMethod("Configurar", TI).Invoke(null, new object[] { datos, "ficha" });
+        Type du = T("DigLab.conexion.Datos_User");
         du.GetMethod("SetUser", TI).Invoke(null, new object[] { "ADMPRUEBA" });
         du.GetProperty("TipoUsuario", TI).SetValue(null, 3, null);
     }
 
     private static object Periodo(string fabrica, params object[] a)
     {
-        return Call(T("DigBit.conexion.PeriodoElegido"), fabrica, a);
+        return Call(T("DigLab.conexion.PeriodoElegido"), fabrica, a);
     }
 
-    private static object De(string tipo) { return Periodo("De", Enum.Parse(T("DigBit.conexion.TipoPeriodo"), tipo)); }
+    private static object De(string tipo) { return Periodo("De", Enum.Parse(T("DigLab.conexion.TipoPeriodo"), tipo)); }
     private static object Leer(object p, bool forzar) { return Call(Datos, "Leer", p, forzar); }
     private static void Olvidar() { Call(Datos, "Olvidar"); }
     private static object Resolver(object p, object l, int d, bool fijo) { return Call(Datos, "Resolver", p, l, 0, d, 0, fijo); }
@@ -247,7 +247,7 @@ public static class PruebaFicha
 
     private static object Profesores()
     {
-        return Call(Activator.CreateInstance(T("DigBit.conexion.ProfesoresDatos")), "Listar");
+        return Call(Activator.CreateInstance(T("DigLab.conexion.ProfesoresDatos")), "Listar");
     }
 
     private static object ProfesorDe(IList profesores, int id)
@@ -258,13 +258,13 @@ public static class PruebaFicha
 
     private static object Enlaces()
     {
-        try { return Call(T("DigBit.conexion.EnlacesSiia"), "Leer"); }
-        catch (Exception ex) { L("  (sin enlaces: " + ex.GetType().Name + ")"); return Get(T("DigBit.conexion.LecturaEnlaces"), "Ninguna"); }
+        try { return Call(T("DigLab.conexion.EnlacesSiia"), "Leer"); }
+        catch (Exception ex) { L("  (sin enlaces: " + ex.GetType().Name + ")"); return Get(T("DigLab.conexion.LecturaEnlaces"), "Ninguna"); }
     }
 
     private static object PorAsignar()
     {
-        try { return Call(Activator.CreateInstance(T("DigBit.conexion.HorariosDatos"), true), "LeerHorasPorAsignar"); }
+        try { return Call(Activator.CreateInstance(T("DigLab.conexion.HorariosDatos"), true), "LeerHorasPorAsignar"); }
         catch (Exception ex) { L("  (sin falta asignar: " + ex.GetType().Name + ")"); return null; }
     }
 
@@ -378,7 +378,7 @@ public static class PruebaFicha
             List<int> docentes = Lista(general, "OpcionesDocente").Cast<object>().Select(o => I(o, "Id")).Where(i => i != 0).ToList();
             object rg = general;
             L("\n===== " + NombreDe(p, l) + ": del " + Fecha((DateTime)Get(rg, "Desde")) + " al " + Fecha((DateTime)Get(rg, "Hasta")) + ", " + docentes.Count + " docentes con clases =====");
-            object calendario = Call(Activator.CreateInstance(T("DigBit.conexion.HorariosDatos"), true), "LeerCalendario", (DateTime)Get(rg, "Desde"), (DateTime)Get(rg, "Hasta"), false);
+            object calendario = Call(Activator.CreateInstance(T("DigLab.conexion.HorariosDatos"), true), "LeerCalendario", (DateTime)Get(rg, "Desde"), (DateTime)Get(rg, "Hasta"), false);
             foreach (int d in docentes)
             {
                 object fijo = Calcular(l, Resolver(p, l, d, true));
@@ -532,7 +532,7 @@ public static class PruebaFicha
     /// </summary>
     private static void ComoFaltas(int d, object r, object datos, object calendario)
     {
-        Type tResumen = T("DigBit.ResumenDia");
+        Type tResumen = T("DigLab.ResumenDia");
         Dictionary<DateTime, object> resumenes = new Dictionary<DateTime, object>();
         bool esCiclo = B(Get(r, "Filtro"), "EsCiclo");
         HashSet<int> delPeriodo = new HashSet<int>(Lista(r, "Clases").Cast<object>().Select(x => I(x, "ClaseId")));
@@ -571,7 +571,7 @@ public static class PruebaFicha
         object a = Get(l, "Asistencia");
         IDictionary listas = (IDictionary)Get(l, "Listas");
         IDictionary tramos = (IDictionary)Call(Datos, "TramosDeHoy", Get(l, "Calendario"), hoy);
-        object asistencia = Activator.CreateInstance(T("DigBit.conexion.AsistenciaDatos"));
+        object asistencia = Activator.CreateInstance(T("DigLab.conexion.AsistenciaDatos"));
         int clases = 0;
         foreach (object c in Lista(a, "Clases"))
         {
@@ -587,7 +587,7 @@ public static class PruebaFicha
         }
 
         // Con Este ciclo, Entro y Veces de cada par = las cuentas de ResumenAsistencia.De de su lista entera.
-        Type tResumen = T("DigBit.conexion.ResumenAsistencia");
+        Type tResumen = T("DigLab.conexion.ResumenAsistencia");
         MethodInfo de = tResumen.GetMethods().First(m => m.Name == "De" && m.GetParameters().Length == 1);
         foreach (object fila in Lista(r, "Clases"))
         {
@@ -756,7 +756,7 @@ public static class PruebaFicha
 
     private static Form NuevaFicha(object profesor, object enlaces)
     {
-        return (Form)Activator.CreateInstance(T("DigBit.FichaDocente"), new[] { profesor, enlaces });
+        return (Form)Activator.CreateInstance(T("DigLab.FichaDocente"), new[] { profesor, enlaces });
     }
 
     private static bool Leida(Form ficha)
@@ -824,7 +824,7 @@ public static class PruebaFicha
         object profesor = ProfesorDe(profesores, d);
         if (profesor != null || d != 0) { return profesor; }
         d = 999999;
-        profesor = Activator.CreateInstance(T("DigBit.conexion.ProfesorInfo"));
+        profesor = Activator.CreateInstance(T("DigLab.conexion.ProfesorInfo"));
         Set(profesor, "Id", d);
         Set(profesor, "Matricula", "SINDOCENTES");
         Set(profesor, "Nombre", "Docente de prueba");
@@ -957,7 +957,7 @@ public static class PruebaFicha
     private static void Periodos(int d)
     {
         ComboBox combo = (ComboBox)Get(Get(ventana, "selector"), "Combo");
-        object deEstadisticas = Get(T("DigBit.VentanaEstadisticas"), "ultimoPeriodo");
+        object deEstadisticas = Get(T("DigLab.VentanaEstadisticas"), "ultimoPeriodo");
         int mes = -1, ciclo = -1;
         for (int i = 0; i < combo.Items.Count; i++)
         {
@@ -971,9 +971,9 @@ public static class PruebaFicha
         if (mes < 0) { Ver("el combo Periodo de la ficha tiene 'Este mes'", false); return; }
         combo.SelectedIndex = mes;
         bool leyo = Esperar(() => !(bool)Get(ventana, "Leyendo") && S(Get(Get(Get(Get(ventana, "Datos"), "R"), "Filtro"), "Tipo")) == "Mes", 60);
-        object recordado = Get(T("DigBit.FichaDocente"), "ultimoPeriodo");
+        object recordado = Get(T("DigLab.FichaDocente"), "ultimoPeriodo");
         Ver("'Este mes' en el combo de la ficha relee con el mes; la ficha lo recuerda y Estadisticas no cambia",
-            leyo && S(Get(recordado, "Tipo")) == "Mes" && Get(T("DigBit.VentanaEstadisticas"), "ultimoPeriodo") == deEstadisticas
+            leyo && S(Get(recordado, "Tipo")) == "Mes" && Get(T("DigLab.VentanaEstadisticas"), "ultimoPeriodo") == deEstadisticas
             && I(Get(Get(Get(ventana, "Datos"), "R"), "Filtro"), "Docente") == d);
         if (ciclo >= 0)
         {
@@ -1062,7 +1062,7 @@ public static class PruebaFicha
 
         Form ficha = ventana;
         FormQuietoFicha anfitrionFicha = anfitrion;
-        Form lista = (Form)Activator.CreateInstance(T("DigBit.VentanaListaDeClase"), new[] { l, clases[0], (object)S(Get(profesor, "NombreCompleto")) });
+        Form lista = (Form)Activator.CreateInstance(T("DigLab.VentanaListaDeClase"), new[] { l, clases[0], (object)S(Get(profesor, "NombreCompleto")) });
         Meter(lista, 1350, 689);
         object hoja = Get(lista, "Hoja");
         Ver("la lista dia por dia: la hoja no deja cambiar nada (PuedeCambiar false) y habla en tercera persona",
@@ -1100,12 +1100,12 @@ public static class PruebaFicha
 
         Form ficha = ventana;
         FormQuietoFicha anfitrionFicha = anfitrion;
-        Form est = (Form)Activator.CreateInstance(T("DigBit.VentanaEstadisticas"), true);
+        Form est = (Form)Activator.CreateInstance(T("DigLab.VentanaEstadisticas"), true);
         object periodo = Get(ficha, "Periodo");
         Call(est, "MostrarDocente", d, periodo);
         Meter(est, 1350, 689);
         if ((int)Get(est, "lecturas") == 0) { Call(est, "Recargar", (string)null); }
-        Type tPest = T("DigBit.conexion.PestanaEstadisticas");
+        Type tPest = T("DigLab.conexion.PestanaEstadisticas");
         object clases = Enum.Parse(tPest, "Clases");
         bool listo = Esperar(() => !(bool)Get(est, "leyendoBase") && Call(est, "ResultadoDe", clases) != null, 90);
         object re = listo ? Call(est, "ResultadoDe", clases) : null;
@@ -1143,7 +1143,7 @@ public static class PruebaFicha
         // Con las acciones juntas abajo la administracion ya baja a 1000, como la responsable.
         foreach (int ancho in new[] { 984, 1350, 1904 })
         {
-            Form docentes = (Form)Activator.CreateInstance(T("DigBit.AdministrarProfesores"));
+            Form docentes = (Form)Activator.CreateInstance(T("DigLab.AdministrarProfesores"));
             Meter(docentes, ancho, 650);
             Call(docentes, "Recargar", (string)null);
             Bombear(0.3);
@@ -1254,10 +1254,10 @@ public static class PruebaFicha
         HashSet<string> codigos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (object p in profesores) { string c = S(Get(p, "Codigo")); if (c != "null" && c.Trim().Length >= 4) { codigos.Add(c.Trim()); } }
 
-        Type tConexion = T("DigBit.Conexion");
+        Type tConexion = T("DigLab.Conexion");
         object equipo = Call(Activator.CreateInstance(tConexion, true), "GetConexion");
         object[] args = { equipo, null };
-        string problema = (string)T("DigBit.conexion.CuentaDeConsulta").GetMethod("Preparar", TI).Invoke(null, args);
+        string problema = (string)T("DigLab.conexion.CuentaDeConsulta").GetMethod("Preparar", TI).Invoke(null, args);
         ((IDisposable)equipo).Dispose();
         if (problema != null)
         {
@@ -1280,7 +1280,7 @@ public static class PruebaFicha
             Ver("T10 se prepara la cuenta de solo consulta (" + problema + ")", false);
             return;
         }
-        Type du = T("DigBit.conexion.Datos_User");
+        Type du = T("DigLab.conexion.Datos_User");
         tConexion.GetMethod("UsarCuentaDeSesion", TI).Invoke(null, new object[] { (string)args[1] });
         du.GetProperty("TipoUsuario", TI).SetValue(null, 4, null);
         Olvidar();
@@ -1318,7 +1318,7 @@ public static class PruebaFicha
                 {
                     Form ficha = ventana;
                     FormQuietoFicha anf = anfitrion;
-                    Form lista = (Form)Activator.CreateInstance(T("DigBit.VentanaListaDeClase"), new[] { Get(datos, "Lectura"), Lista(Get(datos, "R"), "Clases")[0], (object)"Docente" });
+                    Form lista = (Form)Activator.CreateInstance(T("DigLab.VentanaListaDeClase"), new[] { Get(datos, "Lectura"), Lista(Get(datos, "R"), "Clases")[0], (object)"Docente" });
                     Meter(lista, 1350, 689);
                     Button copiar = (Button)Get(lista, "btnCopiar");
                     Button csv = (Button)Get(lista, "btnCsv");
@@ -1339,7 +1339,7 @@ public static class PruebaFicha
             Ver("T10: " + bien + " de " + diez.Count + " fichas leidas enteras, sin PDF, sin botones que escriban ni codigos", bien == diez.Count && diez.Count > 0);
 
             // Docentes de la responsable: el boton abajo, antes de "Ver horario" y "Ver sus bitacoras", y el doble clic abre la ficha.
-            Form docentes = (Form)Activator.CreateInstance(T("DigBit.AdministrarProfesores"));
+            Form docentes = (Form)Activator.CreateInstance(T("DigLab.AdministrarProfesores"));
             Meter(docentes, 984, 650);
             Call(docentes, "Recargar", (string)null);
             Button ver = (Button)Get(docentes, "btnVerTodo");
@@ -1391,7 +1391,7 @@ public static class PruebaFicha
 
     public static void Kiosco()
     {
-        bool activo = (bool)Get(T("DigBit.Infraestructura.Kiosco"), "Activo");
+        bool activo = (bool)Get(T("DigLab.Infraestructura.Kiosco"), "Activo");
         Ver("T12 el modo kiosco esta activo en este proceso", activo);
         IList profesores = (IList)Profesores();
         object enlaces = Enlaces();
@@ -1407,7 +1407,7 @@ public static class PruebaFicha
         {
             Form ficha = ventana;
             FormQuietoFicha anf = anfitrion;
-            Form lista = (Form)Activator.CreateInstance(T("DigBit.VentanaListaDeClase"), new[] { Get(datos, "Lectura"), clases[0], (object)"Docente" });
+            Form lista = (Form)Activator.CreateInstance(T("DigLab.VentanaListaDeClase"), new[] { Get(datos, "Lectura"), clases[0], (object)"Docente" });
             Meter(lista, 1350, 689);
             List<DataGridView> deLaHoja = Todos(lista).OfType<DataGridView>().ToList();
             Ver("T12 en la lista dia por dia: sin 'Copiar la lista' ni 'Guardar en Excel' y la hoja sin copiar",
@@ -1434,13 +1434,13 @@ public static class PruebaFicha
         bool quedoVacio;
         try { IDataObject despues = Clipboard.GetDataObject(); quedoVacio = despues == null || despues.GetFormats().Length == 0; }
         catch (Exception) { quedoVacio = false; }
-        Ver("T12 al cerrar la ficha, lo que DigBit dejo en el portapapeles se vacia", quedoVacio);
+        Ver("T12 al cerrar la ficha, lo que DigLab dejo en el portapapeles se vacia", quedoVacio);
     }
 }
 '@
 
 Add-Type -TypeDefinition $codigo -ReferencedAssemblies System.Windows.Forms, System.Drawing, System.Core
-[PruebaFicha]::Cargar($Exe, $env:DIGBIT_CARPETA_DATOS)
+[PruebaFicha]::Cargar($Exe, $env:DIGLAB_CARPETA_DATOS)
 $sumasAntes = $null
 try {
     if ($Modo -ne 'Consulta') { $sumasAntes = [PruebaFicha]::Sumas($cadena) }
