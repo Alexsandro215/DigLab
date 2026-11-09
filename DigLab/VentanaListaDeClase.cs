@@ -19,7 +19,7 @@ namespace DigLab
     /// el calculo de Mis grupos), sin otra consulta. La hoja va con PuedeCambiar en false (no se
     /// puede quitar ni dar asistencias) y en tercera persona ("Su docente le dio..."). Nunca se usa
     /// VentanaMisGrupos con otro id: escribiria a nombre del docente. "Copiar la lista" y "Guardar
-    /// en Excel (CSV)..." no existen en kiosco y, para la persona responsable del laboratorio,
+    /// en Excel..." no existen en kiosco y, para la persona responsable del laboratorio,
     /// salen apagados con su motivo y la hoja no se copia con Ctrl+C (los nombres solo se ven en
     /// pantalla). El tablero y la hoja son de la hora de la lectura de la ficha (lo dice el subtitulo).
     /// </summary>
@@ -84,9 +84,9 @@ namespace DigLab
             btnCopiar = new BotonCabecera("Copiar la lista") { TabIndex = 2, Visible = PuedeLlevarse() };
             btnCopiar.Click += (s, e) => Copiar();
             ayuda.SetToolTip(btnCopiar, "Copia la hoja entera para pegarla en Excel (Ctrl+V).");
-            btnCsv = new BotonCabecera("Guardar en Excel (CSV)...") { TabIndex = 3, Visible = PuedeLlevarse() };
+            btnCsv = new BotonCabecera("Guardar en Excel...") { TabIndex = 3, Visible = PuedeLlevarse() };
             btnCsv.Click += (s, e) => GuardarCsv();
-            ayuda.SetToolTip(btnCsv, "Guarda la hoja entera en un archivo que Excel abre con doble clic.");
+            ayuda.SetToolTip(btnCsv, "Guarda la hoja entera como libro de Excel, con sus colores, lista para imprimir. También se puede guardar como CSV.");
 
             tablero = new TableroAsistencia { TabIndex = 0, EnTerceraPersona = true };
             // La responsable tampoco se la lleva con Ctrl+A y Ctrl+C (SinCopiar), no solo sin el boton.
@@ -295,8 +295,7 @@ namespace DigLab
             }
 
             HojaAsistencia.Copia como;
-            string texto = hoja.ComoCsv(out como);
-            if (texto == null)
+            if (hoja.ComoExcel(out como) == null)
             {
                 Avisar("Esta clase aún no tiene estudiantes en su lista.", TextoGris);
                 return;
@@ -311,12 +310,13 @@ namespace DigLab
             string ruta;
             using (SaveFileDialog dialogo = new SaveFileDialog
             {
-                Title = "Guardar la lista de asistencia para Excel",
-                Filter = "Archivo CSV para Excel (*.csv)|*.csv",
-                DefaultExt = "csv",
+                Title = "Guardar la lista de asistencia en Excel",
+                Filter = HojaAsistencia.FiltroGuardar,
+                FilterIndex = 1,
+                DefaultExt = "xlsx",
                 AddExtension = true,
                 OverwritePrompt = true,
-                FileName = nombre.Trim() + ".csv",
+                FileName = nombre.Trim(),
                 InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
             })
             {
@@ -328,20 +328,21 @@ namespace DigLab
                 ruta = dialogo.FileName;
             }
 
+            bool comoCsv;
             try
             {
-                File.WriteAllText(ruta, texto, new UTF8Encoding(true));
+                comoCsv = hoja.GuardarEn(ruta, out como);
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is System.Security.SecurityException
                 || ex is NotSupportedException || ex is ArgumentException)
             {
-                Log.Error("Ficha del docente: guardar en CSV la lista de la clase " + clase.ClaseId, ex);
-                MessageBox.Show(this, VisorPdf.ExplicarArchivo("No se pudo guardar la lista", ex, "Excel"), "Guardar en Excel (CSV)",
+                Log.Error("Ficha del docente: guardar en Excel la lista de la clase " + clase.ClaseId, ex);
+                MessageBox.Show(this, VisorPdf.ExplicarArchivo("No se pudo guardar la lista", ex, "Excel"), "Guardar en Excel",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
-            Log.Info("Ficha del docente: lista de la clase " + clase.ClaseId + " guardada en CSV.");
+            Log.Info("Ficha del docente: lista de la clase " + clase.ClaseId + " guardada " + (comoCsv ? "en CSV." : "como libro de Excel."));
             Avisar("Guardada: ábrela con doble clic, se abre en Excel.", Color.DarkGreen);
         }
 

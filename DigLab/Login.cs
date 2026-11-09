@@ -34,6 +34,9 @@ namespace DigLab
             // Texto guia (gris, tambien con el cursor dentro); el del usuario lo pone
             // ActualizarSubtitulo, segun el equipo.
             EstiloHorarios.PonerTextoGuia(txtPassword, "Tu contraseña");
+            // La misma caja pide despues el NIP: solo entonces acepta solo cifras.
+            CajaNip.SoloCifras(txtPassword, () => enPasoNip);
+            txtUsuario.MaxLength = ReglasCuenta.LargoMaximoUsuario;
             // Se escribe en cuanto aparece la ventana; Enter es "Iniciar sesion"
             // (AcceptButton, en el disenador). Con el foco en el enlace, Enter lo
             // abre: un LinkLabel es IButtonControl y entonces es el boton por defecto.
@@ -99,7 +102,7 @@ namespace DigLab
                         revisandoSiia = false;
                         estudiantesConSiia = !tarea.IsFaulted && tarea.Result.Estudiantes;
                         docentesConSiia = !tarea.IsFaulted && tarea.Result.Docentes;
-                        if (esperaNip == null)
+                        if (!enPasoNip)
                         {
                             // Con el SIIA la cuenta del estudiante se crea sola: sin "Crear cuenta".
                             btnRegistro.Visible = !estudiantesConSiia;
@@ -369,7 +372,9 @@ namespace DigLab
         private TaskCompletionSource<string> esperaNip;
         private string textoRegistro;
         private string textoEnlace;
-        private bool cajaSoloCifras;
+        // Desde que se pide el NIP hasta volver a la contrasena, tambien mientras se
+        // comprueba un NIP (entonces esperaNip ya es null).
+        private bool enPasoNip;
 
         private async void btnIniciarSesion_Click(object sender, EventArgs e)
         {
@@ -401,10 +406,10 @@ namespace DigLab
                 return;
             }
 
-            // Validar que el usuario no contenga caracteres especiales
-            if (!System.Text.RegularExpressions.Regex.IsMatch(numeroIdentificadorIngresado, @"^[a-zA-Z0-9]+$"))
+            // Los simbolos valen: el usuario del SIIA puede llevarlos.
+            if (!ReglasCuenta.UsuarioValido(numeroIdentificadorIngresado))
             {
-                MessageBox.Show("Tu usuario solo puede llevar letras y números, sin espacios ni símbolos.",
+                MessageBox.Show("Tu usuario no puede llevar espacios ni emojis.",
                     "Iniciar sesión", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 txtUsuario.SelectAll();
                 txtUsuario.Focus();
@@ -467,12 +472,7 @@ namespace DigLab
                 textoEnlace = linkPasswd.Text;
             }
 
-            if (!cajaSoloCifras)
-            {
-                CajaNip.SoloCifras(txtPassword);
-                cajaSoloCifras = true;
-            }
-
+            enPasoNip = true;
             // Arriba, quien es (el nombre que dio el SIIA, ya con la contrasena comprobada).
             string nombre = consultas.NombreEnElPasoNip;
             lblTitulo.Text = "Escribe tu NIP";
@@ -537,11 +537,12 @@ namespace DigLab
         private void SalirDelPasoNip()
         {
             CancelarNip();
-            if (textoRegistro == null || IsDisposed)
+            if (!enPasoNip || IsDisposed)
             {
                 return;
             }
 
+            enPasoNip = false;
             if (lnkAvisoNip != null)
             {
                 lnkAvisoNip.Visible = false;
@@ -549,6 +550,8 @@ namespace DigLab
 
             UsuarioSoloLectura(false);
             OcultarPassword();
+            // Lo que quedara escrito era parte de un NIP, no la contrasena.
+            txtPassword.Clear();
             txtPassword.MaxLength = 32767;
             EstiloHorarios.PonerTextoGuia(txtPassword, "Tu contraseña");
             lblEtiquetaPassword.Text = "Contraseña";
@@ -848,7 +851,7 @@ namespace DigLab
                         // sea un estudiante o un docente (la administracion, que recupera
                         // por correo, escribe antes su usuario).
                         conSiia = escrita.Length == 0 ? siia.Activo
-                            : System.Text.RegularExpressions.Regex.IsMatch(escrita, @"^[a-zA-Z0-9]+$") && siia.ParaElTipo(InicioConSiia.TipoDeCuenta(escrita));
+                            : ReglasCuenta.UsuarioValido(escrita) && siia.ParaElTipo(InicioConSiia.TipoDeCuenta(escrita));
                     }
                     catch (Exception ex)
                     {

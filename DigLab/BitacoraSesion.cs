@@ -52,6 +52,11 @@ namespace DigLab
         // intensa: en verde no se veria la falla.
         private static readonly Color ColorConFallaElegida = Color.FromArgb(255, 218, 168);
         private static readonly Color ColorFallaCeldaElegida = Color.FromArgb(234, 150, 52);
+        // Lo que ya se resolvio (db/26), igual pero en verde.
+        private static readonly Color ColorResuelta = VentanaHistorialAlumno.ColorResuelta;
+        private static readonly Color ColorResueltaCelda = VentanaHistorialAlumno.ColorResueltaCelda;
+        private static readonly Color ColorResueltaElegida = Color.FromArgb(196, 230, 200);
+        private static readonly Color ColorResueltaCeldaElegida = Color.FromArgb(102, 187, 106);
         // Los equipos que el alumno aviso sin internet (columna Sin internet).
         private static readonly Color TextoSinInternet = Color.FromArgb(190, 85, 0);
         // La franja de lo que reporto el profesor: el fondo de las filas con falla,
@@ -105,6 +110,8 @@ namespace DigLab
         private Label lblReportes;
         // Lo que dice la franja (vacio: sin franja); se compara para no rehacerla cada 10 s.
         private string renglonesPuestos = "";
+        // La franja de lo que reporto el docente, ya sin nada pendiente (db/26): en verde.
+        private bool franjaResuelta;
         // Cuantos reportes dice la franja: la linea de abajo los cuenta aunque la lectura siguiente falle.
         private int reportesPuestos;
         // Ya se anoto en el log que no se pudieron leer los reportes (no cada 10 s).
@@ -138,6 +145,9 @@ namespace DigLab
         private const string NaranjaLarga = "Naranja: la falla que se reportó en la bitácora";
         private const string NaranjaCorta = "Naranja: falla reportada";
         private const string VerdeCorta = "Verde: asistencia sin bitácora";
+        // Con algo ya resuelto en la tabla (db/26), tambien que quiere decir su verde intenso.
+        private const string NaranjaYResuelta = "Naranja: falla reportada. Verde intenso: ya se resolvió";
+        private bool conResueltasEnLeyenda;
         private Button btnActualizar;
         private Button btnDescargar;
         private Button btnCerrar;
@@ -416,7 +426,8 @@ namespace DigLab
 
             int limite = ClientSize.Width - ActualizarDesdeLaDerecha - 12;
             string verdeLarga = VerdeLarga;
-            PonerLeyenda(NaranjaLarga, verdeLarga);
+            string naranjaLarga = conResueltasEnLeyenda ? NaranjaYResuelta : NaranjaLarga;
+            PonerLeyenda(naranjaLarga, verdeLarga);
             if (conLeyendaDada && lblLeyendaDada.Right > limite)
             {
                 PonerLeyenda(NaranjaCorta, verdeLarga);
@@ -435,7 +446,7 @@ namespace DigLab
                 lblLeyendaDada.Size = new Size(Math.Max(20, limite - lblLeyendaDada.Left), alto);
             }
 
-            ayudaBotones.SetToolTip(lblLeyenda, lblLeyenda.Text == NaranjaLarga ? null : NaranjaLarga);
+            ayudaBotones.SetToolTip(lblLeyenda, lblLeyenda.Text == naranjaLarga ? null : naranjaLarga);
             ayudaBotones.SetToolTip(lblLeyendaDada, lblLeyendaDada.Text == verdeLarga ? null : verdeLarga);
         }
 
@@ -577,9 +588,17 @@ namespace DigLab
                 }
             }
 
-            int conFalla = alumnos.Rows.Cast<DataRow>().Count(Consultas.ConFalla);
+            int conFalla = alumnos.Rows.Cast<DataRow>().Count(Consultas.FallaPendiente);
+            int resueltas = alumnos.Rows.Cast<DataRow>().Count(Consultas.Resuelta);
+            bool hayResueltas = resueltas > 0;
+            if (hayResueltas != conResueltasEnLeyenda)
+            {
+                conResueltasEnLeyenda = hayResueltas;
+                AcomodarLeyenda();
+            }
+
             string sinInternet = Consultas.DescribirSinInternet(Consultas.ContarSinInternet(
-                alumnos.Rows.Cast<DataRow>().Select(f => f["avisa_sin_internet"].ToString())), true);
+                alumnos.Rows.Cast<DataRow>().Where(f => !Consultas.Resuelta(f)).Select(f => f["avisa_sin_internet"].ToString())), true);
             // Los que dice la franja (si esta vez no se pudieron leer, los de la lectura anterior).
             int delProfesor = reportesPuestos;
             int dadas = dadasPuestas.Count;
@@ -603,8 +622,10 @@ namespace DigLab
             string loDelDocente = string.Join(" y ", delDocente);
             lblCantidad.Text = "Registros: " + alumnos.Rows.Count
                 + (alumnos.Rows.Count == 0 ? ""
-                    : conFalla == 0 ? ". Nadie reportó fallas en su bitácora"
+                    : conFalla == 0 && resueltas == 0 ? ". Nadie reportó fallas en su bitácora"
+                    : conFalla == 0 ? ". Sin fallas por resolver"
                     : conFalla == 1 ? ". 1 estudiante reportó fallas" : ". " + conFalla + " estudiantes reportaron fallas")
+                + (resueltas == 0 ? "" : resueltas == 1 ? " (1 ya resuelta)" : " (" + resueltas + " ya resueltas)")
                 + (sinInternet.Length > 0 ? ". " + sinInternet : "")
                 + (delDocente.Count == 0 ? ""
                     : esSuDocente ? ". " + char.ToUpper(loDelDocente[0]) + loDelDocente.Substring(1) : ". Su docente " + loDelDocente)
@@ -621,7 +642,7 @@ namespace DigLab
         /// </summary>
         private void PonerReportes(List<ReporteProfesor> reportes)
         {
-            string renglones = string.Join(Environment.NewLine, reportes.Select(r => r.Renglon));
+            string renglones = string.Join(Environment.NewLine, reportes.Select(r => r.RenglonConEstado));
             if (renglones == renglonesPuestos)
             {
                 return;
@@ -629,6 +650,12 @@ namespace DigLab
 
             renglonesPuestos = renglones;
             reportesPuestos = reportes.Count;
+            // Ya todo resuelto (db/26): en verde, sin naranja.
+            franjaResuelta = reportes.Count > 0 && reportes.All(r => r.Resuelta);
+            pnlReportes.BackColor = franjaResuelta ? ColorResuelta : ColorConFalla;
+            pnlRenglones.BackColor = pnlReportes.BackColor;
+            lblReportesTitulo.ForeColor = franjaResuelta ? TextoDada : TituloReportes;
+            pnlReportes.Invalidate();
             lblReportes.Text = renglones;
             pnlReportes.AccessibleName = renglones.Length == 0 ? null : lblReportesTitulo.Text + " " + renglones.Replace(Environment.NewLine, " ");
             AcomodarReportes(false);
@@ -750,8 +777,9 @@ namespace DigLab
         private void PintarMarcoReportes(object sender, PaintEventArgs e)
         {
             Rectangle r = pnlReportes.ClientRectangle;
-            using (SolidBrush barra = new SolidBrush(ColorFallaCelda))
-            using (Pen borde = new Pen(ColorFallaCelda))
+            Color color = franjaResuelta ? ColorResueltaCelda : ColorFallaCelda;
+            using (SolidBrush barra = new SolidBrush(color))
+            using (Pen borde = new Pen(color))
             {
                 e.Graphics.FillRectangle(barra, 0, 0, BarraFranja + 1, r.Height);
                 e.Graphics.DrawRectangle(borde, 0, 0, r.Width - 1, r.Height - 1);
@@ -841,7 +869,7 @@ namespace DigLab
                 string nombre = UsuarioInfo.ComoEnLaLista(Convert.ToString(fila["nombre"], CultureInfo.InvariantCulture),
                     Convert.ToString(fila["apellido_paterno"], CultureInfo.InvariantCulture), Convert.ToString(fila["apellido_materno"], CultureInfo.InvariantCulture));
                 fila[ColEstudiante] = Convert.ToInt32(fila["sin_conexion"], CultureInfo.InvariantCulture) == 1 ? nombre + " (sin conexión)" : nombre;
-                fila[ColReporte] = Consultas.DescribirFallas(fila);
+                fila[ColReporte] = Consultas.DescribirConEstado(fila);
                 fila[ColDada] = false;
             }
 
@@ -952,6 +980,21 @@ namespace DigLab
                 }
 
                 e.CellStyle.SelectionForeColor = e.CellStyle.ForeColor;
+                return;
+            }
+
+            if (Consultas.Resuelta(vista.Row))
+            {
+                // Ya se arreglo (db/26): como una falla, pero en verde.
+                bool esLaResuelta = columna == ColReporte;
+                e.CellStyle.BackColor = esLaResuelta ? ColorResueltaCelda : ColorResuelta;
+                e.CellStyle.SelectionBackColor = esLaResuelta ? ColorResueltaCeldaElegida : ColorResueltaElegida;
+                e.CellStyle.SelectionForeColor = e.CellStyle.ForeColor;
+                if (esLaResuelta)
+                {
+                    e.CellStyle.Font = fuenteFalla;
+                }
+
                 return;
             }
 

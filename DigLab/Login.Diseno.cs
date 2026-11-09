@@ -69,6 +69,14 @@ namespace DigLab
         private Timer relojKiosco;
         // Lo ultimo leido de Ajustes: los docentes entran con el SIIA (el subtitulo).
         private bool docentesConSiia;
+        // En el kiosco, con los estudiantes entrando con el SIIA: en lugar del subtitulo,
+        // un aviso en verde que no se pasa por alto (pedido del 2026-11-07).
+        private static readonly Color FondoAvisoSiia = Color.FromArgb(232, 245, 236);
+        private static readonly Color BordeAvisoSiia = Color.FromArgb(150, 205, 170);
+        internal const string TextoAvisoSiia = "Entra con tu cuenta del SIIA: la misma matrícula y contraseña con las que consultas tus calificaciones.";
+        private Label lblAvisoSiia;
+        private Rectangle marcoAvisoSiia;
+        private bool conAvisoSiia;
 
         /// <summary>Lo que el diseñador no tiene: textos, iconos, el reloj del kiosco y el arrastre.</summary>
         private void ConstruirDiseno()
@@ -84,6 +92,12 @@ namespace DigLab
             lblEtiquetaPassword = TextoTarjeta(new Font("Century Gothic", 9F, FontStyle.Bold), Color.FromArgb(55, 60, 57), ContentAlignment.BottomLeft);
             lblEtiquetaPassword.Text = "Contraseña";
             lblMensaje = TextoTarjeta(new Font("Century Gothic", 9F, FontStyle.Bold), RojoAviso, ContentAlignment.MiddleLeft);
+            lblAvisoSiia = TextoTarjeta(new Font("Century Gothic", 9.5F, FontStyle.Bold), VerdeOscuro, ContentAlignment.MiddleLeft);
+            lblAvisoSiia.BackColor = FondoAvisoSiia;
+            lblAvisoSiia.AutoEllipsis = false;
+            lblAvisoSiia.Text = TextoAvisoSiia;
+            lblAvisoSiia.Visible = false;
+            lblAvisoSiia.MouseDown += (s, e) => Arrastrar(e);
 
             lblIconoUsuario = Icono(IconoUsuario);
             lblIconoPassword = Icono(IconoCandado);
@@ -209,15 +223,17 @@ namespace DigLab
         /// </summary>
         private void ActualizarSubtitulo()
         {
-            if (esperaNip != null || lblSubtitulo == null)
+            if (enPasoNip || lblSubtitulo == null)
             {
                 return;
             }
 
             lblTitulo.Text = "Iniciar sesión";
             lblSubtitulo.ForeColor = GrisTexto;
+            conAvisoSiia = Kiosco.Activo && estudiantesConSiia;
             if (Kiosco.Activo)
             {
+                // Con el SIIA, lo dice el aviso en verde (Colocar), en su lugar.
                 lblSubtitulo.Text = estudiantesConSiia ? "Entra con tu matrícula y tu contraseña del SIIA." : "Entra con tu matrícula y tu contraseña.";
             }
             else if (estudiantesConSiia || docentesConSiia)
@@ -232,6 +248,7 @@ namespace DigLab
             }
 
             EstiloHorarios.PonerTextoGuia(txtUsuario, "Matrícula o número de empleado");
+            Colocar();
         }
 
         /// <summary>Un aviso en rojo bajo la contrasena (o el NIP); null o vacio lo quita.</summary>
@@ -282,6 +299,21 @@ namespace DigLab
             lblSubtitulo.SetBounds(Margen, 122, ancho, 40);
 
             int y = 172;
+            // El aviso del SIIA ocupa el lugar del subtitulo, con su recuadro verde
+            // (PintarCajas); en el paso del NIP, el subtitulo dice quien es.
+            bool avisoSiia = conAvisoSiia && !enPasoNip;
+            lblAvisoSiia.Visible = avisoSiia;
+            lblSubtitulo.Visible = !avisoSiia;
+            marcoAvisoSiia = Rectangle.Empty;
+            if (avisoSiia)
+            {
+                int altoTexto = TextRenderer.MeasureText(lblAvisoSiia.Text, lblAvisoSiia.Font, new Size(ancho - 28, 0),
+                    TextFormatFlags.WordBreak | TextFormatFlags.NoPadding).Height;
+                marcoAvisoSiia = new Rectangle(Margen, 124, ancho, altoTexto + 20);
+                lblAvisoSiia.SetBounds(Margen + 14, marcoAvisoSiia.Top + 10, ancho - 28, altoTexto);
+                y = marcoAvisoSiia.Bottom + 12;
+            }
+
             lblEtiquetaUsuario.SetBounds(Margen, y, ancho, 20);
             cajaUsuario = new Rectangle(Margen, y + 22, ancho, AltoCaja);
             ColocarCaja(txtUsuario, cajaUsuario, lblIconoUsuario, null);
@@ -342,6 +374,18 @@ namespace DigLab
         private void PintarCajas(object sender, PaintEventArgs e)
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            if (marcoAvisoSiia.Width > 0 && lblAvisoSiia.Visible)
+            {
+                Rectangle borde = new Rectangle(marcoAvisoSiia.X, marcoAvisoSiia.Y, marcoAvisoSiia.Width - 1, marcoAvisoSiia.Height - 1);
+                using (GraphicsPath camino = Redondeado(borde, 10))
+                using (SolidBrush relleno = new SolidBrush(FondoAvisoSiia))
+                using (Pen pluma = new Pen(BordeAvisoSiia, 1F))
+                {
+                    e.Graphics.FillPath(relleno, camino);
+                    e.Graphics.DrawPath(pluma, camino);
+                }
+            }
+
             PintarCaja(e.Graphics, cajaUsuario, txtUsuario);
             PintarCaja(e.Graphics, cajaPassword, txtPassword);
         }

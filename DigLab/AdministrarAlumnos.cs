@@ -17,14 +17,22 @@ namespace DigLab
     /// desde donde se exportan sus datos. En solo consulta (el encargado de
     /// laboratorio) solo se busca y se mira: los botones que escriben no se crean.
     /// Con el SIIA no se ensena lo que su inicio de sesion no da (semestre y correo).
-    /// Quien reporto fallas sale en naranja, con los tonos de sus bitacoras.
+    /// Quien reporto fallas sale en naranja, con los tonos de sus bitacoras. Con db/27,
+    /// "Suspender acceso..." le impide entrar unos dias (DialogoSuspenderAcceso); quien
+    /// esta suspendido sale en rojo, con hasta cuando y, al pasar el raton, la razon.
     /// </summary>
     public class AdministrarAlumnos : PantallaAdmin
     {
         // Lo que se muestra es la cuenta (activa, de baja): sin "activos" ni "dados de baja".
         private const string Activos = "Cuentas activas";
+        private const string Suspendidas = "Cuentas suspendidas";
         private const string DadosDeBaja = "Cuentas de baja";
         private const string Todos = "Todas";
+
+        // Lejos del naranja de las fallas y del verde de lo resuelto: la fila suave y su
+        // Estado en el fuerte, con el mismo patron.
+        private static readonly Color ColorSuspendida = Color.FromArgb(251, 226, 226);
+        private static readonly Color ColorSuspendidaCelda = Color.FromArgb(239, 137, 137);
 
         private readonly AlumnosDatos datos = new AlumnosDatos();
         private readonly Dictionary<int, string> textoBusqueda = new Dictionary<int, string>();
@@ -42,6 +50,7 @@ namespace DigLab
         private readonly Button btnContrasena;
         private readonly Button btnBaja;
         private readonly Button btnDatosPersonales;
+        private readonly Button btnSuspender;
         private readonly Font negrita = new Font("Century Gothic", 10F, FontStyle.Bold);
         private bool cargandoFiltros;
 
@@ -70,15 +79,15 @@ namespace DigLab
                 BotonPrincipalArriba("Registrar estudiante", 200).Click += (s, e) => NuevoAlumno();
             }
 
-            txtBuscar = CrearBuscador(new Point(Margen, 112), 330);
+            txtBuscar = CrearBuscador(new Point(Margen, 112), 290);
 
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Carrera", new Point(380, 86)));
-            cboCarrera = EstiloHorarios.CrearCombo(new Point(380, 111), 300);
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Carrera", new Point(340, 86)));
+            cboCarrera = EstiloHorarios.CrearCombo(new Point(340, 111), 300);
             cboCarrera.SelectedIndexChanged += (s, e) => { if (!cargandoFiltros) Aplicar(null); };
             Controls.Add(cboCarrera);
 
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Mostrar", new Point(700, 86)));
-            cboMostrar = EstiloHorarios.CrearCombo(new Point(700, 111), 170);
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Mostrar", new Point(660, 86)));
+            cboMostrar = EstiloHorarios.CrearCombo(new Point(660, 111), 170);
             cboMostrar.Items.AddRange(new object[] { Activos, DadosDeBaja, Todos });
             cboMostrar.SelectedIndex = 0;
             cboMostrar.SelectedIndexChanged += (s, e) => { if (!cargandoFiltros) Aplicar(null); };
@@ -94,8 +103,17 @@ namespace DigLab
                 btnDatosPersonales.Click += (s, e) => DatosPersonales();
                 ayuda.SetToolTip(btnDatosPersonales, "De la persona elegida: exportar sus datos o, si su cuenta está de baja, anonimizarla (derechos ARCO).");
                 Controls.Add(btnDatosPersonales);
-                // Mas angosta, el boton pisaria el filtro Mostrar.
-                MinimumSize = new Size(1120, MinimumSize.Height);
+
+                // Junto a el, por lo mismo. Sale solo con db/27 (Recargar).
+                btnSuspender = EstiloHorarios.CrearBoton("Suspender acceso...", new Point(btnDatosPersonales.Left - 10 - 180, 104), new Size(180, 40));
+                btnSuspender.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+                btnSuspender.Visible = false;
+                btnSuspender.Click += (s, e) => CambiarSuspensionSeleccionado();
+                ayuda.SetToolTip(btnSuspender, "De la persona elegida: que no pueda entrar a DigLab por unos días. Al terminar el plazo vuelve a entrar sola.");
+                Controls.Add(btnSuspender);
+                // Mas angosta, los botones pisarian el filtro Mostrar. Sin pasarse de la
+                // pantalla: a 1280 todavia cabe; PantallaAdmin ya la dejo en lo que cabe.
+                MinimumSize = new Size(Math.Min(1280, Width), MinimumSize.Height);
             }
 
             CrearLista(156);
@@ -120,7 +138,7 @@ namespace DigLab
                 grid.Columns[numero].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleRight;
             }
 
-            grid.Columns["fallas"].ToolTipText = "Cuántas de sus bitácoras reportan una falla o un comentario. Se leen en «Ver sus bitácoras».";
+            grid.Columns["fallas"].ToolTipText = "Cuántas de sus bitácoras reportan una falla o un comentario sin resolver; en verde, con ✓, si ya se resolvió todo. Se leen en «Ver sus bitácoras».";
             // Con el SIIA su cuenta se crea con lo que da su inicio de sesion (matricula,
             // nombre y carrera): semestre y correo estarian siempre vacios.
             grid.Columns["semestre"].Visible = !estudiantesConSiia;
@@ -203,7 +221,55 @@ namespace DigLab
                 return;
             }
 
-            bool esElNumero = grid.Columns[e.ColumnIndex].Name == "fallas";
+            string columna = grid.Columns[e.ColumnIndex].Name;
+            bool esElNumero = columna == "fallas";
+            // Suspendida (db/27): toda la fila en rojo, con su Estado en el fuerte. La
+            // celda de sus fallas se queda con su color: dice otra cosa.
+            if (alumno.Suspendida)
+            {
+                if (columna == "estado")
+                {
+                    // Sin negrita: la columna se mide con la letra normal y se cortaria.
+                    e.CellStyle.BackColor = ColorSuspendidaCelda;
+                    e.CellStyle.SelectionBackColor = ColorSuspendidaCelda;
+                    e.CellStyle.ForeColor = Color.Black;
+                    e.CellStyle.SelectionForeColor = Color.Black;
+                    return;
+                }
+
+                if (!esElNumero || alumno.BitacorasConFalla + alumno.BitacorasResueltas == 0)
+                {
+                    e.CellStyle.BackColor = ColorSuspendida;
+                    if (esElNumero)
+                    {
+                        e.CellStyle.ForeColor = Color.Gray;
+                    }
+
+                    return;
+                }
+            }
+
+            if (alumno.BitacorasConFalla == 0 && alumno.BitacorasResueltas > 0)
+            {
+                // Lo que reporto ya se resolvio (db/26): en verde, con la marca de resuelta.
+                if (esElNumero)
+                {
+                    e.Value = "✓ " + alumno.BitacorasResueltas;
+                    e.FormattingApplied = true;
+                    e.CellStyle.BackColor = VentanaHistorialAlumno.ColorResueltaCelda;
+                    e.CellStyle.SelectionBackColor = VentanaHistorialAlumno.ColorResueltaCelda;
+                    e.CellStyle.ForeColor = Color.Black;
+                    e.CellStyle.SelectionForeColor = Color.Black;
+                    e.CellStyle.Font = negrita;
+                }
+                else
+                {
+                    e.CellStyle.BackColor = VentanaHistorialAlumno.ColorResuelta;
+                }
+
+                return;
+            }
+
             if (alumno.BitacorasConFalla == 0)
             {
                 if (esElNumero)
@@ -256,6 +322,21 @@ namespace DigLab
             // En solo consulta no hay "Dar de baja": la nota no le dice nada.
             cboMostrar.Enabled = datos.BajasDisponibles;
             NotaFija = soloConsulta || datos.BajasDisponibles ? "" : "Para dar de baja falta aplicar la migración 08 en la base.";
+
+            // Con db/27: el boton y el filtro. Sin ella, la pantalla queda como antes.
+            if (btnSuspender != null)
+            {
+                btnSuspender.Visible = datos.SuspensionesDisponibles;
+            }
+
+            if (datos.SuspensionesDisponibles && !cboMostrar.Items.Contains(Suspendidas))
+            {
+                object elegido = cboMostrar.SelectedItem;
+                cargandoFiltros = true;
+                cboMostrar.Items.Insert(1, Suspendidas);
+                cboMostrar.SelectedItem = elegido;
+                cargandoFiltros = false;
+            }
 
             RellenarCarreras();
             Aplicar(seleccionar);
@@ -310,12 +391,16 @@ namespace DigLab
             string mostrar = datos.BajasDisponibles ? (string)cboMostrar.SelectedItem : Todos;
 
             List<AlumnoInfo> visibles = alumnos.Where(a =>
-                    (mostrar == Todos || (mostrar == Activos) == a.Activo)
+                    (mostrar == Todos
+                        || (mostrar == Activos && a.Activo)
+                        || (mostrar == DadosDeBaja && !a.Activo)
+                        || (mostrar == Suspendidas && a.Suspendida))
                     && (carrera == 0 || a.CarreraId == carrera)
                     && EstiloAdmin.Coincide(textoBusqueda[a.Id], txtBuscar.Text))
                 .ToList();
 
-            grid.Columns["estado"].Visible = mostrar != Activos;
+            // Una cuenta suspendida sigue siendo activa: el Estado sale si hay alguna a la vista.
+            grid.Columns["estado"].Visible = mostrar != Activos || visibles.Any(a => a.Suspendida);
             LlenarLista(visibles,
                 a => new object[]
                 {
@@ -328,11 +413,31 @@ namespace DigLab
                     a.Bitacoras,
                     a.BitacorasConFalla,
                     EstiloAdmin.Fecha(a.UltimaBitacora),
-                    EstadoDe(a)
+                    a.Suspendida ? EstadoSuspendida(a.SuspendidaHasta.Value) : EstadoDe(a)
                 },
                 a => !a.Activo, a => a.Matricula, seleccionarMatricula);
-            // La carrera entera (a 10 pt y 1366 de ancho se cortaba); las demas, con lo que quede.
+            // La carrera entera (a 10 pt y 1366 de ancho se cortaba), y lo de quien esta
+            // suspendida; las demas, con lo que quede.
             ColumnasDeLista.TextoEntero(grid, 340, "carrera");
+            if (visibles.Any(a => a.Suspendida))
+            {
+                ColumnasDeLista.TextoEntero(grid, 240, "estado");
+            }
+
+            // Hasta cuando y por que, al pasar el raton por cualquier parte de su fila.
+            foreach (DataGridViewRow fila in grid.Rows)
+            {
+                AlumnoInfo alumno = (AlumnoInfo)fila.Tag;
+                if (alumno.Suspendida)
+                {
+                    string motivo = "Acceso suspendido hasta el " + SuspensionesDatos.Fecha(alumno.SuspendidaHasta.Value) + "."
+                        + Environment.NewLine + "Razón: " + alumno.RazonSuspension;
+                    foreach (DataGridViewCell celda in fila.Cells)
+                    {
+                        celda.ToolTipText = motivo;
+                    }
+                }
+            }
 
             int bajas = alumnos.Count(a => !a.Activo);
             // Lo mismo, en medio de la lista vacia (no un rectangulo blanco).
@@ -349,11 +454,21 @@ namespace DigLab
             else
             {
                 int conFallas = visibles.Count(a => a.BitacorasConFalla > 0);
+                int yaResueltas = visibles.Count(a => a.BitacorasConFalla == 0 && a.BitacorasResueltas > 0);
+                int suspendidas = visibles.Count(a => a.Suspendida);
                 lblResumen.Text = (visibles.Count == alumnos.Count ? "" : visibles.Count + " de ")
                     + alumnos.Count + (alumnos.Count == 1 ? " estudiante" : " estudiantes")
                     + (bajas > 0 ? " (" + bajas + " de baja)" : "")
-                    + (conFallas == 0 ? "" : "; en naranja, " + (conFallas == 1 ? "1 reportó fallas" : conFallas + " reportaron fallas"));
+                    + (suspendidas == 0 ? "" : "; en rojo, " + suspendidas + (suspendidas == 1 ? " suspendida" : " suspendidas"))
+                    + (conFallas == 0 ? "" : "; en naranja, " + (conFallas == 1 ? "1 reportó fallas" : conFallas + " reportaron fallas"))
+                    + (yaResueltas == 0 ? "" : "; en verde, " + yaResueltas + " ya resueltas");
             }
+        }
+
+        /// <summary>"Suspendida hasta 09/11": corto, para que el nombre conserve el ancho. Con el año solo si no es este; la hora, al pasar el raton.</summary>
+        private static string EstadoSuspendida(DateTime hasta)
+        {
+            return "Suspendida hasta " + hasta.ToString(hasta.Year == DateTime.Now.Year ? "dd/MM" : "dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture);
         }
 
         /// <summary>La columna Estado: la cuenta activa, de baja (con su fecha) o anonimizada.</summary>
@@ -390,6 +505,9 @@ namespace DigLab
             btnBaja.Enabled = alumno != null && datos.BajasDisponibles && !anonimizada;
             btnBaja.Text = alumno != null && !alumno.Activo ? "Reactivar" : "Dar de baja";
             btnDatosPersonales.Enabled = alumno != null;
+            // Una cuenta de baja ya no entra: no hay nada que suspender.
+            btnSuspender.Enabled = alumno != null && alumno.Activo && datos.SuspensionesDisponibles;
+            btnSuspender.Text = alumno != null && alumno.Suspendida ? "Quitar suspensión..." : "Suspender acceso...";
         }
 
         protected override void AlDobleClic()
@@ -503,6 +621,66 @@ namespace DigLab
                     Avisar("Cuenta anonimizada: ahora es " + anonimo + ".");
                 }
             });
+        }
+
+        /// <summary>
+        /// El boton de arriba: suspender a quien este elegido o, si ya esta suspendido,
+        /// ver hasta cuando y por que, y quitarle la suspension.
+        /// </summary>
+        private void CambiarSuspensionSeleccionado()
+        {
+            if (Permisos.Bloquear(this, "Suspender el acceso de un alumno")) return;
+
+            AlumnoInfo alumno = Seleccionado<AlumnoInfo>();
+            if (alumno == null)
+            {
+                return;
+            }
+
+            if (!alumno.Suspendida)
+            {
+                using (DialogoSuspenderAcceso dialogo = new DialogoSuspenderAcceso(alumno.Id, alumno.NombreCompleto + " (" + alumno.Matricula + ")"))
+                {
+                    if (dialogo.ShowDialog(this) == DialogResult.OK)
+                    {
+                        Recargar(alumno.Matricula);
+                        Avisar("Acceso suspendido hasta el " + SuspensionesDatos.Fecha(dialogo.Hasta) + ".");
+                    }
+                }
+
+                return;
+            }
+
+            // Aqui se lee la razon entera: este dialogo crece con el texto. Devolverle el
+            // acceso no le quita nada: no va en rojo.
+            using (DialogoTextoYBotones dialogo = new DialogoTextoYBotones("Quitar suspensión",
+                alumno.NombreCompleto + " (" + alumno.Matricula + ") tiene el acceso suspendido hasta el "
+                + SuspensionesDatos.Fecha(alumno.SuspendidaHasta.Value) + "." + Environment.NewLine + Environment.NewLine
+                + "Razón: " + alumno.RazonSuspension + Environment.NewLine + Environment.NewLine
+                + "Si se la quitas, podrá volver a entrar de inmediato.",
+                "Quitar suspensión", false))
+            {
+                if (dialogo.ShowDialog(this) != DialogResult.OK)
+                {
+                    return;
+                }
+            }
+
+            try
+            {
+                SuspensionesDatos.Quitar(alumno.Id);
+                Recargar(alumno.Matricula);
+                Avisar("Se quitó la suspensión. Ya puede volver a entrar.");
+            }
+            catch (ErrorDeDatos ex)
+            {
+                MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Recargar(alumno.Matricula);
+            }
+            catch (Exception ex)
+            {
+                AvisoDeFalloAdmin.Mostrar(this, "Quitar la suspension del alumno " + alumno.Matricula, ex, "No se pudo quitar la suspensión", Text);
+            }
         }
 
         private void RestablecerContrasenaSeleccionado()

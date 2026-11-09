@@ -488,6 +488,10 @@ namespace DigLab.conexion
                     }
 
                     AnonimizarRecuperacion(conexion, transaccion, id, anonimo);
+                    if (TipoUsuario == TiposUsuario.Alumno)
+                    {
+                        SuspensionesDatos.VaciarRazones(conexion, transaccion, id);
+                    }
 
                     string identificadorDelTipo = TipoUsuario == TiposUsuario.Alumno ? "matrícula" : "número de empleado";
                     HistorialCambios.Anotar(conexion, transaccion, new CambioPorAnotar

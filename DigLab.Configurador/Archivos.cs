@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Xml;
+using DigLab.Infraestructura;
 
 namespace DigLab.Configurador
 {
@@ -166,20 +167,52 @@ namespace DigLab.Configurador
             }
         }
 
+        /// <summary>
+        /// Escribe la conexion CIFRADA para este equipo (CadenaCifrada, DPAPI de la
+        /// maquina): el estudiante puede abrir el archivo y no debe ver la contrasena.
+        /// </summary>
         public static void EscribirConexion(string destino, string cadena)
         {
             string texto = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n"
                 + "<connectionStrings>\r\n"
-                + "  <add name=\"DigLab\" connectionString=\"" + SecurityElement.Escape(cadena) + "\" providerName=\"MySql.Data.MySqlClient\" />\r\n"
+                + "  <!-- Cifrada para este equipo (DigLab-Setup.exe): en otra computadora no sirve. -->\r\n"
+                + "  <add name=\"DigLab\" connectionString=\"" + SecurityElement.Escape(CadenaCifrada.Cifrar(cadena)) + "\" providerName=\"MySql.Data.MySqlClient\" />\r\n"
                 + "</connectionStrings>\r\n";
             File.WriteAllText(RutaConexion(destino), texto, new UTF8Encoding(false));
         }
 
         /// <summary>
-        /// La cadena que ya tiene el equipo, o null. Sin la plantilla: un equipo con ella
-        /// no tiene conexion, aunque el archivo exista.
+        /// La cadena que ya tiene el equipo, en claro, o null. Sin la plantilla: un equipo
+        /// con ella no tiene conexion, aunque el archivo exista. Una cifrada en otro equipo
+        /// (copiada, o el equipo se reimagino) tampoco: el Setup vuelve a pedir la base.
         /// </summary>
         public static string LeerConexion(string destino)
+        {
+            string guardada = ConexionGuardada(destino);
+            if (guardada == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return CadenaCifrada.Descifrar(guardada);
+            }
+            catch (System.Security.Cryptography.CryptographicException)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>True si el equipo tiene una conexion de verdad SIN cifrar (de antes del cifrado, o de configurar_equipo.ps1).</summary>
+        public static bool ConexionEnClaro(string destino)
+        {
+            string guardada = ConexionGuardada(destino);
+            return guardada != null && !CadenaCifrada.EstaCifrada(guardada);
+        }
+
+        /// <summary>Lo que dice el archivo, tal cual (cifrado o no), o null si no hay o es la plantilla.</summary>
+        private static string ConexionGuardada(string destino)
         {
             string ruta = RutaConexion(destino);
             if (!File.Exists(ruta))

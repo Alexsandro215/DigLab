@@ -15,9 +15,13 @@ namespace DigLab.Infraestructura
     /// vigilando con un icono en la bandeja; al abrir el escritorio un globo
     /// confirma el registro y dice hasta que hora es el equipo, avisa 5 minutos
     /// antes de la hora de salida y otra vez en el ultimo minuto y, al llegar,
-    /// cierra la sesion de Windows (como respaldo del servicio DigLab.Vigilante,
-    /// que es quien lo garantiza). Fuera del kiosco no toca Windows: al vencer
-    /// vuelve al login.
+    /// REINICIA el equipo (pedido del 2026-11-07: "cuando acabe una clase se
+    /// reinicie la pc. No por hora, debe ser por clase"): la hora de salida es el
+    /// fin de la clase con la que registro, y con Deep Freeze el equipo vuelve
+    /// limpio para la siguiente. Si no se puede reiniciar, cierra la sesion de
+    /// Windows, como antes. Es el respaldo del servicio DigLab.Vigilante, que es
+    /// quien lo garantiza. Quien se va antes ("Cerrar mi sesion ahora") solo
+    /// cierra la sesion. Fuera del kiosco no toca Windows: al vencer vuelve al login.
     /// </summary>
     internal static class SesionEquipo
     {
@@ -31,6 +35,10 @@ namespace DigLab.Infraestructura
 
         // Lo mismo para el apagado que pide el alumno con equipo propio.
         private const string VariableSimularApagado = "DIGLAB_SIMULAR_APAGADO";
+
+        // Y para el reinicio al terminar la clase. Cualquiera de las tres lo simula:
+        // una prueba que ya simulaba el cierre de sesion no debe reiniciar el equipo.
+        private const string VariableSimularReinicio = "DIGLAB_SIMULAR_REINICIO";
 
         private static SesionActiva sesion;
         private static NotifyIcon icono;
@@ -206,7 +214,7 @@ namespace DigLab.Infraestructura
         public static void TerminarAhora()
         {
             Log.Info("El alumno pidio cerrar su sesion antes de la hora de salida.");
-            Terminar();
+            Terminar(false);
         }
 
         private static void Iniciar(Comienzo comienzo)
@@ -239,7 +247,8 @@ namespace DigLab.Infraestructura
         private static string TextoBienvenida(Comienzo comienzo)
         {
             string hasta = HastaLas(sesion.FinLocal);
-            string aviso = sesion.FinLocal - DateTime.Now > AvisoAntes ? "; te avisaremos " + (int)AvisoAntes.TotalMinutes + " minutos antes." : ".";
+            string aviso = (sesion.FinLocal - DateTime.Now > AvisoAntes ? "; te avisaremos " + (int)AvisoAntes.TotalMinutes + " minutos antes." : ".")
+                + (Kiosco.Activo ? " Al terminar, el equipo se reinicia." : "");
             switch (comienzo)
             {
                 case Comienzo.Reanudada:
@@ -346,15 +355,22 @@ namespace DigLab.Infraestructura
             if (restante <= TimeSpan.Zero)
             {
                 Log.Info("Llego la hora de salida (" + sesion.FinLocal.ToString("HH:mm") + ") de " + sesion.Usuario + ".");
-                Terminar();
+                Terminar(true);
             }
         }
 
-        private static void Terminar()
+        /// <param name="alTerminarLaClase">Llego la hora de salida: se reinicia el equipo. Si no, el alumno se va antes: solo se cierra su sesion.</param>
+        private static void Terminar(bool alTerminarLaClase)
         {
             bool kiosco = Kiosco.Activo;
             Limpiar();
             SesionActiva.Borrar();
+
+            if (kiosco && alTerminarLaClase && ReiniciarEquipo())
+            {
+                // Windows reinicia y, con ello, termina este proceso.
+                return;
+            }
 
             if (kiosco && CerrarSesionWindows())
             {
@@ -770,6 +786,42 @@ namespace DigLab.Infraestructura
             }
         }
 
+        private const uint EWX_REBOOT = 0x00000002;
+        private const uint EWX_FORCE = 0x00000004;
+
+        /// <summary>
+        /// Al terminar la clase: reinicia el equipo. EWX_FORCE cierra los programas sin
+        /// preguntar: si no, uno con un documento sin guardar pararia el reinicio y el
+        /// alumno podria cancelarlo y seguir; para eso se le avisa 5 minutos antes y en
+        /// el ultimo minuto. Devuelve true si Windows acepto la orden; con false, quien
+        /// llama cierra la sesion, como antes. Una cuenta estandar SI puede reiniciar.
+        /// </summary>
+        private static bool ReiniciarEquipo()
+        {
+            foreach (string variable in new[] { VariableSimularReinicio, VariableSimularLogoff, VariableSimularApagado })
+            {
+                if (Kiosco.EsVerdadero(Environment.GetEnvironmentVariable(variable)))
+                {
+                    Log.Aviso("SIMULACION (" + variable + "): aqui se reiniciaria el equipo al terminar la clase.");
+                    return false;
+                }
+            }
+
+            if (!HabilitarPrivilegio(SE_SHUTDOWN_NAME))
+            {
+                return false;
+            }
+
+            Log.Info("Termino la clase: reiniciando el equipo (respaldo de DigLab; el vigilante tambien lo hace).");
+            if (!ExitWindowsEx(EWX_REBOOT | EWX_FORCE, SHTDN_REASON_FLAG_PLANNED))
+            {
+                Log.Aviso("ExitWindowsEx (reinicio) fallo con el error " + Marshal.GetLastWin32Error() + "; se cierra la sesion.");
+                return false;
+            }
+
+            return true;
+        }
+
         /// <summary>Devuelve true si Windows acepto la orden de cerrar la sesion.</summary>
         private static bool CerrarSesionWindows()
         {
@@ -924,10 +976,7 @@ namespace DigLab.Infraestructura
             int minutos = Math.Max(1, (int)Math.Ceiling(restante.TotalMinutes));
             // Antes que el globo (que ya no saldra): este aviso es lo primero que se lee.
             bool confirmar = recienRegistrada && globoPendiente != null;
-            string mensaje = (confirmar ? Registrada() + " " : "")
-                + "Tu sesión en este equipo termina " + ALas(sesion.FinLocal) + " (en " + minutos + " min). "
-                + (ultimo ? "Guarda tu trabajo ahora: al llegar la hora, la sesión se cierra sola."
-                    : "Guarda tu trabajo y cierra tus programas.");
+            string mensaje = (confirmar ? Registrada() + " " : "") + TextoDelAviso(sesion.FinLocal, minutos, ultimo, Kiosco.Activo);
             Log.Info("Aviso de fin de sesion mostrado (" + minutos + " min" + (ultimo ? ", el del ultimo minuto" : "")
                 + (confirmar ? ", confirmando el registro" : "") + ").");
 
@@ -951,6 +1000,18 @@ namespace DigLab.Infraestructura
             {
                 Log.Error("No se pudo mostrar la ventana de aviso", ex);
             }
+        }
+
+        /// <summary>
+        /// El aviso de 5 minutos y el del ultimo. En kiosco, al llegar la hora el equipo
+        /// se reinicia (Terminar): lo que no se guardo se pierde, y lo tiene que saber.
+        /// </summary>
+        internal static string TextoDelAviso(DateTime fin, int minutos, bool ultimo, bool reinicia)
+        {
+            string queHace = reinicia ? "el equipo se reinicia" : "la sesión se cierra sola";
+            return "Tu sesión en este equipo termina " + ALas(fin) + " (en " + minutos + " min). "
+                + (ultimo ? "Guarda tu trabajo ahora: al llegar la hora, " + queHace + "."
+                    : "Guarda tu trabajo y cierra tus programas" + (reinicia ? ": al terminar, el equipo se reinicia." : "."));
         }
 
         private static void ConfirmarCierre()

@@ -759,3 +759,58 @@ CREATE TABLE horas_por_asignar (
     KEY ix_horas_por_asignar_estado (estado, clases_idclases, creada_en),
     KEY ix_horas_por_asignar_clase (clases_idclases)
 ) ENGINE=InnoDB;
+
+-- Las fallas reportadas que ya se resolvieron (db/26): lo que reporto un estudiante
+-- en su bitacora ('bitacora') o su docente desde su panel ('docente'), marcado en
+-- Bitacoras. No toca lo reportado: sale de naranja y de Alertas, y va al final del
+-- PDF. Estadisticas sigue contando todo. Sin claves foraneas, como el historial.
+-- Fechas sin DEFAULT (MariaDB 5.5): las pone DigLab con NOW(). digbit_admin la
+-- escribe; digbit_equipo y digbit_consulta solo la leen (db/07 y db/18).
+CREATE TABLE fallas_resueltas (
+    idfallas_resueltas  INT           NOT NULL AUTO_INCREMENT,
+    origen              VARCHAR(10)   NOT NULL,
+    registro_id         INT           NOT NULL,
+    resuelta_en         DATETIME      NOT NULL,
+    resuelta_por        INT           NULL,
+    nota                VARCHAR(200)  NULL,
+    PRIMARY KEY (idfallas_resueltas),
+    UNIQUE KEY uq_fallas_resueltas (origen, registro_id)
+) ENGINE=InnoDB;
+
+-- Las suspensiones de acceso de los estudiantes (db/27): no puede iniciar sesion
+-- hasta "hasta", y ve la razon al intentarlo. Vigente si levantada_en es NULL y
+-- hasta no ha pasado; los renglones no se borran. Al anonimizar la cuenta, la razon
+-- se vacia. Sin claves foraneas, como el historial. Fechas sin DEFAULT (MariaDB
+-- 5.5): las pone DigLab con NOW(). digbit_admin la escribe; digbit_equipo (es lo que
+-- la hace valer en los laboratorios) y digbit_consulta solo la leen (db/07 y db/18).
+CREATE TABLE suspensiones (
+    idsuspensiones       INT           NOT NULL AUTO_INCREMENT,
+    usuarios_idusuarios  INT           NOT NULL,
+    desde                DATETIME      NOT NULL,
+    hasta                DATETIME      NOT NULL,
+    razon                VARCHAR(200)  NOT NULL,
+    creada_por           INT           NULL,
+    levantada_en         DATETIME      NULL,
+    levantada_por        INT           NULL,
+    PRIMARY KEY (idsuspensiones),
+    KEY idx_suspensiones_usuario (usuarios_idusuarios, hasta)
+) ENGINE=InnoDB;
+
+-- Las memorias USB de emergencia (db/28): cualquiera de las vigentes (quitada_en
+-- NULL) abre el escritorio de cualquier equipo del laboratorio sin bitacora. En
+-- huella va su numero de serie hasheado (PBKDF2), nunca en claro; los renglones no
+-- se borran. Fechas sin DEFAULT (MariaDB 5.5): las pone DigLab con NOW().
+-- digbit_admin la escribe; digbit_equipo SOLO la lee (db/07): con INSERT, un
+-- estudiante registraria su propia memoria con las credenciales del equipo.
+CREATE TABLE memorias_emergencia (
+    idmemorias_emergencia INT          NOT NULL AUTO_INCREMENT,
+    nombre               VARCHAR(80)   NOT NULL,
+    modelo               VARCHAR(120)  NULL,
+    huella               VARCHAR(255)  NOT NULL,
+    agregada_en          DATETIME      NOT NULL,
+    agregada_por         INT           NULL,
+    quitada_en           DATETIME      NULL,
+    quitada_por          INT           NULL,
+    PRIMARY KEY (idmemorias_emergencia),
+    KEY idx_memorias_emergencia_vigentes (quitada_en)
+) ENGINE=InnoDB;

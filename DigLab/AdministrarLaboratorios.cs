@@ -33,6 +33,7 @@ namespace DigLab
         private readonly Button btnQuitar;
         private readonly Button btnCodigos;
         private readonly Button btnHabilitar;
+        private readonly Button btnMemorias;
 
         public AdministrarLaboratorios()
             // La responsable no instala equipos: a ella, que hay aqui (sin instrucciones de instalacion).
@@ -56,6 +57,14 @@ namespace DigLab
                 btnHabilitar.Click += (s, e) => HabilitarODeshabilitar();
                 ayuda.SetToolTip(btnHabilitar, "Para que un laboratorio no corra todavía, conservando su horario: sin código, sin registros y sin faltas.");
                 Controls.Add(btnHabilitar);
+
+                // Las llaves de "Acceso de emergencia" de todos los equipos (db/28): ya no se
+                // autorizan al instalar cada uno.
+                btnMemorias = EstiloHorarios.CrearBoton("Memorias de emergencia...", new Point(btnHabilitar.Left - 10 - 240, 108), new Size(240, 38));
+                btnMemorias.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+                btnMemorias.Click += (s, e) => DialogoMemoriasEmergencia.Mostrar(this);
+                ayuda.SetToolTip(btnMemorias, "Las memorias USB que abren cualquier equipo del laboratorio sin bitácora, con «Acceso de emergencia».");
+                Controls.Add(btnMemorias);
             }
 
             grid.Columns.Add("nombre", "Laboratorio");

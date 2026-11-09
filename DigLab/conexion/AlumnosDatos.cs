@@ -16,9 +16,21 @@ namespace DigLab.conexion
         public int? SemestreId;
         public string Semestre;
         public int Bitacoras;
-        /// <summary>Cuantas de sus bitacoras reportan una falla o un comentario (Consultas.CondicionConFalla).</summary>
+        /// <summary>Cuantas de sus bitacoras reportan una falla o un comentario sin resolver (Consultas.CondicionFallaPendiente).</summary>
         public int BitacorasConFalla;
+        /// <summary>Cuantas de sus bitacoras reportaron algo que ya se resolvio (db/26).</summary>
+        public int BitacorasResueltas;
         public DateTime? UltimaBitacora;
+        /// <summary>Hasta cuando tiene el acceso suspendido (db/27); null si no lo tiene.</summary>
+        public DateTime? SuspendidaHasta;
+        /// <summary>La razon de esa suspension; null si no la tiene.</summary>
+        public string RazonSuspension;
+
+        /// <summary>Si tiene una suspension vigente y su cuenta sigue activa: si esta de baja, ya no entra de todas formas.</summary>
+        public bool Suspendida
+        {
+            get { return Activo && SuspendidaHasta.HasValue; }
+        }
     }
 
     /// <summary>
@@ -49,6 +61,9 @@ namespace DigLab.conexion
             get { return "estudiante"; }
         }
 
+        /// <summary>Si esta base y esta cuenta de MySQL tienen las suspensiones (db/27). Se sabe despues de Listar.</summary>
+        public bool SuspensionesDisponibles { get; private set; }
+
         public List<AlumnoInfo> Listar()
         {
             return Leer(null);
@@ -72,17 +87,23 @@ namespace DigLab.conexion
             List<AlumnoInfo> lista = new List<AlumnoInfo>();
             using (MySqlConnection conexion = mconexion.GetConexion())
             {
+                SuspensionesDisponibles = Esquema.Suspensiones(conexion);
                 // Si un alumno tiene mas de una fila de carrera y grupo (datos
                 // viejos), cuenta la ultima. La fecha de una bitacora es la de su
                 // sesion; las sesiones anteriores a la fase 6 no tienen fecha y se
-                // toma la de su creacion.
+                // toma la de su creacion. De su suspension (db/27), la que termina mas tarde.
                 using (MySqlCommand comando = new MySqlCommand(@"
                     SELECT u.idusuarios, u.numero_identificador, u.nombre, u.apellido_paterno, u.apellido_materno, u.correo,
                            " + ColumnasEstado(conexion) + @",
                            cgs.carreras_idcarreras, c.nombre_carrera, cgs.grupos_idgrupos, g.nombre_grupo,
                            cgs.semestres_idsemestres, s.numero_semestre,
-                           COALESCE(b.bitacoras, 0) AS bitacoras, COALESCE(b.con_falla, 0) AS con_falla, b.ultima
-                    FROM usuarios u
+                           COALESCE(b.bitacoras, 0) AS bitacoras, COALESCE(b.con_falla, 0) AS con_falla, COALESCE(b.resueltas, 0) AS resueltas, b.ultima,
+                           " + (SuspensionesDisponibles ? "su.hasta AS suspendida_hasta, su.razon AS razon_suspension" : "NULL AS suspendida_hasta, NULL AS razon_suspension") + @"
+                    FROM usuarios u" + (SuspensionesDisponibles ? @"
+                    LEFT JOIN suspensiones su ON su.idsuspensiones =
+                        (SELECT x.idsuspensiones FROM suspensiones x
+                          WHERE x.usuarios_idusuarios = u.idusuarios AND x.levantada_en IS NULL AND x.hasta > NOW()
+                          ORDER BY x.hasta DESC LIMIT 1)" : "") + @"
                     LEFT JOIN carrera_grupo_semestre cgs ON cgs.idcarrera_grupo_semestre =
                         (SELECT MAX(x.idcarrera_grupo_semestre) FROM carrera_grupo_semestre x
                           WHERE x.usuarios_numero_identificador = u.idusuarios)
@@ -90,7 +111,8 @@ namespace DigLab.conexion
                     LEFT JOIN grupos g    ON g.idgrupos = cgs.grupos_idgrupos
                     LEFT JOIN semestres s ON s.idsemestres = cgs.semestres_idsemestres
                     LEFT JOIN (SELECT rb.fk_usuario, COUNT(*) AS bitacoras,
-                                      SUM(CASE WHEN " + Consultas.CondicionConFalla + @" THEN 1 ELSE 0 END) AS con_falla,
+                                      SUM(CASE WHEN " + Consultas.CondicionFallaPendiente(conexion) + @" THEN 1 ELSE 0 END) AS con_falla,
+                                      SUM(CASE WHEN " + Consultas.CondicionYaResuelta(conexion) + @" THEN 1 ELSE 0 END) AS resueltas,
                                       MAX(COALESCE(ca.fecha, DATE(ca.hora_registro))) AS ultima
                                  FROM registros_bitacoras rb
                                  INNER JOIN codigos_accesos ca ON ca.idcodigos_accesos = rb.fk_codigo_accesos" + (id.HasValue ? @"
@@ -119,7 +141,10 @@ namespace DigLab.conexion
                                 Semestre = Texto(reader, "numero_semestre"),
                                 Bitacoras = Convert.ToInt32(reader["bitacoras"]),
                                 BitacorasConFalla = Convert.ToInt32(reader["con_falla"]),
-                                UltimaBitacora = Fecha(reader, "ultima")
+                                BitacorasResueltas = Convert.ToInt32(reader["resueltas"]),
+                                UltimaBitacora = Fecha(reader, "ultima"),
+                                SuspendidaHasta = Fecha(reader, "suspendida_hasta"),
+                                RazonSuspension = reader["razon_suspension"] == DBNull.Value ? null : Convert.ToString(reader["razon_suspension"])
                             };
                             LeerComunes(reader, alumno);
                             lista.Add(alumno);
@@ -150,6 +175,7 @@ namespace DigLab.conexion
             {
                 string avisos = Esquema.EquiposSinInternet(conexion) ? "COALESCE(rb.equipos_sin_internet, '')" : "''";
                 bool conRetiro = Esquema.AsistenciaRetirable(conexion);
+                bool conResueltas = Esquema.FallasResueltas(conexion);
                 // sin_conexion con IF: TINYINT(1) llegaria como True/False (TreatTinyAsBoolean).
                 using (MySqlCommand comando = new MySqlCommand(@"
                     SELECT rb.idregistros_bitacoras, ca.idcodigos_accesos,
@@ -168,7 +194,8 @@ namespace DigLab.conexion
                            rb.registrado_en,
                            CASE WHEN " + Consultas.CondicionConFalla + @" THEN 1 ELSE 0 END AS con_falla,
                            " + avisos + @" AS avisa_sin_internet,
-                           " + (conRetiro ? "ar.retirada_en" : "NULL") + @" AS retirada_en
+                           " + (conRetiro ? "ar.retirada_en" : "NULL") + @" AS retirada_en,
+                           " + Consultas.ColumnasResuelta(conResueltas) + @"
                     FROM registros_bitacoras rb
                     INNER JOIN codigos_accesos ca ON ca.idcodigos_accesos = rb.fk_codigo_accesos
                     LEFT JOIN laboratorios l ON l.idlaboratorios = ca.laboratorios_idlaboratorios
@@ -176,6 +203,7 @@ namespace DigLab.conexion
                     LEFT JOIN grupos g       ON g.idgrupos = ca.grupos_idgrupos
                     LEFT JOIN usuarios p     ON p.idusuarios = ca.usuarios_idusuarios
                     " + (conRetiro ? "LEFT JOIN asistencias_retiradas ar ON ar.fk_bitacora = rb.idregistros_bitacoras" : "") + @"
+                    " + Consultas.JoinResuelta(conResueltas) + @"
                     WHERE rb.fk_usuario = @Id
                     ORDER BY fecha DESC, ca.hora_entrada DESC, rb.idregistros_bitacoras DESC", conexion))
                 {

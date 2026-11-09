@@ -40,6 +40,9 @@ namespace DigLab
         // reporte (o la cuenta de fallas de la sesion) va en un tono fuerte.
         private static readonly Color ColorConFalla = Color.FromArgb(255, 240, 214);
         private static readonly Color ColorFallaCelda = Color.FromArgb(255, 176, 79);
+        // Lo que ya se resolvio (db/26), igual pero en verde.
+        private static readonly Color ColorResuelta = VentanaHistorialAlumno.ColorResuelta;
+        private static readonly Color ColorResueltaCelda = VentanaHistorialAlumno.ColorResueltaCelda;
         // Avisos de equipos sin internet: texto naranja, el de los avisos del panel.
         private static readonly Color ColorAviso = Color.FromArgb(190, 85, 0);
         // Abajo, una asistencia que dio su docente (no es una bitacora): verde claro,
@@ -62,6 +65,8 @@ namespace DigLab
         private const string UnDia = "Un día...";
         private const string TodosLosLaboratorios = "Todos los laboratorios";
         private const string TodosLosGrupos = "Todos los grupos";
+        // Lo que ocupa la casilla "Solo fallas sin resolver" a la derecha del filtro de laboratorio.
+        private const int DesdeElLaboratorioAQuitarFiltros = 240;
 
         private readonly Consultas consultas = new Consultas();
         // Las asistencias que dio el profesor a quien no pudo registrar (db/22): no son
@@ -113,6 +118,11 @@ namespace DigLab
         private readonly Button btnPdf;
         private readonly Button btnLote;
         private readonly Button btnCorregir;
+        private readonly Button btnResolver;
+        // La base guarda lo que ya se resolvio (db/26): de la ultima lectura de las sesiones.
+        private bool conFallasResueltas;
+        // La franja de lo que reporto su docente, ya sin nada pendiente: en verde.
+        private bool franjaDocenteResuelta;
 
         // --- La vista previa del PDF, a la derecha de las listas ---------------
         // A la vista (true) o escondida (false) si la persona lo eligio ("Ocultar" o
@@ -209,6 +219,8 @@ namespace DigLab
             public int ConFallas;
             /// <summary>Las fallas que reporto su docente desde su panel (db/15).</summary>
             public int ReportesDocente;
+            /// <summary>Lo que ya se dio por resuelto (db/26), de sus estudiantes y de su docente: no cuenta en Fallas.</summary>
+            public int Resueltas;
             public int SinConexion;
             /// <summary>Equipos que sus alumnos avisaron sin internet (db/10).</summary>
             public List<EquipoSinInternet> SinInternet;
@@ -216,10 +228,21 @@ namespace DigLab
             /// <summary>Uso libre de un laboratorio sin codigos (db/14): sin clase ni profesor.</summary>
             public bool UsoLibre;
 
-            /// <summary>La columna Fallas: estudiantes con alguna falla mas lo que reporto su docente.</summary>
+            /// <summary>La columna Fallas: estudiantes con alguna falla sin resolver mas lo que reporto su docente sin resolver.</summary>
             public int Fallas
             {
                 get { return ConFallas + ReportesDocente; }
+            }
+
+            /// <summary>Lo que dice la columna: "2", "1 + ✓ 1" (una por resolver y una resuelta) o "✓ 2" (ya todas resueltas).</summary>
+            public string TextoFallas
+            {
+                get
+                {
+                    return Resueltas == 0 ? Fallas.ToString()
+                        : Fallas == 0 ? "✓ " + Resueltas
+                        : Fallas + " + ✓ " + Resueltas;
+                }
             }
 
             /// <summary>
@@ -330,10 +353,10 @@ namespace DigLab
                 Font = new DrawingFont("Century Gothic", 10F, FontStyle.Bold),
                 ForeColor = Color.DarkGreen,
                 Location = new Point(cboLaboratorio.Right + 20, 113),
-                Text = "Solo con fallas"
+                Text = "Solo fallas sin resolver"
             };
             chkSoloFallas.CheckedChanged += (s, e) => Aplicar(null);
-            ayuda.SetToolTip(chkSoloFallas, "Las sesiones con alguna falla reportada (por sus estudiantes o su docente) o con algún aviso de equipos sin internet.");
+            ayuda.SetToolTip(chkSoloFallas, "Las sesiones con alguna falla por resolver (de sus estudiantes o de su docente) o con algún aviso de equipos sin internet.");
             Controls.Add(chkSoloFallas);
 
             lnkQuitarFiltros = new LinkLabel
@@ -342,7 +365,7 @@ namespace DigLab
                 Font = new DrawingFont("Century Gothic", 10F),
                 LinkColor = Color.DarkGreen,
                 ActiveLinkColor = Color.Green,
-                Location = new Point(cboLaboratorio.Right + 160, 114),
+                Location = new Point(cboLaboratorio.Right + DesdeElLaboratorioAQuitarFiltros, 114),
                 Text = "Quitar filtros",
                 Visible = false
             };
@@ -377,9 +400,10 @@ namespace DigLab
             // laboratorio no lo ve (la columna, ademas, va vacia: ver LeerSesion).
             grid.Columns["codigo"].Visible = Permisos.VeCodigosDeProfesor;
             grid.Columns["alumnos"].ToolTipText = "Estudiantes que registraron bitácora en la sesión.";
-            grid.Columns["fallas"].ToolTipText = idProfesor == 0
+            grid.Columns["fallas"].ToolTipText = (idProfesor == 0
                 ? "Estudiantes que reportaron alguna falla o comentario, más las fallas que reportó su docente."
-                : "Estudiantes que reportaron alguna falla o comentario, más las fallas que reportaste.";
+                : "Estudiantes que reportaron alguna falla o comentario, más las fallas que reportaste.")
+                + " En naranja, las que faltan por resolver; con ✓, las ya resueltas.";
             grid.Columns["sin_internet"].ToolTipText = "Otros equipos que se avisaron sin internet; los más avisados primero.";
             foreach (DataGridViewColumn columna in grid.Columns)
             {
@@ -679,13 +703,14 @@ namespace DigLab
             cerrar.Click += (s, e) => Close();
             CancelButton = cerrar;
             SeparacionAbajo(20);
-            btnLote = BotonAbajo("PDF de las sesiones", 230);
+            // Mas angostos desde "Resolver fallas...": a 1366 de ancho, el resumen de la izquierda no cabria.
+            btnLote = BotonAbajo("PDF de las sesiones", 200);
             btnLote.Click += (s, e) => DescargarLote();
             ayuda.SetToolTip(btnLote, "Un PDF por cada sesión que muestra la lista con los filtros de arriba.");
-            btnPdf = BotonAbajo("PDF de esta sesión", 180);
+            btnPdf = BotonAbajo("PDF de esta sesión", 170);
             btnPdf.Click += (s, e) => DescargarPdf();
             SeparacionAbajo(20);
-            btnCorregir = BotonAbajo("Corregir registro", 170);
+            btnCorregir = BotonAbajo("Corregir registro", 155);
             btnCorregir.Click += (s, e) => CorregirSeleccionado();
             // Corregir un registro es solo de la administracion: el profesor y la persona
             // responsable del laboratorio (solo consulta) nunca lo hacen, asi que no lo
@@ -695,6 +720,17 @@ namespace DigLab
             if (puedeCorregir)
             {
                 ayuda.SetToolTip(btnCorregir, "Corrige el equipo o las fallas del registro elegido abajo. También con doble clic.");
+            }
+
+            // Tambien solo de la administracion (a los demas ni se les crea: no le quita
+            // sitio a la linea de abajo), y si la base guarda lo resuelto (db/26): lo
+            // enciende ActualizarBotones.
+            if (puedeCorregir)
+            {
+                btnResolver = BotonAbajo("Resolver fallas...", 150);
+                btnResolver.Click += (s, e) => ResolverFallas();
+                btnResolver.Visible = false;
+                ayuda.SetToolTip(btnResolver, "Marca lo que ya se arregló en esta sesión: deja de salir en naranja y en Alertas, y su PDF lo dice al final.");
             }
 
             esperaDetalle.Tick += (s, e) =>
@@ -718,6 +754,7 @@ namespace DigLab
             {
                 tabla = consultas.ObtenerSesionesAdministrador(idProfesor);
                 desfaseServidor = Consultas.DesfaseServidor(tabla);
+                conFallasResueltas = tabla.Columns.Contains("fallas_resueltas");
             }
             catch (Exception ex)
             {
@@ -851,6 +888,8 @@ namespace DigLab
                 Alumnos = Entero(fila, "alumnos"),
                 ConFallas = Entero(fila, "con_fallas"),
                 ReportesDocente = fila.Table.Columns.Contains("reportes_docente") ? Entero(fila, "reportes_docente") : 0,
+                Resueltas = (fila.Table.Columns.Contains("fallas_resueltas") ? Entero(fila, "fallas_resueltas") : 0)
+                    + (fila.Table.Columns.Contains("reportes_resueltos") ? Entero(fila, "reportes_resueltos") : 0),
                 SinConexion = Entero(fila, "sin_conexion"),
                 SinInternet = Consultas.ContarSinInternet(new[] { Texto(fila, "sin_internet") }),
                 UsoLibre = fila.Table.Columns.Contains("uso_libre") && Entero(fila, "uso_libre") == 1
@@ -907,7 +946,7 @@ namespace DigLab
                 {
                     cboLaboratorio.Width = anchoCaja;
                     chkSoloFallas.Left = cboLaboratorio.Right + 20;
-                    lnkQuitarFiltros.Left = cboLaboratorio.Right + 160;
+                    lnkQuitarFiltros.Left = cboLaboratorio.Right + DesdeElLaboratorioAQuitarFiltros;
                 }
             }
 
@@ -1009,7 +1048,7 @@ namespace DigLab
                     // En mayusculas, como se dicta (el nombre del PDF lo lleva como siempre).
                     EstiloAdmin.Codigo(s.Codigo),
                     s.SinConexion > 0 ? s.Alumnos + "*" : s.Alumnos.ToString(),
-                    s.Fallas.ToString(),
+                    s.TextoFallas,
                     string.Join(", ", s.SinInternet.Select(e => e.Equipo))
                 },
                 s => false, s => s.Id.ToString(), seleccionarId);
@@ -1041,10 +1080,17 @@ namespace DigLab
                     fila.Cells["sin_internet"].ToolTipText = Consultas.DescribirSinInternet(sesion.SinInternet, false) + ".";
                 }
 
-                if (sesion.ReportesDocente > 0)
-                {
-                    fila.Cells["fallas"].ToolTipText = (sesion.ConFallas == 0 ? "" : Plural(sesion.ConFallas, "estudiante", "estudiantes") + " con fallas y ")
+                string ayudaFallas = sesion.ReportesDocente == 0 ? ""
+                    : (sesion.ConFallas == 0 ? "" : Plural(sesion.ConFallas, "estudiante", "estudiantes") + " con fallas y ")
                         + Plural(sesion.ReportesDocente, "falla", "fallas") + (idProfesor == 0 ? " que reportó su docente." : " que reportaste.");
+                if (sesion.Resueltas > 0)
+                {
+                    ayudaFallas += (ayudaFallas.Length > 0 ? " " : "") + (sesion.Resueltas == 1 ? "1 ya resuelta." : sesion.Resueltas + " ya resueltas.");
+                }
+
+                if (ayudaFallas.Length > 0)
+                {
+                    fila.Cells["fallas"].ToolTipText = ayudaFallas;
                 }
             }
 
@@ -1070,6 +1116,7 @@ namespace DigLab
             int bitacoras = visibles.Sum(s => s.Alumnos);
             int conFallas = visibles.Sum(s => s.ConFallas);
             int delDocente = visibles.Sum(s => s.ReportesDocente);
+            int resueltas = visibles.Sum(s => s.Resueltas);
             if (sesiones.Count == 0)
             {
                 lblResumen.Text = "Todavía no hay sesiones: aparecen cuando alguien usa el código de una clase.";
@@ -1080,13 +1127,17 @@ namespace DigLab
             }
             else
             {
+                string deLasFallas = resueltas > 0
+                    // Corto: a 1366 de ancho, junto a los botones, no cabe mucho mas.
+                    ? ", " + (conFallas + delDocente == 0 ? "sin fallas por resolver" : Plural(conFallas + delDocente, "falla por resolver", "fallas por resolver"))
+                        + ", " + (resueltas == 1 ? "1 resuelta" : resueltas + " resueltas")
+                    : (conFallas > 0 ? ", " + conFallas + " con fallas" : ", ninguna con fallas")
+                        + (delDocente == 0 ? ""
+                            : idProfesor == 0 ? "; " + Plural(delDocente, "falla reportada", "fallas reportadas") + " por docentes"
+                            : "; " + Plural(delDocente, "falla", "fallas") + " que reportaste");
                 lblResumen.Text = (visibles.Count == sesiones.Count ? "" : visibles.Count + " de ")
                     + Plural(sesiones.Count, "sesión", "sesiones") + ": "
-                    + Plural(bitacoras, "bitácora", "bitácoras")
-                    + (conFallas > 0 ? ", " + conFallas + " con fallas" : ", ninguna con fallas")
-                    + (delDocente == 0 ? ""
-                        : idProfesor == 0 ? "; " + Plural(delDocente, "falla reportada", "fallas reportadas") + " por docentes"
-                        : "; " + Plural(delDocente, "falla", "fallas") + " que reportaste") + ".";
+                    + Plural(bitacoras, "bitácora", "bitácoras") + deLasFallas + ".";
             }
 
             ActualizarBotones();
@@ -1134,6 +1185,12 @@ namespace DigLab
                 : visibles.Count == 1 ? "PDF de 1 sesión"
                 : "PDF de las " + visibles.Count + " sesiones";
             btnCorregir.Enabled = puedeCorregir && AlumnoSeleccionado() != null;
+            if (btnResolver != null)
+            {
+                SesionInfo elegida = Seleccionado<SesionInfo>();
+                btnResolver.Visible = conFallasResueltas;
+                btnResolver.Enabled = elegida != null && elegida.Fallas + elegida.Resueltas + elegida.SinInternet.Count > 0;
+            }
 
             // Al moverse por la lista con las flechas no se consulta en cada fila.
             esperaDetalle.Stop();
@@ -1178,6 +1235,14 @@ namespace DigLab
                 // Elegida o no, la cuenta sigue en naranja; el resto de la fila marca la seleccion.
                 e.CellStyle.BackColor = ColorFallaCelda;
                 e.CellStyle.SelectionBackColor = ColorFallaCelda;
+                e.CellStyle.SelectionForeColor = Color.Black;
+                e.CellStyle.Font = negrita;
+            }
+            else if (columna == "fallas" && sesion.Resueltas > 0)
+            {
+                // Ya todas resueltas: en verde. Elegida, la cuenta sigue en verde, como el naranja.
+                e.CellStyle.BackColor = ColorResueltaCelda;
+                e.CellStyle.SelectionBackColor = ColorResueltaCelda;
                 e.CellStyle.SelectionForeColor = Color.Black;
                 e.CellStyle.Font = negrita;
             }
@@ -1246,7 +1311,7 @@ namespace DigLab
                     Texto(fila, "numero_identificador"),
                     Texto(fila, "hora_registro"),
                     EstiloAdmin.Guion(Texto(fila, "numero_computadora")),
-                    Consultas.DescribirFallas(fila));
+                    Consultas.DescribirConEstado(fila));
                 gridAlumnos.Rows[indice].Tag = fila;
             }
 
@@ -1273,16 +1338,19 @@ namespace DigLab
                 ? "Nadie ha registrado su bitácora todavía. F5 actualiza."
                 : "Nadie registró su bitácora en esta sesión.");
 
-            int conFallas = tabla.Rows.Cast<DataRow>().Count(Consultas.ConFalla);
+            int conFallas = tabla.Rows.Cast<DataRow>().Count(Consultas.FallaPendiente);
+            int resueltas = tabla.Rows.Cast<DataRow>().Count(Consultas.Resuelta) + reportes.Count(r => r.Resuelta);
             int dadas = lasDadas.Count;
             // Con esto se sabe si el PDF guardado de la vista previa sigue al dia (PrepararVista).
             firmaMostrada = FirmaDeLaSesion(tabla, dadas, reportes);
             // En "Mis bitacoras" la sesion es del profesor que la ve: se le habla a el.
             lblSesionTitulo.Text += (tabla.Rows.Count == 0
                     ? ": nadie registró bitácora"
-                    : ": " + Plural(tabla.Rows.Count, "estudiante", "estudiantes") + (conFallas > 0 ? ", " + conFallas + " con fallas" : ", sin fallas"))
+                    : ": " + Plural(tabla.Rows.Count, "estudiante", "estudiantes")
+                        + (conFallas > 0 ? ", " + conFallas + " con fallas" : resueltas > 0 ? "" : ", sin fallas"))
                 + (reportes.Count == 0 ? ""
                     : (idProfesor == 0 ? "; su docente reportó " : "; reportaste ") + Plural(reportes.Count, "falla", "fallas"))
+                + (resueltas == 0 ? "" : "; " + (resueltas == 1 ? "1 ya resuelta" : resueltas + " ya resueltas"))
                 + (dadas == 0 ? ""
                     : (idProfesor == 0 ? "; su docente dio " : "; diste ") + Plural(dadas, "asistencia", "asistencias") + " sin bitácora");
 
@@ -1363,7 +1431,13 @@ namespace DigLab
         /// <summary>La franja con lo que reporto el docente, un renglon por reporte; sin ninguno, oculta.</summary>
         private void PonerReportesDocente(List<ReporteProfesor> reportes)
         {
-            string renglones = string.Join(Environment.NewLine, reportes.Select(r => r.Renglon));
+            string renglones = string.Join(Environment.NewLine, reportes.Select(r => r.RenglonConEstado));
+            // Ya todo resuelto (db/26): en verde, sin naranja.
+            franjaDocenteResuelta = reportes.Count > 0 && reportes.All(r => r.Resuelta);
+            pnlFranjaDocente.BackColor = franjaDocenteResuelta ? ColorResuelta : ColorConFalla;
+            pnlRenglonesDocente.BackColor = pnlFranjaDocente.BackColor;
+            lblReportesDocenteTitulo.ForeColor = franjaDocenteResuelta ? TextoDada : TituloReportes;
+            pnlFranjaDocente.Invalidate();
             lblReportesDocente.Text = renglones;
             pnlFranjaDocente.AccessibleName = renglones.Length == 0 ? null : lblReportesDocenteTitulo.Text + " " + renglones.Replace(Environment.NewLine, " ");
             pnlRenglonesDocente.AutoScrollPosition = Point.Empty;
@@ -1426,8 +1500,9 @@ namespace DigLab
         private void PintarMarcoReportes(object sender, PaintEventArgs e)
         {
             Rectangle r = pnlFranjaDocente.ClientRectangle;
-            using (SolidBrush barra = new SolidBrush(ColorFallaCelda))
-            using (Pen borde = new Pen(ColorFallaCelda))
+            Color color = franjaDocenteResuelta ? ColorResueltaCelda : ColorFallaCelda;
+            using (SolidBrush barra = new SolidBrush(color))
+            using (Pen borde = new Pen(color))
             {
                 e.Graphics.FillRectangle(barra, 0, 0, BarraFranja + 1, r.Height);
                 e.Graphics.DrawRectangle(borde, 0, 0, r.Width - 1, r.Height - 1);
@@ -1472,6 +1547,24 @@ namespace DigLab
             DataRow fila = etiqueta as DataRow;
             if (fila == null)
             {
+                return;
+            }
+
+            if (Consultas.Resuelta(fila))
+            {
+                // Ya se arreglo: como una falla, pero en verde. Elegida, el reporte sigue en verde.
+                if (columna == "reporte")
+                {
+                    e.CellStyle.BackColor = ColorResueltaCelda;
+                    e.CellStyle.SelectionBackColor = ColorResueltaCelda;
+                    e.CellStyle.SelectionForeColor = Color.Black;
+                    e.CellStyle.Font = negrita;
+                }
+                else
+                {
+                    e.CellStyle.BackColor = ColorResuelta;
+                }
+
                 return;
             }
 
@@ -1533,6 +1626,62 @@ namespace DigLab
             esperaDetalle.Stop();
             CargarDetalle(true, idAlumno);
             Avisar("Se corrigió el registro de " + alumno + ".");
+        }
+
+        /// <summary>
+        /// "Resolver fallas...": lo que se reporto en la sesion elegida, para marcar lo
+        /// que ya se arreglo. Lo marcado sale de naranja y de Alertas, y su PDF lo dice
+        /// al final (DialogoFallasResueltas). Solo la administracion: el docente y la
+        /// persona responsable no tienen el boton.
+        /// </summary>
+        private void ResolverFallas()
+        {
+            if (Permisos.Bloquear(this, "Dar por resueltas las fallas de una sesion")) return;
+            SesionInfo sesion = Seleccionado<SesionInfo>();
+            if (sesion == null || !puedeCorregir)
+            {
+                return;
+            }
+
+            List<FallaDeSesion> fallas;
+            try
+            {
+                fallas = FallasResueltasDatos.DeLaSesion(sesion.Id);
+            }
+            catch (Exception ex)
+            {
+                AvisoDeFalloAdmin.Mostrar(this, "Leer las fallas de la sesion " + sesion.Id, ex, "No se pudieron leer las fallas de esta sesión", Text);
+                return;
+            }
+
+            if (fallas.Count == 0)
+            {
+                Avisar("En esta sesión ya no hay nada reportado: alguien lo corrigió mientras tanto.");
+                Recargar(sesion.Id.ToString());
+                return;
+            }
+
+            int marcadas, desmarcadas;
+            string deQue = sesion.FechaCorta + ", " + sesion.Horario + ", " + EstiloAdmin.Guion(sesion.Materia)
+                + (sesion.Laboratorio.Length > 0 ? ", en " + sesion.Laboratorio : "") + ".";
+            using (DialogoFallasResueltas dialogo = new DialogoFallasResueltas(sesion.Id, fallas, deQue))
+            {
+                if (dialogo.ShowDialog(this) != DialogResult.OK)
+                {
+                    return;
+                }
+
+                marcadas = dialogo.Resueltas;
+                desmarcadas = dialogo.Reabiertas;
+            }
+
+            Recargar(sesion.Id.ToString());
+            esperaDetalle.Stop();
+            CargarDetalle(true, null);
+            Avisar(marcadas > 0 && desmarcadas > 0 ? "Se resolvieron " + marcadas + " y " + desmarcadas + " quedaron sin resolver otra vez."
+                : marcadas == 1 ? "Quedó resuelta."
+                : marcadas > 1 ? "Quedaron resueltas " + marcadas + "."
+                : desmarcadas == 1 ? "Quedó sin resolver otra vez." : "Quedaron sin resolver otra vez " + desmarcadas + ".");
         }
 
         // =====================================================================
@@ -1807,7 +1956,7 @@ namespace DigLab
             StringBuilder firma = new StringBuilder();
             firma.Append(registros.Rows.Count.ToString(CultureInfo.InvariantCulture)).Append('|')
                 .Append(dadas.ToString(CultureInfo.InvariantCulture)).Append('|')
-                .Append(string.Join(",", reportes.Select(r => r.Id.ToString(CultureInfo.InvariantCulture))));
+                .Append(string.Join(",", reportes.Select(r => r.Id.ToString(CultureInfo.InvariantCulture) + (r.Resuelta ? ":" + r.TextoResuelta : ""))));
             foreach (DataRow fila in registros.Rows)
             {
                 firma.Append('\n');

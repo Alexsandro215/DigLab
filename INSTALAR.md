@@ -64,7 +64,7 @@ no lo arma.
 | Qué se le hace | Nada: ni contraseña ni permisos cambian | Se crea sin permisos de administrador |
 | Contraseña | La que ya tiene; Windows la comprueba antes de instalar (vacía si no tiene) | La inventas |
 | Tras la bitácora | Su escritorio normal, con sus programas y permisos | Limitado |
-| Para llegar al escritorio sin bitácora | **La memoria de emergencia** (o otra cuenta, si hay) | `Ctrl+Alt+Supr`, **Cambiar de usuario** |
+| Para llegar al escritorio sin bitácora | **Una memoria de emergencia** registrada en DigLab (o otra cuenta, si hay) | `Ctrl+Alt+Supr`, **Cambiar de usuario** |
 | Al desinstalar | Vuelve a como estaba; nunca se ofrece borrarla | Pregunta si borrarla |
 
 Con la que ya tiene el equipo, y si es administradora, cualquiera que registre su
@@ -80,8 +80,17 @@ puede usar así: el asistente lo rechaza.
 conexión, los ajustes y los datos. En un kiosco cierra la sesión del laboratorio si
 está abierta (matar DigLab no basta: Windows lo vuelve a abrir), así que nadie debe
 estar usando el equipo; al terminar pide reiniciar. Con la cuenta que ya tenía el
-equipo se actualiza desde su propio escritorio (entra con la memoria de emergencia) y
+equipo se actualiza desde su propio escritorio (entra con una memoria de emergencia) y
 esa sesión no se cierra.
+
+**Las memorias de emergencia ya no se autorizan al instalar** (desde `db/28`): se
+registran una vez en DigLab, en **Laboratorios → Memorias de emergencia...**, con la
+memoria conectada a la computadora de la administración, y **cualquiera de ellas abre
+cualquier equipo del laboratorio**. Regístralas antes de instalar los equipos: el
+asistente copia la lista de la base al equipo (para cuando no haya servidor) y avisa si
+no hay ninguna. Después la renueva el vigilante cada 10 minutos. Mientras no haya
+ninguna registrada, un equipo instalado antes sigue aceptando la memoria que se le
+autorizó entonces.
 
 **Desinstalar** deshace el kiosco (inicio automático, shell y directivas de la
 cuenta, vigilante) y borra `C:\DigLab`. Pregunta aparte si borrar los datos locales
@@ -158,7 +167,7 @@ deploy\             Los guiones de instalación y diagnóstico (preparar_bd.ps1
                     deja MySQL listo con el esquema y datos de prueba)
 db\                 Esquema, datos de prueba y migraciones
 DigLab\bin\Release  La aplicación
-DigLab.Vigilante\bin\Release  El servicio que cierra la sesión a la hora
+DigLab.Vigilante\bin\Release  El servicio que reinicia el equipo al terminar la clase
 ```
 
 ## La forma facil: el instalador
@@ -411,9 +420,10 @@ Qué es cada cosa:
 - **`-CarpetaDatos "T:\DigLabDatos"`** — **sólo con Deep Freeze**, apuntando a un
   ThawSpace. Sin ella se pierden cada noche las bitácoras que aún no llegaron al
   servidor. El guion se niega a seguir si detecta Deep Freeze y no la indicas.
-- **`-AutorizarMemoria`** — opcional. Deja autorizada como llave de emergencia
-  la memoria USB conectada en ese momento (tiene que haber **exactamente una**).
-  Ver más abajo.
+- **`-AutorizarMemoria`** — opcional, y ya no hace falta con `db/28`: las
+  memorias se registran en DigLab y valen en todos los equipos (ver más abajo).
+  Deja autorizada solo en este equipo la memoria USB conectada en ese momento
+  (tiene que haber **exactamente una**); vale mientras no haya ninguna registrada.
 
 ## B3. Comprobar
 
@@ -459,8 +469,8 @@ llaman "contrasena" en pantallas parecidas.
 
 | Que | Quien la pone | Donde hace falta despues | Donde acaba guardada |
 |---|---|---|---|
-| MySQL `digbit_equipo` | la inventas al preparar el servidor | cada maquina de laboratorio y cada equipo docente | `connections.config` de cada equipo, **en claro** |
-| MySQL `digbit_admin` | la inventas al preparar el servidor | el equipo de la administracion | `connections.config` de ese equipo, **en claro** |
+| MySQL `digbit_equipo` | la inventas al preparar el servidor | cada maquina de laboratorio y cada equipo docente | `connections.config` de cada equipo, **cifrada para ese equipo** (con DigLab-Setup.exe; con los guiones de `deploy\`, en claro) |
+| MySQL `digbit_admin` | la inventas al preparar el servidor | el equipo de la administracion | `connections.config` de ese equipo, **cifrada para ese equipo** (igual) |
 | MySQL `digbit_consulta` | la pone db/18, al azar | ninguna a mano: DigLab la lee de la base cuando entra una persona responsable de laboratorio | tabla `configuracion` (`consulta_clave`), **en claro** |
 | Cuenta de Windows del laboratorio | la inventas al instalar cada maquina | Windows, para el inicio automatico | el registro, **en claro** |
 | MySQL `root` | nadie: se queda vacia | solo desde el propio servidor | — |
@@ -470,10 +480,19 @@ Las dos primeras son las que hay que apuntar y guardar: sin ellas no se puede
 configurar ni un equipo mas. Las demas o se inventan sobre la marcha, o las pone
 una migracion, o no existen.
 
-**Las que dicen "en claro" son a proposito, y son el limite de este
-diseno.** El `connections.config` de una maquina de laboratorio lo puede leer
-quien usa el equipo, porque DigLab corre con su sesion de Windows; por eso esa
-maquina lleva `digbit_equipo` y nunca `digbit_admin`. Quien lo lea puede meter
+**La de `connections.config` va cifrada, pero eso no basta: es el limite de
+este diseno.** El `connections.config` de una maquina de laboratorio lo puede leer
+quien usa el equipo, porque DigLab corre con su sesion de Windows. Desde el
+2026-11-08, DigLab-Setup.exe escribe la conexion **cifrada para ese equipo**
+(DPAPI de la maquina, `Infraestructura\CadenaCifrada.cs`): quien abre el archivo ve
+`cifrada:AQAAANCM...`, y copiado a otra computadora no sirve. Al actualizar un equipo
+que la tenia en claro, la cifra solo. Eso detiene al curioso, no a quien sabe
+programar y corre codigo en el equipo: cualquier programa de esa maquina puede
+descifrarla, porque DigLab tiene que poder. Por eso esa maquina lleva
+`digbit_equipo` y nunca `digbit_admin` (ni la cuenta con todos los permisos de la
+base, que es con la que estaban los equipos de la escuela en noviembre de 2026).
+Si un equipo dice que su conexion "no se puede descifrar" (se copio de otro, o se
+reimagino desde otro), se vuelve a instalar: el asistente pide otra vez la base. Quien lo lea puede meter
 bitacoras falsas, crear cuentas de estudiante, cambiar la contrasena de
 estudiantes y docentes (ver A3) y leer el secreto de los codigos generados, con
 el que se calcula el codigo de cualquier clase y dia; pero no puede borrar el
@@ -520,15 +539,35 @@ Además del login, en modo kiosco hay dos botones abajo a la derecha:
 **Apagar el equipo.** Con confirmación. Sin él, la única forma de apagar sería
 `Ctrl+Alt+Supr`, que mucha gente no conoce.
 
-**Acceso de emergencia.** Pide la memoria USB autorizada y abre el escritorio
+**Acceso de emergencia.** Pide una memoria USB de emergencia y abre el escritorio
 **sin bitácora**, para cuando no hay servidor y el laboratorio se quedaría
 inservible. Se identifica por el número de serie del firmware de la memoria: no
 se puede duplicar copiando archivos. El acceso dura hasta que el equipo se
-reinicie, y cada uso queda en el log.
+reinicie, y cada uso queda en el log, con el número de la memoria.
 
-Es una puerta a propósito en lo único que el sistema existe para obligar. Esa
-memoria va en el llavero de la persona responsable del laboratorio, no en un
-cajón.
+Las memorias se registran en DigLab (**Laboratorios → Memorias de emergencia...**,
+con la memoria conectada a la computadora de la administración, un nombre para
+reconocerla y la contraseña de quien la registra; hasta 20). Cualquiera de ellas abre
+cualquier equipo. En la base va su número de serie cifrado, nunca en claro. Con
+servidor manda la lista de la base; sin él, la copia que cada equipo guarda en
+`C:\DigLab\memorias_emergencia.txt`, donde un estudiante no puede escribir. La copia la
+deja el instalador y la renueva el vigilante cada 10 minutos: lo que registres o quites
+llega a los equipos con conexión en menos de 10 minutos, y a los demás al volver la
+conexión. Con Deep Freeze, al reiniciar vuelve la copia del día que se congeló hasta
+que el vigilante la renueva. Una memoria barata que no trae un número de serie propio
+(otras iguales dicen lo mismo) no se deja registrar.
+
+Es una puerta a propósito en lo único que el sistema existe para obligar. Cada
+memoria va en el llavero de una persona responsable, no en un cajón; si una se
+pierde, quítala en esa misma ventana.
+
+**Al terminar la clase el equipo se reinicia.** La hora de salida es el fin de la
+clase con cuyo código se registró la bitácora (no una hora fija): avisa 5 minutos
+antes y en el último minuto, y a esa hora reinicia el equipo, cerrando los
+programas sin preguntar; con Deep Freeze vuelve limpio para la siguiente clase. Lo
+hace el vigilante aunque DigLab no esté. Si Windows no acepta el reinicio, cierra la
+sesión, como antes. Quien se va antes («Cerrar mi sesión ahora», en la bandeja) solo
+cierra su sesión.
 
 **Si se va la luz a media clase**, quien ya registró su bitácora vuelve
 a entrar con su código y DigLab le pregunta si quiere seguir usando el equipo
@@ -565,7 +604,7 @@ También sirve mantener `Mayús` pulsada durante el arranque para saltar el inic
 automático.
 
 Eso solo sirve si hay **otra** cuenta. Si el kiosco usa la única cuenta del equipo,
-entrar con ella abre DigLab: el camino es la **memoria de emergencia**, que abre su
+entrar con ella abre DigLab: el camino es una **memoria de emergencia**, que abre su
 escritorio hasta reiniciar.
 
 ## Deshacerlo

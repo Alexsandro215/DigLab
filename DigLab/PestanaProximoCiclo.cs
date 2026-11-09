@@ -81,7 +81,13 @@ namespace DigLab
         /// </summary>
         public static string TituloDeCruce(string mensaje)
         {
-            return (mensaje ?? "").Contains(": mismo laboratorio") ? "Laboratorio ocupado" : "Choque de horario";
+            return EsDelMismoLaboratorio(mensaje) ? "Laboratorio ocupado" : "Choque de horario";
+        }
+
+        /// <summary>Si ese aviso de HorariosDatos dice que la hora ya la tiene otra clase del mismo laboratorio.</summary>
+        public static bool EsDelMismoLaboratorio(string mensaje)
+        {
+            return (mensaje ?? "").Contains(": mismo laboratorio");
         }
 
         /// <summary>El menu de una clase: "Cambiar horas de Bases de Datos con ISC-5002 (lunes de 06:00 a 08:00)...".</summary>

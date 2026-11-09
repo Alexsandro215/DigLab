@@ -5,5 +5,5 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyDescription("Configura el equipo durante la instalacion de DigLab")]
 [assembly: AssemblyProduct("DigLab")]
 [assembly: ComVisible(false)]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.2.0.0")]
+[assembly: AssemblyFileVersion("1.2.0.0")]

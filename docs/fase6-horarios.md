@@ -416,6 +416,16 @@ horario a lo que esa extra canceló o recortó (`CancelacionesBajoExtra`), y
 *Quitar cancelación* quita también lo que le quedaba a la clase
 (`RestosDeCancelacion`); ninguno toca algo que ya tenga bitácoras.
 
+**Poner otra clase solo un día** (2026-11-06, sin migración): el menú de una
+clase en Horario semanal ofrece «Poner otra clase solo el lunes 09/11...», con
+las horas de la clase, que se pueden acortar, y usa la misma
+`AplicarExcepcion`. Antes, un clic en una clase solo daba el menú, y al cambio
+de un día se llegaba arrastrando sobre varios cuadros: en una clase de un solo
+cuadro no había forma. Si ya pasó sale apagado con «(ya pasó)». «Dar una sesión
+extra...» de Cambios de un día ya no se queda en «Laboratorio ocupado»: pregunta
+si se quita lo que hay a esa hora solo ese día. Un choque de la misma persona
+docente o del mismo grupo en otro laboratorio sigue sin dejarlo, y no cambia nada.
+
 ### `codigos_accesos` (ahora "sesión")
 
 - Nuevas: `horarios_idhorarios INT NULL` y

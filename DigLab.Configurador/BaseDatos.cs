@@ -62,6 +62,9 @@ namespace DigLab.Configurador
                     Salida.Escribir("LAB", nombre);
                 }
 
+                // Para avisar si el equipo quedaria sin memoria de emergencia (db/28).
+                int? memorias = MemoriasRegistradas(cadena);
+                Salida.Escribir("MEMORIAS", memorias.HasValue ? memorias.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "NO");
                 return nombres;
             }
             catch (Exception ex)
@@ -94,6 +97,28 @@ namespace DigLab.Configurador
             }
 
             return nombres;
+        }
+
+        /// <summary>
+        /// Cuantas memorias de emergencia hay registradas en la base (db/28), o null si la
+        /// base no las tiene o esta cuenta no puede leerlas.
+        /// </summary>
+        public static int? MemoriasRegistradas(string cadena)
+        {
+            try
+            {
+                using (MySqlConnection conexion = new MySqlConnection(cadena + ";Connection Timeout=8"))
+                using (MySqlCommand consulta = conexion.CreateCommand())
+                {
+                    conexion.Open();
+                    consulta.CommandText = "SELECT COUNT(*) FROM memorias_emergencia WHERE quitada_en IS NULL";
+                    return Convert.ToInt32(consulta.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+                }
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         private static bool EsAccesoDenegado(Exception ex)

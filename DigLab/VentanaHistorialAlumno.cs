@@ -37,6 +37,10 @@ namespace DigLab
         // fuerte. Tambien la lista de Estudiantes, a quien reporto fallas.
         internal static readonly Color ColorConFalla = Color.FromArgb(255, 240, 214);
         internal static readonly Color ColorFallaCelda = Color.FromArgb(255, 176, 79);
+        // Lo mismo en verde, cuando ya se resolvio (db/26): Bitacoras, la bitacora de la
+        // clase, Estudiantes y este historial.
+        internal static readonly Color ColorResuelta = Color.FromArgb(221, 242, 224);
+        internal static readonly Color ColorResueltaCelda = Color.FromArgb(129, 199, 132);
         private static readonly Color ColorAviso = Color.FromArgb(190, 85, 0);
         // La asistencia que le dio su profesor, en el verde de su casilla en Mis grupos
         // (el estilo "Bueno" de Excel).
@@ -91,7 +95,10 @@ namespace DigLab
             public bool SinConexion;
             /// <summary>Cuando su profesor le quito esta asistencia (db/17), o null.</summary>
             public DateTime? RetiradaEn;
+            /// <summary>Reporta una falla o un comentario sin resolver: en naranja.</summary>
             public bool ConFalla;
+            /// <summary>Lo que reporta ya se resolvio (db/26): en verde.</summary>
+            public bool Resuelta;
             public string Reporte;
             public string TextoBusqueda;
 
@@ -330,7 +337,8 @@ namespace DigLab
                 RegistradoEn = Fecha(fila, "registrado_en"),
                 SinConexion = Entero(fila, "sin_conexion") == 1,
                 RetiradaEn = Fecha(fila, "retirada_en"),
-                ConFalla = Consultas.ConFalla(fila)
+                ConFalla = Consultas.FallaPendiente(fila),
+                Resuelta = Consultas.Resuelta(fila)
             };
             registro.Reporte = DescribirReporte(registro);
             registro.TextoBusqueda = EstiloAdmin.Normalizar(string.Join(" ", registro.FechaCorta,
@@ -348,9 +356,10 @@ namespace DigLab
         private static string DescribirReporte(Registro registro)
         {
             List<string> partes = new List<string>();
-            if (registro.ConFalla || Consultas.AvisoSinInternet(registro.Fila).Length > 0)
+            if (Consultas.ConFalla(registro.Fila) || Consultas.AvisoSinInternet(registro.Fila).Length > 0)
             {
-                partes.Add(Consultas.DescribirFallas(registro.Fila));
+                // Lo que ya se resolvio (db/26) tambien se dice: "... Resuelta el 06/11/2026".
+                partes.Add(Consultas.DescribirConEstado(registro.Fila));
             }
 
             if (registro.SinConexion)
@@ -536,19 +545,20 @@ namespace DigLab
                 return;
             }
 
-            if (registro.ConFalla)
+            if (registro.ConFalla || registro.Resuelta)
             {
                 if (columna == "reporte")
                 {
-                    // Elegida, la fila va con el color de seleccion y el reporte sigue en naranja.
-                    e.CellStyle.BackColor = ColorFallaCelda;
-                    e.CellStyle.SelectionBackColor = ColorFallaCelda;
+                    // Elegida, la fila va con el color de seleccion y el reporte sigue en naranja (o en verde, ya resuelto).
+                    Color celda = registro.Resuelta ? ColorResueltaCelda : ColorFallaCelda;
+                    e.CellStyle.BackColor = celda;
+                    e.CellStyle.SelectionBackColor = celda;
                     e.CellStyle.SelectionForeColor = Color.Black;
                     e.CellStyle.Font = negrita;
                 }
                 else
                 {
-                    e.CellStyle.BackColor = ColorConFalla;
+                    e.CellStyle.BackColor = registro.Resuelta ? ColorResuelta : ColorConFalla;
                 }
             }
             else if (columna == "reporte")
@@ -790,8 +800,22 @@ namespace DigLab
                 }
             }
 
+            // Las suspensiones de su acceso (db/27) tambien son datos suyos; vacia sin la
+            // migracion. Si no se pueden leer, no se le entrega un archivo con menos.
+            List<Suspension> suspensiones;
+            try
+            {
+                suspensiones = SuspensionesDatos.DelEstudiante(alumno.Id);
+            }
+            catch (Exception ex)
+            {
+                AvisoDeFalloAdmin.Mostrar(dueno, "Leer las suspensiones del alumno id " + alumno.Id + " para exportarlas", ex,
+                    "No se pudieron leer sus suspensiones, así que no se exportó nada", Titulo);
+                return null;
+            }
+
             string ruta = ElegirArchivo(dueno, "Exportar los datos de " + alumno.NombreCompleto, alumno.Matricula);
-            if (ruta == null || !Escribir(dueno, ruta, CsvDeEstudiante(alumno, bitacoras, dadas), "Exportar los datos del alumno " + alumno.Matricula))
+            if (ruta == null || !Escribir(dueno, ruta, CsvDeEstudiante(alumno, bitacoras, dadas, suspensiones), "Exportar los datos del alumno " + alumno.Matricula))
             {
                 return null;
             }
@@ -912,7 +936,7 @@ namespace DigLab
         /// lo que reporto tal como se guardo; y, si las tiene (db/22), otra con las
         /// asistencias que le dio su profesor sin bitacora, tambien las anuladas.
         /// </summary>
-        private static string CsvDeEstudiante(AlumnoInfo alumno, DataTable bitacoras, List<AsistenciaDada> dadas)
+        private static string CsvDeEstudiante(AlumnoInfo alumno, DataTable bitacoras, List<AsistenciaDada> dadas, List<Suspension> suspensiones)
         {
             dadas = dadas ?? new List<AsistenciaDada>();
             int dadasQueCuentan = dadas.Count(d => d.Activa);
@@ -1005,6 +1029,21 @@ namespace DigLab
                         dada.Comentario,
                         dada.Activa ? ""
                             : dada.AnuladaEn.HasValue ? dada.AnuladaEn.Value.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture) : "Sí");
+                }
+            }
+
+            if (suspensiones.Count > 0)
+            {
+                csv.Append("\r\n");
+                Renglon(csv, "Suspensiones de su acceso");
+                Renglon(csv, "Desde", "Hasta", "Razón", "Se quitó antes de tiempo");
+                foreach (Suspension suspension in suspensiones)
+                {
+                    Renglon(csv,
+                        suspension.Desde.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture),
+                        suspension.Hasta.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture),
+                        suspension.Razon,
+                        suspension.LevantadaEn.HasValue ? suspension.LevantadaEn.Value.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture) : "");
                 }
             }
 

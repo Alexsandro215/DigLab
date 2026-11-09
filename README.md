@@ -113,6 +113,9 @@ mysql -u root -p < db\22_asistencia_dada.sql
 mysql -u root -p < db\23_horarios_guardados.sql
 mysql -u root -p < db\24_docentes_siia.sql
 mysql -u root -p < db\25_horas_por_asignar.sql
+mysql -u root -p < db\26_fallas_resueltas.sql
+mysql -u root -p < db\27_suspensiones.sql
+mysql -u root -p < db\28_memorias_emergencia.sql
 ```
 
 O todas de una vez, con respaldo antes y revisión, desde PowerShell:
@@ -635,6 +638,13 @@ fecha actúan sobre las sesiones; «PDF de esta sesión» baja la sesión elegid
 «PDF de las sesiones», todas las filtradas. En «Corregir registro» se edita el
 registro seleccionado abajo.
 
+Con `db/26`, **«Resolver fallas...»** marca lo que ya se arregló de la sesión
+elegida, cada cosa con su casilla y, si se quiere, lo que se hizo. Lo marcado deja
+de salir en naranja y en Alertas, y su PDF lo dice al final, en «Fallas resueltas».
+Desmarcarlo lo deja pendiente otra vez. Lo que se reportó no cambia y Estadísticas
+lo sigue contando; cada cambio queda en el historial. Solo la administración lo
+hace: el docente y la persona responsable solo lo ven.
+
 En las tablas y los PDF, la bitácora que **reporta alguna falla o comentario**
 sale en **naranja claro**, y dentro de ella la **falla concreta va en naranja
 intenso y negrita**, así que la administración la localiza sin leer toda la
@@ -780,6 +790,15 @@ asistencia de cada grupo como una hoja de Excel, armada con quienes registran su
 bitácora. Con db/17, durante la clase la persona docente quita la asistencia a
 quien registró y no está en el salón, o se la devuelve.
 
+**«Guardar en Excel...»** la guarda como libro de Excel (.xlsx) con la cara que
+tiene en pantalla (antes era un CSV sin formato): el título y los datos de la lista
+arriba, el encabezado verde con las fechas en vertical, cada casilla con sus colores,
+el % como porcentaje, el derecho a evaluación en verde o rojo, la fila Asistieron y la
+simbología; congelada bajo los encabezados y, al imprimir, horizontal, a una hoja de
+ancho y con el encabezado en cada página. Las asistencias dadas van en otra pestaña.
+Lo escribe `Infraestructura\LibroExcel.cs`, sin bibliotecas de más. En el diálogo
+también se puede elegir el CSV de antes.
+
 Con la 22, **mientras dura la clase** (con el reloj del servidor), también **da
 la asistencia** a quien está en el salón y no pudo registrar su bitácora:
 
@@ -865,7 +884,7 @@ entrarán, y solo entonces darlos de alta. Un DigLab anterior no conoce el tipo
 hay que reiniciar el equipo), aunque no le da ningún permiso. Desde esta
 versión, un tipo de cuenta que no conoce deja el login a la vista con un aviso.
 
-### 6. Equipo liberado y cierre de sesión a la hora de salida
+### 6. Equipo liberado y reinicio al terminar la clase
 
 Cuando alguien guarda su bitácora, DigLab **libera el equipo** hasta la hora
 de salida del código:
@@ -876,9 +895,15 @@ Bitácora guardada
    ├─ escribe %ProgramData%\DigLab\sesion_activa.txt   (traspaso para el vigilante)
    ├─ kiosco: lanza explorer.exe y esconde sus ventanas → quien registró usa Windows
    ├─ icono en la bandeja con la cuenta atrás y "Cerrar mi sesión ahora"
-   ├─ fin − 5 min: aviso "guarda tu trabajo"
-   └─ fin: cierre de sesión de Windows (kiosco) / vuelta al login (escritorio)
+   ├─ fin − 5 min y fin − 1 min: aviso "guarda tu trabajo: al terminar, el equipo se reinicia"
+   └─ fin: REINICIO del equipo (kiosco; si no se puede, cierre de sesión) / vuelta al login (escritorio)
 ```
+
+La hora de salida es el **fin de la clase** con cuyo código se registró (en el uso
+libre, el inicio de la siguiente clase o el final del día): no es un reinicio a una
+hora fija, sino uno por clase (pedido del 2026-11-07). Con Deep Freeze el equipo
+vuelve limpio para la siguiente. Los programas se cierran sin preguntar, por eso los
+dos avisos. Quien se va antes con «Cerrar mi sesión ahora» solo cierra su sesión.
 
 Si el kiosco usa la cuenta que el equipo ya tenía (sección 7), justo antes de
 lanzar `explorer.exe` DigLab quita del registro de esa cuenta tres límites:
@@ -901,9 +926,12 @@ puede cerrar con Alt+F4 ni con "Finalizar tarea".
 El cierre lo **garantiza** `DigLab.Vigilante`, un servicio de Windows que corre
 como SYSTEM (con una cuenta estándar, quien usa el equipo no puede matarlo; con una
 administradora, sí: ver sección 7): lee el traspaso cada 10 segundos y a
-la hora de salida cierra esa sesión de Windows con `WTSLogoffSession`.
+la hora de salida reinicia el equipo con `shutdown.exe /r /f /t 0` (si Windows no
+lo acepta, cierra esa sesión con `WTSLogoffSession`, como antes).
 Si DigLab ya no está para avisar, el servicio manda el aviso él mismo. DigLab
-hace lo mismo desde dentro de la sesión como respaldo.
+hace lo mismo desde dentro de la sesión como respaldo (`ExitWindowsEx` con
+`EWX_REBOOT | EWX_FORCE`; `DIGLAB_SIMULAR_REINICIO=1`, o las de simular el cierre o
+el apagado, lo desactivan).
 
 Reglas del traspaso, iguales en los dos procesos (`Infraestructura\SesionActiva.cs`):
 
@@ -1046,11 +1074,14 @@ el kiosco:
 | Tras la bitácora | Su escritorio, sin los límites de Administrador de tareas, `Win+R` y Panel de control | El escritorio con todos los límites |
 | Al desinstalar | Se le quitan el shell, las directivas, el permiso y el inicio automático, aunque ya entrara sola antes; conserva su contraseña y nunca se ofrece borrarla | Se le quita lo mismo, y pregunta si borrarla |
 
-**Para llegar a un escritorio sin bitácora**, en las dos: la memoria de emergencia (en
-el asistente, «llave de emergencia»), una USB autorizada al instalar. En el kiosco,
-**Acceso de emergencia** abre el escritorio de esa cuenta sin bitácora hasta reiniciar
-(ver `INSTALAR.md`). O `Ctrl+Alt+Supr` → **Cambiar de usuario**, a otra cuenta y con
-su contraseña. La memoria es opcional, pero sin ella y sin otra cuenta no hay camino.
+**Para llegar a un escritorio sin bitácora**, en las dos: una memoria de emergencia.
+Desde `db/28` ya no se autorizan al instalar: se registran en DigLab
+(**Laboratorios → Memorias de emergencia...**) y cualquiera abre cualquier equipo; el
+asistente copia la lista de la base al equipo y el vigilante la renueva cada 10
+minutos. En el kiosco, **Acceso de emergencia** abre el escritorio de esa cuenta sin
+bitácora hasta reiniciar (ver `INSTALAR.md`). O `Ctrl+Alt+Supr` → **Cambiar de
+usuario**, a otra cuenta y con su contraseña. Sin memorias registradas y sin otra
+cuenta no hay camino: el asistente avisa antes de instalar.
 
 Como el asistente pide permisos de administrador, lo normal es que la cuenta que ya
 tiene el equipo sea administradora. Entonces, quien registre su bitácora puede instalar
@@ -1110,7 +1141,7 @@ estándar `laboratorio` si no existe y la deja así:
 - Servicio `DigLab.Vigilante` instalado y arrancado.
 
 Después de reiniciar, el ciclo es: encendido → DigLab → login → código →
-bitácora → escritorio → a la hora de salida se cierra la sesión → DigLab otra
+bitácora → escritorio → al terminar la clase el equipo se reinicia → DigLab otra
 vez. Si DigLab termina por lo que sea, Winlogon lo relanza (`AutoRestartShell`)
 y DigLab reanuda el estado en que estaba.
 
@@ -1153,10 +1184,10 @@ que el diagnóstico comprueba una a una:
   entrar al escritorio sin pasar por DigLab — sin reiniciar siquiera, porque el
   relevo entre estudiantes es un cierre de sesión. Se le aplica el mismo patrón que
   Windows ya usa para las directivas: herencia rota y sólo lectura.
-- **`ForceAutoLogon=1`.** `AutoAdminLogon` sólo actúa al **arrancar**. Cuando el
-  vigilante cierra la sesión al terminar la clase no hay arranque, así que sin
-  esto el equipo se quedaría pidiendo una contraseña que la siguiente persona no
-  tiene. Rompe el escritorio remoto, cosa que en estos equipos no se usa.
+- **`ForceAutoLogon=1`.** `AutoAdminLogon` sólo actúa al **arrancar**. Cuando se
+  cierra la sesión sin reiniciar (quien se va antes, o si el reinicio al terminar la
+  clase no se pudo) no hay arranque, así que sin esto el equipo se quedaría pidiendo
+  una contraseña que la siguiente persona no tiene. Rompe el escritorio remoto, cosa que en estos equipos no se usa.
 
 Las directivas de la cuenta (`DisableTaskMgr`, `NoRun`, …) **no** hace
 falta protegerlas: Windows ya deja `HKCU\...\Policies` con la herencia rota y en
@@ -1510,6 +1541,9 @@ db/
   23_horarios_guardados.sql    Para una base que ya existía (después de la 16): guardar varias configuraciones de horario con nombre, prepararlas y aplicarlas con sus fechas
   24_docentes_siia.sql         Para una base que ya existía: entrar con el SIIA (el enlace de cada docente con su número de empleado y quién espera que lo enlacen)
   25_horas_por_asignar.sql     Para una base que ya existía: las horas que faltan por asignar en el horario en uso (las que otra clase desplazó o se quitaron para darlas en otro horario)
+  26_fallas_resueltas.sql      Para una base que ya existía: las fallas reportadas que ya se resolvieron (salen de naranja y de Alertas, y van al final del PDF)
+  27_suspensiones.sql          Para una base que ya existía: suspender el acceso de un estudiante por unos días, con la razón (vuelve a entrar solo al vencer el plazo)
+  28_memorias_emergencia.sql   Para una base que ya existía: las memorias USB de emergencia, registradas desde DigLab; cualquiera abre cualquier equipo (ya no se autorizan al instalar)
 api/                           API en PHP de "¿Olvidaste tu contraseña?" para el hosting de la escuela (ver api/LEEME.md)
   recuperar.php                Solicitar un código, confirmarlo con la contraseña nueva, y probar la instalación
   lib/comun.php, lib/correo.php   Base de datos, contraseñas (PBKDF2 como DigLab) y un cliente SMTP para Gmail
@@ -1543,7 +1577,7 @@ DigLab/
     AppContexto.cs             Ciclo de vida: reanudar, comprobar entorno, login, cerrar sesión, salir
     Kiosco.cs                  Modo kiosco (pantalla completa, sin Alt+F4)
     DirectivasKiosco.cs        Kiosco en la cuenta que el equipo ya tenía: pone tres límites al arrancar y los quita al entregar el escritorio
-    Emergencia.cs              La memoria de emergencia: si la USB conectada es la autorizada
+    Emergencia.cs              Las memorias de emergencia: qué lista vale (la base, la copia del equipo o la de la instalación) y si la USB conectada es una de ellas
     CarpetaDatos.cs            Carpeta que sobrevive a Deep Freeze (compartida con el vigilante)
     LaboratorioEquipo.cs       Laboratorio en el que está este equipo (appSettings / variable)
     SinConexion.cs             Estado del modo sin conexión: activar con la copia, sincronizar al volver
@@ -1625,13 +1659,13 @@ DigLab/
   Alumno_Principal.cs          Estudiante: el código, cómo está el equipo y si ve otros sin internet
   *.cs / *.Designer.cs / *.resx   Formularios WinForms
   img/, Resources/             Imágenes y plantilla HTML del PDF
-DigLab.Vigilante/              Servicio de Windows (LocalSystem): cierra la sesión a la hora de salida
+DigLab.Vigilante/              Servicio de Windows (LocalSystem): reinicia el equipo al terminar la clase (hora de salida)
   Program.cs                   Servicio, o --consola [--simular] [--segundos N] para probar
-  Vigilante.cs                 El bucle: lee el traspaso cada 10 s, avisa, cierra la sesión
+  Vigilante.cs                 El bucle: lee el traspaso cada 10 s, avisa, cierra la sesión; y cada 10 min renueva la copia de las memorias de emergencia (DigLab.exe --memorias-emergencia, como SYSTEM)
   VigilanteService.cs          Envoltorio ServiceBase; recibe los cambios de sesión de Windows
 DigLab.Configurador/           Lo que DigLab-Setup.exe no puede hacer solo, sin ventana y en C#
-  Program.cs                   Las órdenes: probar, estado, memorias, validar-cuenta, preparar, configurar, diagnostico y revertir (y prueba-*, solo de desarrollo)
-  Pasos.cs                     Lo instalado y las memorias; preparar, configurar y revertir, en orden
+  Program.cs                   Las órdenes: probar, estado, validar-cuenta, preparar, configurar, diagnostico y revertir (y prueba-*, solo de desarrollo)
+  Pasos.cs                     Lo instalado; preparar, configurar (con la copia de las memorias de emergencia) y revertir, en orden
   Cuenta.cs, Kiosco.cs         La cuenta del kiosco, su shell, sus directivas y el inicio automático
   Servicio.cs, Defender.cs     El vigilante y la exclusión de Microsoft Defender
   Archivos.cs, BaseDatos.cs    Los .config, la carpeta en sólo lectura, la conexión y la lista de laboratorios

@@ -369,11 +369,14 @@ namespace DigLab.conexion
                 // AlumnoCache): sin servidor la pantalla usa la matricula. Nunca la
                 // contrasena: sin servidor el alumno entra solo con su matricula y la
                 // bitacora queda marcada. Los dados de baja no entran en la copia:
-                // sin servidor tampoco pasan.
+                // sin servidor tampoco pasan. Los suspendidos (db/27) tampoco: la carpeta
+                // de la copia la puede leer cualquiera, asi que ni su plazo ni su razon se
+                // guardan ahi. Vuelven a la copia cuando se refresca despues del plazo.
                 using (MySqlCommand comando = new MySqlCommand(@"
                     SELECT u.idusuarios, u.numero_identificador
                     FROM usuarios u
-                    WHERE u.fk_tipo_usuario = 1" + (Esquema.TieneBajas(conexion) ? " AND u.activo = 1" : ""), conexion))
+                    WHERE u.fk_tipo_usuario = 1" + (Esquema.TieneBajas(conexion) ? " AND u.activo = 1" : "")
+                    + (Esquema.Suspensiones(conexion) ? " AND NOT " + SuspensionesDatos.CondicionSuspendido : ""), conexion))
                 using (MySqlDataReader reader = comando.ExecuteReader())
                 {
                     while (reader.Read())

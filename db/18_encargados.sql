@@ -185,6 +185,14 @@ PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 SET @sql := IF(@hacer AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'horas_por_asignar') > 0,
     CONCAT('GRANT SELECT ON teschi_otru.horas_por_asignar TO ', @usuario), @nada);
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+-- Las fallas que ya se resolvieron (db/26): la persona responsable las ve, no las marca.
+SET @sql := IF(@hacer AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fallas_resueltas') > 0,
+    CONCAT('GRANT SELECT ON teschi_otru.fallas_resueltas TO ', @usuario), @nada);
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+-- Las suspensiones de acceso (db/27): la persona responsable las ve, no las cambia.
+SET @sql := IF(@hacer AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'suspensiones') > 0,
+    CONCAT('GRANT SELECT ON teschi_otru.suspensiones TO ', @usuario), @nada);
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 SET @sql := IF(@hacer, 'FLUSH PRIVILEGES', @nada);
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 

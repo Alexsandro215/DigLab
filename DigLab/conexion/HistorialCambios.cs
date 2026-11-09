@@ -29,9 +29,11 @@ namespace DigLab.conexion
         /// crean al reemplazarla o al quitarlas, y como se resuelven.
         /// </summary>
         public const string PorAsignar = "por_asignar";
+        /// <summary>Una memoria USB de emergencia que se registro o se quito (db/28).</summary>
+        public const string MemoriaEmergencia = "memoria_emergencia";
 
         /// <summary>Todos, en el orden del filtro Tipo del historial.</summary>
-        public static readonly string[] Todos = { Franja, Clase, Cancelacion, Extra, Horario, PorAsignar, Bitacora, Laboratorio, FormaDeEntrar, Cuenta };
+        public static readonly string[] Todos = { Franja, Clase, Cancelacion, Extra, Horario, PorAsignar, Bitacora, Laboratorio, FormaDeEntrar, Cuenta, MemoriaEmergencia };
 
         /// <summary>Los que avisan como alerta "Cambio de horario": el horario de las clases (tambien uno entero que se aplico).</summary>
         public static bool EsDeHorario(string tipo)
@@ -57,13 +59,15 @@ namespace DigLab.conexion
                 case PorAsignar:
                     return "Horas por asignar";
                 case Bitacora:
-                    return "Bitácoras corregidas";
+                    return "Bitácoras (corregidas y fallas resueltas)";
                 case Laboratorio:
                     return "Laboratorios";
                 case FormaDeEntrar:
                     return "Formas de entrar";
                 case Cuenta:
                     return "Cuentas (anonimizadas y del SIIA)";
+                case MemoriaEmergencia:
+                    return "Memorias de emergencia";
                 default:
                     return tipo ?? "";
             }
@@ -110,6 +114,14 @@ namespace DigLab.conexion
         public const string Asignar = "asignar";
         /// <summary>Horas por asignar que ya no hacen falta ("Ya no hace falta").</summary>
         public const string NoHaceFalta = "no_hace_falta";
+        /// <summary>Lo que se reporto en una sesion se da por resuelto (TipoDeCambio.Bitacora, db/26).</summary>
+        public const string Resolver = "resolver";
+        /// <summary>Se deshace "resuelta": vuelve a estar pendiente (TipoDeCambio.Bitacora, db/26).</summary>
+        public const string Reabrir = "reabrir";
+        /// <summary>Se le suspende el acceso a un estudiante por unos dias (TipoDeCambio.Cuenta, db/27).</summary>
+        public const string Suspender = "suspender";
+        /// <summary>Se le quita la suspension antes de tiempo (TipoDeCambio.Cuenta, db/27).</summary>
+        public const string QuitarSuspension = "quitar_suspension";
     }
 
     /// <summary>Un cambio por anotar (HistorialCambios.Anotar), en la misma transaccion que el cambio.</summary>
@@ -416,7 +428,8 @@ namespace DigLab.conexion
                     return accion == AccionDeCambio.Asignar ? "Horas asignadas"
                         : accion == AccionDeCambio.NoHaceFalta ? "Horas que ya no hace falta asignar" : "Horas por asignar";
                 case TipoDeCambio.Bitacora:
-                    return "Bitácora corregida";
+                    return accion == AccionDeCambio.Resolver ? "Falla resuelta"
+                        : accion == AccionDeCambio.Reabrir ? "Falla sin resolver otra vez" : "Bitácora corregida";
                 case TipoDeCambio.Laboratorio:
                     switch (accion)
                     {
@@ -438,8 +451,12 @@ namespace DigLab.conexion
                     return accion == AccionDeCambio.Enlazar ? "Docente enlazado con el SIIA"
                         : accion == AccionDeCambio.Desenlazar ? "Docente desenlazado del SIIA"
                         : accion == AccionDeCambio.Descartar ? "Solicitud del SIIA descartada"
+                        : accion == AccionDeCambio.Suspender ? "Acceso suspendido"
+                        : accion == AccionDeCambio.QuitarSuspension ? "Suspensión quitada"
                         : accion == AccionDeCambio.Alta ? "Cuenta creada con el SIIA"
                         : accion == AccionDeCambio.Cambio ? "Carrera tomada del SIIA" : "Cuenta anonimizada";
+                case TipoDeCambio.MemoriaEmergencia:
+                    return accion == AccionDeCambio.Quitar ? "Memoria de emergencia quitada" : "Memoria de emergencia registrada";
                 default:
                     return ((tipo ?? "") + " " + (accion ?? "")).Trim();
             }

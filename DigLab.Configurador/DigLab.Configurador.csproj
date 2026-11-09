@@ -66,6 +66,9 @@
     <Compile Include="Servicio.cs" />
     <Compile Include="Pasos.cs" />
     <Compile Include="Diagnostico.cs" />
+    <Compile Include="..\DigLab\Infraestructura\CadenaCifrada.cs">
+      <Link>CadenaCifrada.cs</Link>
+    </Compile>
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>

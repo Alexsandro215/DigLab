@@ -75,6 +75,8 @@ namespace DigLab
             TablaAlumnosPdf.Agregar(pdfDoc, alumnos);
             TablaAlumnosPdf.AgregarReportesDocente(pdfDoc, reportes);
             TablaAlumnosPdf.AgregarDadas(pdfDoc, dadas, alumnos);
+            // Hasta abajo: lo que ya se resolvio y lo que falta.
+            TablaAlumnosPdf.AgregarResueltas(pdfDoc, alumnos, reportes);
             pdfDoc.Close();
         }
 
@@ -135,6 +137,9 @@ namespace DigLab
         // naranja intenso, como en las tablas de la aplicacion.
         private static readonly BaseColor Suave = new BaseColor(255, 240, 214);
         private static readonly BaseColor Fuerte = new BaseColor(255, 176, 79);
+        // Lo mismo en verde, lo que ya se resolvio (db/26).
+        private static readonly BaseColor VerdeSuave = new BaseColor(221, 242, 224);
+        private static readonly BaseColor VerdeFuerte = new BaseColor(129, 199, 132);
 
         public static void Agregar(Document pdfDoc, DataTable detalles)
         {
@@ -151,11 +156,15 @@ namespace DigLab
             Font normal = FontFactory.GetFont(FontFactory.HELVETICA, 10f);
             Font negrita = FontFactory.GetFont(FontFactory.HELVETICA_BOLD, 10f);
             bool hayFallas = false;
+            bool hayResueltas = false;
             int numeroFila = 1;
             foreach (DataRow fila in detalles.Rows)
             {
-                bool conFalla = Consultas.ConFalla(fila);
+                // Lo ya resuelto (db/26) sale en verde; el detalle, abajo, en AgregarResueltas.
+                bool conFalla = Consultas.FallaPendiente(fila);
+                bool resuelta = Consultas.Resuelta(fila);
                 hayFallas |= conFalla;
+                hayResueltas |= resuelta;
 
                 string[] celdas =
                 {
@@ -163,15 +172,19 @@ namespace DigLab
                     fila["nombre_completo"].ToString(),
                     fila["hora_registro"].ToString(),
                     fila["numero_computadora"].ToString(),
-                    Consultas.DescribirFallas(fila)
+                    Consultas.DescribirFallas(fila) + (Consultas.Resuelta(fila) ? " (resuelta)" : "")
                 };
                 for (int i = 0; i < celdas.Length; i++)
                 {
-                    bool esLaFalla = conFalla && i == celdas.Length - 1;
-                    PdfPCell celda = new PdfPCell(new Phrase(celdas[i], esLaFalla ? negrita : normal)) { Padding = 4f };
+                    bool esLaUltima = i == celdas.Length - 1;
+                    PdfPCell celda = new PdfPCell(new Phrase(celdas[i], (conFalla || resuelta) && esLaUltima ? negrita : normal)) { Padding = 4f };
                     if (conFalla)
                     {
-                        celda.BackgroundColor = esLaFalla ? Fuerte : Suave;
+                        celda.BackgroundColor = esLaUltima ? Fuerte : Suave;
+                    }
+                    else if (resuelta)
+                    {
+                        celda.BackgroundColor = esLaUltima ? VerdeFuerte : VerdeSuave;
                     }
 
                     tabla.AddCell(celda);
@@ -193,9 +206,10 @@ namespace DigLab
 
             pdfDoc.Add(tabla);
 
-            if (hayFallas)
+            if (hayFallas || hayResueltas)
             {
-                pdfDoc.Add(new Paragraph("Celda naranja intensa: la falla o el comentario que se reportó en esa bitácora.",
+                pdfDoc.Add(new Paragraph((hayFallas ? "Celda naranja intensa: la falla o el comentario que se reportó en esa bitácora. " : "")
+                        + (hayResueltas ? "En verde: lo que ya se resolvió (el detalle va al final)." : ""),
                     FontFactory.GetFont(FontFactory.HELVETICA_OBLIQUE, 8f)) { SpacingBefore = 6f });
             }
 
@@ -203,7 +217,7 @@ namespace DigLab
             if (detalles.Columns.Contains("avisa_sin_internet"))
             {
                 string avisos = Consultas.DescribirSinInternet(Consultas.ContarSinInternet(
-                    detalles.Rows.Cast<DataRow>().Select(f => f["avisa_sin_internet"].ToString())), false);
+                    detalles.Rows.Cast<DataRow>().Where(f => !Consultas.Resuelta(f)).Select(f => f["avisa_sin_internet"].ToString())), false);
                 if (avisos.Length > 0)
                 {
                     pdfDoc.Add(new Paragraph(avisos + ".", negrita) { SpacingBefore = 6f });
@@ -247,15 +261,16 @@ namespace DigLab
                     reporte.RegistradoEn.ToString("HH:mm", CultureInfo.InvariantCulture),
                     string.IsNullOrWhiteSpace(reporte.Equipo) ? "Todo el laboratorio" : reporte.Equipo.Trim(),
                     ReportesProfesorDatos.NombreDeArea(reporte.Area),
-                    falla + (detalle.Length > 0 ? ". " + detalle : "")
+                    falla + (detalle.Length > 0 ? ". " + detalle : "") + (reporte.Resuelta ? " (resuelta)" : "")
                 };
                 for (int i = 0; i < celdas.Length; i++)
                 {
                     bool esLaFalla = i == celdas.Length - 1;
+                    // Lo ya resuelto (db/26) sale en verde; el detalle, abajo, en AgregarResueltas.
                     tabla.AddCell(new PdfPCell(new Phrase(celdas[i], esLaFalla ? negrita : normal))
                     {
                         Padding = 4f,
-                        BackgroundColor = esLaFalla ? Fuerte : Suave
+                        BackgroundColor = reporte.Resuelta ? (esLaFalla ? VerdeFuerte : VerdeSuave) : (esLaFalla ? Fuerte : Suave)
                     });
                 }
 
@@ -329,6 +344,72 @@ namespace DigLab
             pdfDoc.Add(new Paragraph("Su docente las dio durante la clase a quien estaba en el salón y no pudo registrar su bitácora. "
                 + "Cada una cuenta como asistencia, pero no es una bitácora: no registra el uso de un equipo ni sus fallas.",
                 FontFactory.GetFont(FontFactory.HELVETICA_OBLIQUE, 8f)) { SpacingBefore = 6f });
+        }
+
+        /// <summary>
+        /// Hasta abajo del PDF: lo que la administracion ya dio por resuelto (db/26),
+        /// quien lo reporto, en que equipo, que era, cuando se resolvio y que se hizo,
+        /// y si falta algo. Sin nada resuelto no se anade nada y el PDF queda como siempre.
+        /// </summary>
+        public static void AgregarResueltas(Document pdfDoc, DataTable alumnos, IList<ReporteProfesor> reportes)
+        {
+            List<DataRow> deBitacoras = alumnos == null ? new List<DataRow>() : alumnos.Rows.Cast<DataRow>().Where(Consultas.Resuelta).ToList();
+            List<ReporteProfesor> delDocente = reportes == null ? new List<ReporteProfesor>() : reportes.Where(r => r.Resuelta).ToList();
+            if (deBitacoras.Count + delDocente.Count == 0)
+            {
+                return;
+            }
+
+            Font normal = FontFactory.GetFont(FontFactory.HELVETICA, 10f);
+            // El titulo es el primer renglon de su tabla: asi no se queda solo al final de una hoja.
+            PdfPTable tabla = new PdfPTable(5) { WidthPercentage = 100, SpacingBefore = 12f, HeaderRows = 2 };
+            tabla.SetWidths(new float[] { 6f, 24f, 15f, 28f, 27f });
+            tabla.AddCell(new PdfPCell(new Phrase("Fallas resueltas", FontFactory.GetFont(FontFactory.HELVETICA_BOLD, 11f)))
+            {
+                Colspan = 5,
+                Border = Rectangle.NO_BORDER,
+                PaddingLeft = 0f,
+                PaddingBottom = 4f
+            });
+            foreach (string encabezado in new[] { "No.", "Quién la reportó", "Computadora", "Falla", "Se resolvió" })
+            {
+                tabla.AddCell(new PdfPCell(new Phrase(encabezado)) { BackgroundColor = BaseColor.LIGHT_GRAY, Padding = 4f });
+            }
+
+            int numeroFila = 1;
+            foreach (DataRow fila in deBitacoras)
+            {
+                AgregarResuelta(tabla, normal, numeroFila++, fila["nombre_completo"].ToString(), fila["numero_computadora"].ToString(),
+                    Consultas.DescribirFallas(fila), Consultas.TextoResuelta(fila));
+            }
+
+            foreach (ReporteProfesor reporte in delDocente)
+            {
+                string detalle = (reporte.Comentarios ?? "").Trim();
+                AgregarResuelta(tabla, normal, numeroFila++, "Su docente", string.IsNullOrWhiteSpace(reporte.Equipo) ? "Todo el laboratorio" : reporte.Equipo.Trim(),
+                    ReportesProfesorDatos.NombreDeArea(reporte.Area) + ": " + (reporte.Falla ?? "").Trim().TrimEnd('.') + (detalle.Length > 0 ? ". " + detalle : ""),
+                    reporte.TextoResuelta);
+            }
+
+            int pendientes = (alumnos == null ? 0 : alumnos.Rows.Cast<DataRow>().Count(f => FallasResueltasDatos.ReportaAlgo(f) && !Consultas.Resuelta(f)))
+                + (reportes == null ? 0 : reportes.Count(r => !r.Resuelta));
+            pdfDoc.Add(tabla);
+            pdfDoc.Add(new Paragraph(pendientes == 0 ? "Todo lo que se reportó en esta sesión ya se resolvió."
+                    : pendientes == 1 ? "Falta 1 por resolver." : "Faltan " + pendientes.ToString(CultureInfo.InvariantCulture) + " por resolver.",
+                FontFactory.GetFont(FontFactory.HELVETICA_OBLIQUE, 8f)) { SpacingBefore = 6f });
+        }
+
+        private static void AgregarResuelta(PdfPTable tabla, Font letra, int numero, string quien, string equipo, string falla, string resuelta)
+        {
+            string[] celdas = { numero.ToString(CultureInfo.InvariantCulture), quien, equipo, falla, resuelta };
+            for (int i = 0; i < celdas.Length; i++)
+            {
+                tabla.AddCell(new PdfPCell(new Phrase(celdas[i] ?? "", letra))
+                {
+                    Padding = 4f,
+                    BackgroundColor = i == celdas.Length - 1 ? VerdeFuerte : VerdeSuave
+                });
+            }
         }
 
         /// <summary>

@@ -472,7 +472,7 @@ namespace DigLab.conexion
                        rp.numero_computadora, rp.area, rp.falla, DATE_FORMAT(rp.registrado_en, '%Y-%m-%d %H:%i:%s') AS cuando
                 FROM reportes_profesor rp
                 INNER JOIN codigos_accesos ca ON ca.idcodigos_accesos = rp.fk_codigo_accesos
-                WHERE COALESCE(ca.fecha, DATE(ca.hora_registro)) BETWEEN @Desde AND @Hasta
+                WHERE COALESCE(ca.fecha, DATE(ca.hora_registro)) BETWEEN @Desde AND @Hasta" + ReportesProfesorDatos.SoloSinResolver(conexion) + @"
                 ORDER BY rp.registrado_en, rp.idreportes_profesor", conexion))
             {
                 comando.Parameters.AddWithValue("@Desde", desde.Date);
@@ -601,8 +601,12 @@ namespace DigLab.conexion
                 largo.ExecuteNonQuery();
             }
 
-            string falla = "(" + Consultas.CondicionConFalla + ")";
-            string reporta = conAviso ? "(" + falla + " OR rb.equipos_sin_internet <> '')" : falla;
+            // Lo ya resuelto (db/26) no avisa: ni sus fallas ni los equipos sin internet que aviso.
+            bool conResueltas = Esquema.FallasResueltas(conexion);
+            string sinResolver = conResueltas ? " AND " + Consultas.BitacoraSinResolver : "";
+            string falla = Consultas.CondicionFallaPendiente(conexion);
+            string sinInternet = conResueltas ? "CASE WHEN " + Consultas.BitacoraSinResolver + " THEN NULLIF(rb.equipos_sin_internet, '') END" : "NULLIF(rb.equipos_sin_internet, '')";
+            string reporta = conAviso ? "(" + falla + " OR (rb.equipos_sin_internet <> ''" + sinResolver + "))" : falla;
             string cuando = conLlegada ? "COALESCE(rb.recibido_en, rb.registrado_en)" : "rb.registrado_en";
             string sql = @"
                 SELECT s.lab_id, DATE_FORMAT(s.dia, '%Y-%m-%d') AS dia, SUM(s.alumnos) AS bitacoras, SUM(s.con_fallas) AS con_fallas,
@@ -616,13 +620,13 @@ namespace DigLab.conexion
                            COALESCE(ca.fecha, DATE(ca.hora_registro)) AS dia,
                            COUNT(DISTINCT rb.fk_usuario) AS alumnos,
                            COUNT(DISTINCT CASE WHEN " + falla + @" THEN rb.fk_usuario END) AS con_fallas,
-                           COUNT(DISTINCT CASE WHEN " + Consultas.CondicionFallaEn("red") + @" THEN rb.fk_usuario END) AS red,
-                           COUNT(DISTINCT CASE WHEN " + Consultas.CondicionFallaEn("hardware") + @" THEN rb.fk_usuario END) AS hardware,
-                           COUNT(DISTINCT CASE WHEN " + Consultas.CondicionFallaEn("software") + @" THEN rb.fk_usuario END) AS software,
+                           COUNT(DISTINCT CASE WHEN " + Consultas.CondicionFallaEn("red") + sinResolver + @" THEN rb.fk_usuario END) AS red,
+                           COUNT(DISTINCT CASE WHEN " + Consultas.CondicionFallaEn("hardware") + sinResolver + @" THEN rb.fk_usuario END) AS hardware,
+                           COUNT(DISTINCT CASE WHEN " + Consultas.CondicionFallaEn("software") + sinResolver + @" THEN rb.fk_usuario END) AS software,
                            MAX(CASE WHEN " + reporta + " THEN " + cuando + @" END) AS ultima,
                            CAST(GROUP_CONCAT(DISTINCT CASE WHEN " + falla + @" THEN rb.numero_computadora END ORDER BY rb.numero_computadora SEPARATOR ', ') AS CHAR) AS equipos"
                     + (conAviso ? @",
-                           CAST(GROUP_CONCAT(NULLIF(rb.equipos_sin_internet, '') SEPARATOR '|') AS CHAR) AS sin_internet" : "") + @"
+                           CAST(GROUP_CONCAT(" + sinInternet + @" SEPARATOR '|') AS CHAR) AS sin_internet" : "") + @"
                     FROM codigos_accesos ca
                     INNER JOIN registros_bitacoras rb ON rb.fk_codigo_accesos = ca.idcodigos_accesos
                     WHERE COALESCE(ca.fecha, DATE(ca.hora_registro)) BETWEEN @Desde AND @Hasta

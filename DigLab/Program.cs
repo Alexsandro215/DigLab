@@ -1,8 +1,10 @@
 using System;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using DigLab.conexion;
@@ -16,7 +18,49 @@ namespace DigLab
         // sesion, que es exactamente lo que necesita un shell.
         private const string NombreMutex = @"Local\DigLab.InstanciaUnica";
 
+        /// <summary>DigLab.exe --memorias-emergencia: ver <see cref="CopiarMemorias"/>.</summary>
+        internal const string ArgumentoCopiarMemorias = "--memorias-emergencia";
+
         private static bool mostrandoError;
+
+        /// <summary>
+        /// Copia las memorias de emergencia de la base a memorias_emergencia.txt, junto a
+        /// DigLab.exe (MemoriasEmergenciaDatos.CopiarAlEquipo). Lo lanzan el servicio
+        /// DigLab.Vigilante cada 10 minutos y el instalador, como SYSTEM o administrador:
+        /// en C:\DigLab un estudiante no puede escribir, y si lo lanza el, falla al
+        /// escribir y no cambia nada. Dice lo que paso en una linea y en el codigo de
+        /// salida (0 bien; 1 sin servidor; 2 sin poder escribir; 3 la base no las tiene).
+        /// </summary>
+        private static int CopiarMemorias()
+        {
+            int codigo;
+            string detalle;
+            try
+            {
+                codigo = MemoriasEmergenciaDatos.CopiarAlEquipo(Emergencia.RutaCopia, out detalle);
+            }
+            catch (Exception ex)
+            {
+                codigo = 1;
+                detalle = "Fallo inesperado: " + ex.Message;
+            }
+
+            try
+            {
+                // En UTF-8, que es como lo lee el vigilante: la consola usaria otra codificacion.
+                // Sin nadie que la lea, OpenStandardOutput da un flujo vacio.
+                using (StreamWriter salida = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false)))
+                {
+                    salida.WriteLine(detalle);
+                }
+            }
+            catch (Exception)
+            {
+                // Sin salida a donde escribir: basta el codigo.
+            }
+
+            return codigo;
+        }
 
         /// <summary>
         /// Punto de entrada principal para la aplicación.
@@ -26,6 +70,15 @@ namespace DigLab
         {
             // Antes que nada: el log ya escribe fechas.
             FijarCultura();
+
+            // El servicio DigLab.Vigilante y el instalador (con permisos de administrador):
+            // solo copiar las memorias de emergencia de la base al equipo, sin ventana.
+            if (Array.IndexOf(Environment.GetCommandLineArgs(), ArgumentoCopiarMemorias) > 0)
+            {
+                Environment.ExitCode = CopiarMemorias();
+                return;
+            }
+
             // Antes de que el log cree la carpeta nueva.
             NombreAnterior.TraerDatos();
 
@@ -64,9 +117,7 @@ namespace DigLab
                 // Que se vea en el log si este equipo tiene salida de emergencia.
                 // Enterarse el dia que hace falta, con el servidor caido y una
                 // clase esperando, es tarde.
-                Log.Info("Memoria de emergencia: " + (Emergencia.Configurada
-                    ? "autorizada"
-                    : "SIN autorizar; el boton avisara y no abrira nada"));
+                Log.Info(Emergencia.DescribirSinServidor());
 
                 // El envio de las bitacoras que quedaron en el equipo va en su propio
                 // hilo desde ya: tambien si DigLab se relanza con el equipo liberado

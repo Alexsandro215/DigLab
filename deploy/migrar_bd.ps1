@@ -113,7 +113,10 @@ $migraciones = @(
     "22_asistencia_dada.sql",
     "23_horarios_guardados.sql",
     "24_docentes_siia.sql",
-    "25_horas_por_asignar.sql"
+    "25_horas_por_asignar.sql",
+    "26_fallas_resueltas.sql",
+    "27_suspensiones.sql",
+    "28_memorias_emergencia.sql"
 ) | ForEach-Object { Join-Path $carpetaDb $_ }
 
 # Repone la clave foranea que la 04 quita un momento, si una migracion se

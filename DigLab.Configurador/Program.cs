@@ -15,7 +15,6 @@ namespace DigLab.Configurador
     /// Ordenes:
     ///   probar                    la conexion del entorno: ESTADO y los LAB
     ///   estado                    lo que hay instalado
-    ///   memorias                  las memorias USB conectadas
     ///   validar-cuenta --cuenta   si vale para el kiosco: ESTADO OK o el motivo. Con --original,
     ///                             la que ya tiene el equipo, comprobando su contrasena
     ///   preparar                  antes de copiar: detener, Defender, guardar ajustes
@@ -23,7 +22,7 @@ namespace DigLab.Configurador
     ///   diagnostico               si quedo bien
     ///   revertir                  al desinstalar
     ///   prueba-registro           solo desarrollo: en una rama propia de HKCU
-    /// Opciones: --destino --modo --cuenta --original --laboratorio --numero --memoria --actualizar
+    /// Opciones: --destino --modo --cuenta --original --laboratorio --numero --actualizar
     /// --ajustes --borrar-cuenta --borrar-datos --simular --salida
     /// </summary>
     internal static class Program
@@ -87,9 +86,6 @@ namespace DigLab.Configurador
                 case "estado":
                     Pasos.Estado(destino);
                     return 0;
-                case "memorias":
-                    Pasos.Memorias();
-                    return 0;
                 case "validar-cuenta":
                     string porQue;
                     if (opciones.ContainsKey("original"))
@@ -117,7 +113,6 @@ namespace DigLab.Configurador
                         Original = opciones.ContainsKey("original"),
                         Laboratorio = Opcion(opciones, "laboratorio"),
                         NumeroMaquina = Opcion(opciones, "numero"),
-                        Memoria = opciones.ContainsKey("memoria"),
                         Actualizar = opciones.ContainsKey("actualizar"),
                         RutaAjustes = Opcion(opciones, "ajustes")
                     });

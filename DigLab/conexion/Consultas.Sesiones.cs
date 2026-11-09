@@ -224,6 +224,50 @@ namespace DigLab.conexion
                 + " OR TRIM(COALESCE(rb.comentarios_" + area + ", '')) NOT IN " + SinNovedad + ")";
         }
 
+        /// <summary>Condicion SQL: nadie ha dado por resuelto lo que reporta la bitacora rb. Solo con db/26 (Esquema.FallasResueltas).</summary>
+        internal const string BitacoraSinResolver =
+            "NOT EXISTS (SELECT 1 FROM fallas_resueltas frp WHERE frp.origen = 'bitacora' AND frp.registro_id = rb.idregistros_bitacoras)";
+
+        /// <summary>
+        /// Condicion SQL (entre parentesis): la bitacora rb reporta algo y sigue sin
+        /// resolver, lo que sale en naranja y en Alertas. Sin db/26, CondicionConFalla.
+        /// Estadisticas sigue con CondicionConFalla: cuenta todo lo que se reporto.
+        /// </summary>
+        internal static string CondicionFallaPendiente(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return Esquema.FallasResueltas(conexion, transaccion)
+                ? "((" + CondicionConFalla + ") AND " + BitacoraSinResolver + ")"
+                : "(" + CondicionConFalla + ")";
+        }
+
+        /// <summary>
+        /// Condicion SQL (entre parentesis): lo que reporta la bitacora rb, una falla, un
+        /// comentario o un aviso de otros equipos, ya se dio por resuelto. Sin db/26, nunca.
+        /// </summary>
+        internal static string CondicionYaResuelta(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            if (!Esquema.FallasResueltas(conexion, transaccion))
+            {
+                return "(1 = 0)";
+            }
+
+            return "(NOT " + BitacoraSinResolver + " AND ((" + CondicionConFalla + ")"
+                + (Esquema.EquiposSinInternet(conexion, transaccion) ? " OR rb.equipos_sin_internet <> ''" : "") + "))";
+        }
+
+        /// <summary>Lo que se pone en un SELECT sobre rb para saber si esta resuelta, y el JOIN que pide (ver consultaRegistroSesion).</summary>
+        internal static string ColumnasResuelta(bool conResueltas)
+        {
+            return conResueltas
+                ? "IF(fr.idfallas_resueltas IS NULL, 0, 1) AS falla_resuelta, COALESCE(DATE_FORMAT(fr.resuelta_en, '%d/%m/%Y a las %H:%i'), '') AS resuelta_en, COALESCE(fr.nota, '') AS resuelta_nota"
+                : "0 AS falla_resuelta, '' AS resuelta_en, '' AS resuelta_nota";
+        }
+
+        internal static string JoinResuelta(bool conResueltas)
+        {
+            return conResueltas ? "LEFT JOIN fallas_resueltas fr ON fr.origen = 'bitacora' AND fr.registro_id = rb.idregistros_bitacoras" : "";
+        }
+
         /// <summary>
         /// Condicion SQL: la bitacora rb es de alguien que trajo su propio equipo
         /// (la bandera 16 de Estadisticas). Una sola definicion: la de
@@ -245,11 +289,12 @@ namespace DigLab.conexion
             using (MySqlConnection conexion = mconexion.GetConexion())
             {
                 string avisos = Esquema.EquiposSinInternet(conexion) ? "COALESCE(rb.equipos_sin_internet, '')" : "''";
+                bool conResueltas = Esquema.FallasResueltas(conexion);
 
                 // sin_conexion con IF: la columna es TINYINT(1) y con
                 // TreatTinyAsBoolean llegaria como True/False, no como 1/0.
                 using (MySqlCommand comando = new MySqlCommand(@"
-                    SELECT rb.fk_codigo_accesos, rb.fk_usuario, u.nombre, u.apellido_paterno, u.apellido_materno, u.numero_identificador,
+                    SELECT rb.idregistros_bitacoras, rb.fk_codigo_accesos, rb.fk_usuario, u.nombre, u.apellido_paterno, u.apellido_materno, u.numero_identificador,
                            rb.numero_computadora,
                            COALESCE(rb.falla_red, '') AS falla_red, COALESCE(rb.comentarios_red, '') AS comentarios_red,
                            COALESCE(rb.falla_hardware, '') AS falla_hardware, COALESCE(rb.comentarios_hardware, '') AS comentarios_hardware,
@@ -257,9 +302,11 @@ namespace DigLab.conexion
                            IF(rb.registrado_sin_conexion = 1, 1, 0) AS sin_conexion,
                            COALESCE(DATE_FORMAT(rb.registrado_en, '%H:%i'), '') AS hora_registro,
                            CASE WHEN " + CondicionConFalla + @" THEN 1 ELSE 0 END AS con_falla,
-                           " + avisos + @" AS avisa_sin_internet
+                           " + avisos + @" AS avisa_sin_internet,
+                           " + ColumnasResuelta(conResueltas) + @"
                     FROM registros_bitacoras rb
                     INNER JOIN usuarios u ON rb.fk_usuario = u.idusuarios
+                    " + JoinResuelta(conResueltas) + @"
                     WHERE rb.fk_codigo_accesos = @Id
                     ORDER BY u.apellido_paterno, u.apellido_materno, u.nombre", conexion))
                 {
@@ -427,26 +474,36 @@ namespace DigLab.conexion
                 // bitacoras. GROUP_CONCAT se corta en silencio a los 1024
                 // caracteres si no se le sube el limite (solo para esta conexion).
                 string avisos = "''";
-                if (Esquema.EquiposSinInternet(conexion))
+                bool conAvisos = Esquema.EquiposSinInternet(conexion);
+                bool conResueltas = Esquema.FallasResueltas(conexion);
+                if (conAvisos)
                 {
                     using (MySqlCommand limite = new MySqlCommand("SET SESSION group_concat_max_len = 1048576", conexion))
                     {
                         limite.ExecuteNonQuery();
                     }
 
-                    avisos = "COALESCE(CAST(GROUP_CONCAT(NULLIF(rb.equipos_sin_internet, '') SEPARATOR '|') AS CHAR), '')";
+                    // Sin los de las bitacoras ya resueltas (db/26): esos ya se atendieron.
+                    avisos = conResueltas
+                        ? "COALESCE(CAST(GROUP_CONCAT(CASE WHEN " + BitacoraSinResolver + " THEN NULLIF(rb.equipos_sin_internet, '') END SEPARATOR '|') AS CHAR), '')"
+                        : "COALESCE(CAST(GROUP_CONCAT(NULLIF(rb.equipos_sin_internet, '') SEPARATOR '|') AS CHAR), '')";
                 }
 
-                LlenarSesiones(conexion, tabla, idProfesor, avisos);
+                LlenarSesiones(conexion, tabla, idProfesor, avisos, conResueltas);
 
                 // Lo que reporto el docente desde su panel (db/15): en Bitacoras cuenta
-                // como falla de la sesion, junto con las de sus estudiantes.
+                // como falla de la sesion, junto con las de sus estudiantes. Lo ya
+                // resuelto (db/26) va aparte.
                 Dictionary<int, int> reportes = ReportesProfesorDatos.ContarTodas(conexion);
+                Dictionary<int, int> reportesResueltos = ReportesProfesorDatos.ContarResueltas(conexion);
                 tabla.Columns.Add("reportes_docente", typeof(int));
+                tabla.Columns.Add("reportes_resueltos", typeof(int));
                 foreach (DataRow fila in tabla.Rows)
                 {
                     int cuantos;
-                    fila["reportes_docente"] = reportes.TryGetValue(Convert.ToInt32(fila["idcodigos_accesos"]), out cuantos) ? cuantos : 0;
+                    int id = Convert.ToInt32(fila["idcodigos_accesos"]);
+                    fila["reportes_docente"] = reportes.TryGetValue(id, out cuantos) ? cuantos : 0;
+                    fila["reportes_resueltos"] = reportesResueltos.TryGetValue(id, out cuantos) ? cuantos : 0;
                 }
             }
 
@@ -465,8 +522,12 @@ namespace DigLab.conexion
             return desfase is TimeSpan ? (TimeSpan)desfase : TimeSpan.Zero;
         }
 
-        private static void LlenarSesiones(MySqlConnection conexion, DataTable tabla, int idProfesor, string avisos)
+        private static void LlenarSesiones(MySqlConnection conexion, DataTable tabla, int idProfesor, string avisos, bool conResueltas)
         {
+            // Sin esta columna (sin db/26), Bitacoras no ofrece "Resolver fallas...".
+            string resueltas = !conResueltas ? "" : @"
+                       COUNT(DISTINCT CASE WHEN " + CondicionYaResuelta(conexion) + @" THEN rb.fk_usuario END) AS fallas_resueltas,";
+
             // LEFT JOIN con el profesor: las de uso libre (db/14) no tienen. El
             // profesor (su "Mis bitacoras") no las ve: el WHERE pide las suyas.
             using (MySqlCommand comando = new MySqlCommand(@"
@@ -481,7 +542,7 @@ namespace DigLab.conexion
                        CONCAT_WS(' ', prof.nombre, prof.apellido_paterno, prof.apellido_materno) AS profesor,
                        COALESCE(l.nombre_laboratorio, '') AS laboratorio,
                        COUNT(DISTINCT rb.fk_usuario)      AS alumnos,
-                       COUNT(DISTINCT CASE WHEN " + CondicionConFalla + @" THEN rb.fk_usuario END) AS con_fallas,
+                       COUNT(DISTINCT CASE WHEN " + CondicionFallaPendiente(conexion) + @" THEN rb.fk_usuario END) AS con_fallas," + resueltas + @"
                        COUNT(DISTINCT CASE WHEN rb.registrado_sin_conexion = 1 THEN rb.fk_usuario END) AS sin_conexion,
                        " + avisos + @" AS sin_internet,
                        IF(" + HorariosDatos.CondicionUsoLibre + @", 1, 0) AS uso_libre
@@ -521,7 +582,8 @@ namespace DigLab.conexion
                 SELECT rb.fk_codigo_accesos, rb.equipos_sin_internet
                 FROM registros_bitacoras rb
                 INNER JOIN codigos_accesos ca ON ca.idcodigos_accesos = rb.fk_codigo_accesos
-                WHERE rb.equipos_sin_internet <> '' AND " + condicion, conexion))
+                WHERE rb.equipos_sin_internet <> '' AND " + condicion
+                    + (Esquema.FallasResueltas(conexion) ? " AND " + BitacoraSinResolver : ""), conexion))
             {
                 comando.Parameters.AddWithValue("@Valor", valor);
                 using (MySqlDataReader reader = comando.ExecuteReader())
@@ -550,6 +612,34 @@ namespace DigLab.conexion
             return fila.Table.Columns.Contains("con_falla")
                 && fila["con_falla"] != DBNull.Value
                 && Convert.ToInt32(fila["con_falla"]) == 1;
+        }
+
+        /// <summary>True si lo que reporta esa bitacora (una falla, un comentario o un aviso de otros equipos) ya se dio por resuelto (db/26).</summary>
+        public static bool Resuelta(DataRow fila)
+        {
+            return fila.Table.Columns.Contains("falla_resuelta")
+                && fila["falla_resuelta"] != DBNull.Value
+                && Convert.ToInt32(fila["falla_resuelta"]) == 1
+                && (ConFalla(fila) || AvisoSinInternet(fila).Length > 0);
+        }
+
+        /// <summary>True si reporta una falla o un comentario sin resolver: lo que va en naranja.</summary>
+        public static bool FallaPendiente(DataRow fila)
+        {
+            return ConFalla(fila) && !Resuelta(fila);
+        }
+
+        /// <summary>"Resuelta el 06/11/2026 a las 10:30. Se cambio el teclado."; vacio si no esta resuelta.</summary>
+        public static string TextoResuelta(DataRow fila)
+        {
+            return !Resuelta(fila) ? "" : ReporteProfesor.FraseDeResuelta(Convert.ToString(fila["resuelta_en"]), Convert.ToString(fila["resuelta_nota"]));
+        }
+
+        /// <summary>Lo que reporto (DescribirFallas) y, si ya se resolvio, que se resolvio: para las pantallas.</summary>
+        public static string DescribirConEstado(DataRow fila)
+        {
+            string fallas = DescribirFallas(fila);
+            return Resuelta(fila) ? fallas + ". " + TextoResuelta(fila) : fallas;
         }
 
         /// <summary>Las tres areas que puede reportar el alumno, en el orden en que se muestran.</summary>

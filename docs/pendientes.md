@@ -184,6 +184,78 @@ Lo que quedó sin arreglar, porque ya pasaba antes con «Ahora mismo» y es raro
 - **Repositorio de GitHub y carpeta del proyecto:** `DigBit-2.0` y `A:\Digbit_2.0-Produccion`. Renombrar el repositorio lo hace el dueño en GitHub.
 - **Documentos Word del capítulo III:** no están aquí y dicen DigBit.
 
+### 1g. Marcar como resueltas las fallas reportadas (pedido del usuario, 2026-11-06)
+
+**Hecho en el código, falta en la escuela:** hay que aplicar `db/26_fallas_resueltas.sql` allí; hasta entonces todo sigue como antes y no sale «Resolver fallas...». Crea una tabla nueva y no toca ninguna otra. Solo hace falta el DigLab nuevo en el equipo de la administración; para que un docente con `digbit_equipo` vea lo resuelto, el permiso lo da root (la propia 26).
+
+- **El PDF no dice quién la resolvió,** solo cuándo y qué se hizo; quién queda en el historial de cambios.
+
+### 1h. Suspender el acceso de un estudiante (pedido del usuario, 2026-11-06)
+
+**Hecho en el código, falta en la escuela:** hay que aplicar `db/27_suspensiones.sql` allí **con root** (da el permiso de lectura a `digbit_equipo`, sin el cual un suspendido entra igual en los laboratorios) y actualizar DigLab en los equipos: una versión anterior no mira las suspensiones. Hasta entonces todo sigue como antes y no sale «Suspender acceso...».
+
+En Estudiantes, «Suspender acceso...»: días desde ese momento y la razón, que la persona ve al intentar entrar; al vencer el plazo vuelve a entrar sola, y «Quitar suspensión...» la termina antes.
+
+- **Quien ya está dentro** sigue en esa sesión hasta que salga: la suspensión se mira al iniciar sesión.
+- **Sin servidor** no está en la copia local del equipo, como los dados de baja, y por eso no entra; el equipo se entera la siguiente vez que refresca su copia. Una suspensión puesta después del último refresco no llega a un equipo sin conexión.
+- **Las faltas no cambian:** si no viene a clase le cuenta la falta, y su docente le puede dar asistencia. No hay ningún aviso al docente.
+- **La razón no va al historial ni a la copia local:** va al archivo de sus datos personales y se vacía al anonimizar la cuenta. El historial sí guarda la matrícula, y nunca se borra (ver el punto siguiente).
+- **Por decidir, viene de antes:** el historial no se cambia nunca (db/21) y anonimizar no lo toca, así que el renglón «Cuenta creada con el SIIA» conserva la matrícula y el nombre de una cuenta anonimizada.
+
+### 1i. Memorias de emergencia registradas en la base (pedido del usuario, 2026-11-07)
+
+**Hecho en el código, falta en la escuela:** hay que aplicar `db/28_memorias_emergencia.sql` allí **con root** (da a `digbit_equipo` el permiso de solo leerlas; sin él los equipos no ven la lista), registrar al menos una memoria y actualizar DigLab en los equipos de laboratorio (DigLab, el vigilante y el configurador cambian). Hasta entonces todo sigue como antes: cada equipo acepta la memoria que se le autorizó al instalarlo.
+
+Ya no se autoriza ninguna memoria al instalar («para que se instale rápido y no dependa de 1 memoria»). Se registran en **Laboratorios → Memorias de emergencia...**, con la memoria conectada a la computadora de la administración, un nombre y la contraseña de quien la registra; hasta 20. Cualquiera abre cualquier equipo.
+
+- **Sin servidor** vale la copia `C:\DigLab\memorias_emergencia.txt`, que deja el instalador y renueva el vigilante (como SYSTEM) cada 10 minutos con `DigLab.exe --memorias-emergencia`. Un estudiante no puede escribir en `C:\DigLab`: por eso no la escribe DigLab desde su sesión. Con servidor manda la base: una memoria quitada deja de abrir al momento en los equipos con conexión.
+- **Con Deep Freeze** la copia vuelve, al reiniciar, a la del día que se congeló, hasta que el vigilante la renueva (a los 30 s de arrancar, si hay red). Una memoria quitada después de congelar sigue abriendo un equipo que arranque sin red.
+- **Mientras no haya ninguna registrada**, un equipo instalado antes acepta la que se le autorizó entonces (`EmergenciaMemoria` en su configuración). En cuanto hay una registrada, esa ya no.
+- **Las memorias baratas** cuyo número de serie no distingue a una de otra (vacío, muy corto o un solo carácter repetido) no se dejan registrar.
+- El instalador anterior de un solo archivo y `deploy\configurar_equipo.ps1 -AutorizarMemoria` siguen autorizando una sola memoria en el equipo, como antes.
+
+### 1j. Reiniciar el equipo al terminar la clase (pedido del usuario, 2026-11-07)
+
+«Que cuando acabe una clase se reinicie la pc. No por hora, debe ser por clase.» **Hecho en el código, sin migración;** vale en cada equipo al actualizar DigLab y el vigilante.
+
+- La hora de salida ya era el fin de la clase con cuyo código se registró la bitácora (en el uso libre, el inicio de la siguiente clase o el final del día). A esa hora, en lugar de cerrar la sesión de Windows, **se reinicia el equipo**: lo hace el vigilante (`shutdown.exe /r /f /t 0`, como SYSTEM) y DigLab como respaldo (`ExitWindowsEx` con `EWX_REBOOT | EWX_FORCE`). Si Windows no acepta el reinicio, se cierra la sesión, como antes.
+- Los programas se cierran sin preguntar (si no, uno con un documento sin guardar pararía el reinicio y se podría cancelar): por eso los avisos de 5 minutos y del último minuto, y el globo de bienvenida, ahora dicen que el equipo se reinicia.
+- Quien se va antes («Cerrar mi sesión ahora») solo cierra su sesión; el acceso de emergencia sigue sin hora de salida.
+- **Sin probar de verdad:** el reinicio solo se probó simulado (en esta computadora reiniciaría). Falta verlo en la VM o en un equipo del laboratorio.
+
+### 1l. La lista de asistencia en Excel, con formato (pedido del usuario, 2026-11-08)
+
+«El excel generado por los maestros debe ser más... que se vea mejor cuando se descargue.» **Hecho, sin migración.** «Guardar en Excel...» (Mis grupos y la lista de una clase desde la ficha del docente) ya no guarda un CSV sino un libro de Excel (.xlsx) con la cara de la pantalla: encabezado verde, fechas en vertical (hoy en amarillo), faltas en rojo, la naranja, la verde, la P, el % como porcentaje (rojo sin derecho), el derecho a evaluación en verde o rojo, la fila Asistieron, la simbología con sus colores y, en otra pestaña, las asistencias dadas. Congelada bajo los encabezados; al imprimir, horizontal, a una hoja de ancho y con el encabezado en cada página. El CSV sigue en el diálogo. Pasa el validador oficial de Office (Open XML SDK) sin errores; **falta verlo abierto en un Excel activado** (el de la computadora de desarrollo no lo está).
+
+### 1o. La contraseña de la base, cifrada en cada equipo (pedido del usuario, 2026-11-08)
+
+Los equipos de la escuela se conectan con `teschi_otru`, que puede todo en la base, y el estudiante puede abrir `C:\DigLab\connections.config` tras su bitácora (DigLab corre con su sesión y tiene que leerlo). El usuario pidió «ocultar» los archivos; ocultar no sirve (es una casilla de Windows), así que **se cifra**: DigLab-Setup.exe escribe la conexión cifrada para ese equipo (DPAPI de la máquina, `CadenaCifrada.cs`), al actualizar cifra la que esté en claro, y DigLab la descifra al conectarse (una en claro sigue funcionando). La cuenta de Windows no cambia. **Detiene al curioso, no a quien sabe programar**: lo que protege de verdad es el punto 20 (`digbit_equipo`), que pide root. Si un equipo se reimagina desde otro y su conexión «no se puede descifrar», se vuelve a instalar. Probado: 14 comprobaciones con el DigLab.exe y el configurador de verdad en una carpeta de pruebas; falta la VM.
+
+### 1m. Por hacer: actualizar los equipos desde la base, sin llevar el instalador en una memoria (idea del usuario, 2026-11-08)
+
+Sin código todavía. La administración publica el `DigLab-Setup.exe` nuevo (versión y huella SHA-256 en la base; el archivo en la base, en trozos, o en el hosting de la escuela) y el vigilante de cada equipo, que ya consulta la base cada 10 minutos y corre como SYSTEM, lo instala en silencio cuando nadie usa el equipo («instalar encima» conserva conexión y ajustes); cada equipo anota en la base qué versión tiene y el administrador lo ve.
+
+- **Deep Freeze:** congelado, lo instalado se pierde al reiniciar. Solo sirve en periodos de mantenimiento descongelados (Deep Freeze Enterprise los programa). Sin eso, no.
+- **Seguridad:** sería ejecutar algo como SYSTEM en todos los equipos. `digbit_equipo` solo lee la versión publicada, y el instalador va **firmado**: el equipo comprueba la firma, no solo la huella de la base.
+- **Las migraciones siguen a mano, con root**, antes de publicar.
+- **Equipos de la administración y docentes:** sin vigilante; DigLab avisaría al abrirse, pero instalar pide administrador.
+- **Por decidir:** qué Deep Freeze tienen y si programa mantenimiento; dónde va el archivo (base u hosting); si incluye los equipos de la administración y docentes. Si su Deep Freeze tiene consola, quizá ya reparta el instalador sin programar nada.
+
+### 1n. Por hacer: apagar los equipos desde el administrador (idea del usuario, 2026-11-08)
+
+Sin código todavía. Mismo mecanismo que 1m: la administración deja una **orden** en la base (apagar o reiniciar; un laboratorio, varios o todos; con cuánto aviso; confirmada con su contraseña) y el vigilante la revisa cada 30-60 s, avisa con cuenta atrás a quien está usando el equipo y la cumple; cada equipo anota que la recibió («18 de 20; faltan PC-07 y PC-12»).
+
+- **La orden caduca** (unos 10 minutos): un equipo apagado no la recibe y, sin caducidad, se apagaría al encenderlo al día siguiente.
+- **Solo la administración la escribe:** `digbit_equipo` solo la lee (si no, un estudiante apagaría el laboratorio).
+- Solo los equipos del laboratorio (los que tienen vigilante). Deep Freeze no estorba.
+- Opciones: solo los que no se usan, reiniciar en vez de apagar, cancelar durante la cuenta atrás.
+- **Encender no se puede así:** hace falta Wake-on-LAN (BIOS y red), o la consola de Deep Freeze Enterprise.
+- Diseñar junto con 1m.
+
+### 1k. Aviso del SIIA en el inicio de sesión (pedido del usuario, 2026-11-07)
+
+En el kiosco, con la entrada de los estudiantes por el SIIA encendida en Ajustes, en lugar del subtítulo gris sale un recuadro verde: «Entra con tu cuenta del SIIA: la misma matrícula y contraseña con las que consultas tus calificaciones.» En el paso del NIP se quita. Sin el SIIA, todo como antes. En los equipos de la administración y de los docentes no cambia.
+
 ### 2. Aviso directo al Ing. Benitez de los cambios de horario y de las faltas (RF133, RNF79)
 
 **Hecho en DigLab (2026-10-14/15, con db/21_historial_cambios.sql):** la tabla `historial_cambios` guarda, en la misma transacción que el cambio, cuándo, quién, qué y lo que decía antes y después: alta, cambio, fin y quitar de franjas y clases (también los cambios «desde una fecha» de db/20), cancelaciones y sesiones extra, correcciones de bitácoras, cambios de laboratorios y de su forma de entrar, y en Docentes la baja «con sus clases» y el cambio de código (sin escribir el código). Alertas tiene el tipo nuevo «Cambio de horario» (lo que hizo otra persona desde la última vez que las viste; entra en la notificación de Windows) y la pastilla los cuenta aparte. La ventana «Historial de cambios» (desde Alertas) filtra por fecha, tipo y persona; el encargado la ve en solo consulta. Desde una alerta «Nadie registró bitácora» hay «Marcar como no dada...» y «Ver en Faltas». Sin db/21 todo sigue como antes. Permisos: digbit_consulta lo lee; digbit_equipo nada.

@@ -90,7 +90,7 @@ namespace DigLab
                 ForeColor = Gris,
                 Location = new Point(24, 50),
                 Size = new Size(Ancho - 48, 20),
-                Text = "Valen para toda la escuela: al momento, en todos los equipos con DigLab 1.1."
+                Text = "Valen para toda la escuela: al momento, en todos los equipos con DigLab 1.1 o posterior."
             });
 
             // Los codigos de las clases (db/11): su propia ventana, desde aqui tambien.
@@ -532,7 +532,7 @@ namespace DigLab
                 Text = "«¿Olvidaste tu contraseña?», en el inicio de sesión de todos los equipos (también en el kiosco), "
                     + "le manda un código de 6 cifras al correo de la persona (estudiante, docente o responsable de laboratorio) para que ponga una contraseña nueva. "
                     + "Lo envía el servicio de recuperación de DigLab, instalado en el hosting de la escuela. "
-                    + "Lo que guardes aquí vale al momento en todos los equipos con DigLab 1.1."
+                    + "Lo que guardes aquí vale al momento en todos los equipos con DigLab 1.1 o posterior."
             });
 
             Label etiquetaUrl = EstiloHorarios.CrearEtiqueta("Dirección del servicio de recuperación", new Point(24, 154));

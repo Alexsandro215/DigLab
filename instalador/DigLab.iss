@@ -113,9 +113,11 @@ var
   TxtNumero, TxtCuenta: TNewEdit;
   TxtClave, TxtClave2: TPasswordEdit;
   RbOriginal, RbNueva: TNewRadioButton;
-  ChkMemoria: TNewCheckBox;
-  LblMemoria, LblClave: TNewStaticText;
+  LblClave: TNewStaticText;
   CuentaActual: String;
+  // Las memorias de emergencia vigentes en la base (db/28), segun "probar": un numero,
+  // 'NO' si la base aun no las tiene, '' si no se supo.
+  MemoriasRegistradas: String;
   Actualizando: Boolean;
   ModoPrevio, CuentaPrevia, LaboratorioPrevio: String;
   ConfiguradoBien: Boolean;
@@ -334,37 +336,6 @@ begin
   Caja.Width := Ancho;
 end;
 
-// Cuantas memorias USB hay conectadas, y la serie de la primera.
-function ContarMemorias(var Serie: String): Integer;
-var
-  Lineas: TArrayOfString;
-  I: Integer;
-begin
-  Configurador('memorias', '', Lineas);
-  Serie := Renglon(Lineas, 'MEMORIA');
-  Result := 0;
-  for I := 0 to GetArrayLength(Lineas) - 1 do
-    if Pos('MEMORIA ', Lineas[I]) = 1 then
-      Result := Result + 1;
-end;
-
-procedure MemoriaCambiada(Sender: TObject);
-var
-  Cuantas: Integer;
-  Serie: String;
-begin
-  LblMemoria.Caption := '';
-  if not ChkMemoria.Checked then
-    Exit;
-  Cuantas := ContarMemorias(Serie);
-  if Cuantas = 1 then
-    LblMemoria.Caption := 'Se autorizará la memoria conectada: ' + Serie
-  else if Cuantas = 0 then
-    LblMemoria.Caption := 'No hay ninguna memoria USB conectada: conéctala antes de seguir.'
-  else
-    LblMemoria.Caption := 'Hay ' + IntToStr(Cuantas) + ' memorias conectadas: deja solo la que quieras autorizar.';
-end;
-
 // La cuenta original no se crea: la contrasena es la que ya tiene, y se pide una sola vez.
 procedure CuentaCambiada(Sender: TObject);
 begin
@@ -446,13 +417,10 @@ begin
   ColocarCaja(TxtClave2, PaginaEquipo, ScaleY(179), ScaleX(200));
   TxtClave2.Left := ScaleX(210);
 
-  ChkMemoria := TNewCheckBox.Create(PaginaEquipo);
-  ChkMemoria.Caption := 'Autorizar la memoria USB conectada como llave de emergencia';
-  ColocarCaja(ChkMemoria, PaginaEquipo, ScaleY(209), Ancho);
-  ChkMemoria.Height := ScaleY(18);
-  ChkMemoria.Checked := True;
-  ChkMemoria.OnClick := @MemoriaCambiada;
-  LblMemoria := Etiqueta(PaginaEquipo, '', ScaleY(229));
+  // Ya no se autoriza ninguna memoria aqui (db/28, 2026-11-07): se registran en DigLab y
+  // el equipo copia la lista de la base al configurarse.
+  Etiqueta(PaginaEquipo, 'Memoria de emergencia: cualquiera de las registradas en DigLab (Laboratorios >', ScaleY(213));
+  Etiqueta(PaginaEquipo, 'Memorias de emergencia). No hace falta conectar ninguna.', ScaleY(229));
 
   // Con algo en el tercer texto: vacio, Inno no crea SubCaptionLabel (es nil) y escribirle da
   // "Could not call proc". MostrarResultado pone ahi el veredicto.
@@ -504,6 +472,7 @@ begin
   end;
 
   Estado := Renglon(Lineas, 'ESTADO');
+  MemoriasRegistradas := Renglon(Lineas, 'MEMORIAS');
   if Estado = 'OK' then
   begin
     CboLaboratorio.Items.Clear;
@@ -535,7 +504,7 @@ end;
 function ComprobarCuentaOriginal: Boolean;
 var
   Lineas: TArrayOfString;
-  Estado, Serie: String;
+  Estado, SinMemorias: String;
 begin
   Result := False;
 #ifndef VistaPrevia
@@ -556,8 +525,14 @@ begin
   end;
 
 #endif
-  if (not ChkMemoria.Checked) or (ContarMemorias(Serie) <> 1) then
-    if MsgBox('No se autorizará ninguna memoria de emergencia.'#13#10#13#10 +
+  // Las memorias se registran en DigLab, no aqui: solo se avisa si se sabe que no hay ninguna.
+  SinMemorias := '';
+  if MemoriasRegistradas = '0' then
+    SinMemorias := 'Todavía no hay ninguna memoria de emergencia registrada en DigLab (se registran en Laboratorios > Memorias de emergencia).'
+  else if MemoriasRegistradas = 'NO' then
+    SinMemorias := 'La base todavía no registra memorias de emergencia: le falta la actualización db/28.';
+  if SinMemorias <> '' then
+    if MsgBox(SinMemorias + #13#10#13#10 +
       'DigLab será la pantalla de «' + CuentaActual + '». Si falla y no hay otra cuenta en el equipo, no habrá cómo llegar a su escritorio.'#13#10#13#10 +
       '¿Seguir sin memoria de emergencia?', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) <> IDYES then
       Exit;
@@ -647,7 +622,7 @@ begin
           Space + 'Su contraseña queda guardada en Windows para poder entrar sola.' + NewLine +
           Space + 'Tras la bitácora, se usa su escritorio normal, con sus permisos.' + NewLine +
           Space + 'Se instala el servicio DigLab Vigilante.' + NewLine +
-          Space + 'Para llegar al escritorio sin bitácora: la memoria de emergencia.' + NewLine
+          Space + 'Para llegar al escritorio sin bitácora: una memoria de emergencia registrada en DigLab.' + NewLine
       else
         Texto := Texto + Space + 'Se instala el servicio DigLab Vigilante.' + NewLine +
           Space + 'Para entrar como administrador: Ctrl+Alt+Supr, Cambiar de usuario.' + NewLine;
@@ -743,14 +718,11 @@ begin
 end;
 #endif
 
-// Cada vez que se llega a la pagina: la memoria pudo conectarse mientras tanto.
+// Cada vez que se llega a la pagina.
 procedure CurPageChanged(CurPageID: Integer);
 begin
   if CurPageID = PaginaEquipo.ID then
-  begin
     CuentaCambiada(nil);
-    MemoriaCambiada(nil);
-  end;
 #ifdef VistaPrevia
   if CurPageID = PaginaResultado.ID then
     MostrarMuestra;
@@ -780,8 +752,6 @@ begin
         Parametros := Parametros + ' --original';
       if Trim(TxtNumero.Text) <> '' then
         Parametros := Parametros + ' --numero ' + AddQuotes(Trim(TxtNumero.Text));
-      if ChkMemoria.Checked then
-        Parametros := Parametros + ' --memoria';
     end;
   end;
 

@@ -61,7 +61,9 @@ if ($accion === 'probar') {
 }
 
 $matricula = trim(texto($datos, 'matricula', 45));
-if ($matricula === '' || !preg_match('/^[A-Za-z0-9]+$/', $matricula)) {
+// La misma regla que DigLab (ReglasCuenta.UsuarioValido): el usuario del SIIA puede
+// llevar simbolos; no espacios, caracteres de control ni emojis. Va como parametro.
+if ($matricula === '' || preg_match('/\A[^\p{Z}\p{Cc}\x{10000}-\x{10FFFF}]+\z/u', $matricula) !== 1) {
     responder(400, false, 'Escribe tu matrícula (o tu número de empleado), sin espacios.');
 }
 

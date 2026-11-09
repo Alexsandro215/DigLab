@@ -154,6 +154,31 @@ SET @sql := IF(@hay > 0, CONCAT('GRANT SELECT, INSERT ON teschi_otru.reportes_pr
                          'SELECT ''reportes_profesor aun no existe: el permiso lo da db/15 al aplicarla'' AS resultado');
 PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
 
+-- Fallas que ya se resolvieron (db/26): solo leer, para que el docente vea en
+-- "Mis bitacoras" lo que ya se atendio. Solo si la tabla ya esta; si no, el
+-- permiso lo da la 26 al aplicarse.
+SET @hay := (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'teschi_otru' AND TABLE_NAME = 'fallas_resueltas');
+SET @sql := IF(@hay > 0, CONCAT('GRANT SELECT ON teschi_otru.fallas_resueltas TO ''digbit_equipo''@''', @desde, ''''),
+                         'SELECT ''fallas_resueltas aun no existe: el permiso lo da db/26 al aplicarla'' AS resultado');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+
+-- Suspensiones de acceso (db/27): solo leer. Es lo que las hace valer en los
+-- laboratorios: sin el permiso, ese equipo no las ve y el estudiante entra igual.
+-- Solo si la tabla ya esta; si no, el permiso lo da la 27 al aplicarse.
+SET @hay := (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'teschi_otru' AND TABLE_NAME = 'suspensiones');
+SET @sql := IF(@hay > 0, CONCAT('GRANT SELECT ON teschi_otru.suspensiones TO ''digbit_equipo''@''', @desde, ''''),
+                         'SELECT ''suspensiones aun no existe: el permiso lo da db/27 al aplicarla'' AS resultado');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+
+-- Memorias de emergencia (db/28): SOLO leer, para reconocerlas en el equipo. NUNCA
+-- INSERT ni UPDATE: con estas credenciales un alumno registraria su propia memoria
+-- y abriria el escritorio sin bitacora. Solo si la tabla ya esta; si no, el
+-- permiso lo da la 28 al aplicarse.
+SET @hay := (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'teschi_otru' AND TABLE_NAME = 'memorias_emergencia');
+SET @sql := IF(@hay > 0, CONCAT('GRANT SELECT ON teschi_otru.memorias_emergencia TO ''digbit_equipo''@''', @desde, ''''),
+                         'SELECT ''memorias_emergencia aun no existe: el permiso lo da db/28 al aplicarla'' AS resultado');
+PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
+
 -- Asistencias que el profesor quita durante su clase (db/17): leer, quitar
 -- (insertar) y devolver (borrar). Solo si la tabla ya esta; si no, el permiso
 -- lo da la 17 al aplicarse.

@@ -1,10 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Management;
-using System.Reflection;
 using System.Security.Principal;
+using System.Text;
+using System.Threading.Tasks;
 using Microsoft.Win32;
 
 namespace DigLab.Configurador
@@ -111,37 +112,6 @@ namespace DigLab.Configurador
             }
         }
 
-        /// <summary>Las memorias USB conectadas, una por renglon.</summary>
-        public static void Memorias()
-        {
-            foreach (string serie in SeriesUsb())
-            {
-                Salida.Escribir("MEMORIA", serie);
-            }
-        }
-
-        private static List<string> SeriesUsb()
-        {
-            List<string> series = new List<string>();
-            using (ManagementObjectSearcher buscador = new ManagementObjectSearcher("SELECT SerialNumber FROM Win32_DiskDrive WHERE InterfaceType='USB'"))
-            using (ManagementObjectCollection discos = buscador.Get())
-            {
-                foreach (ManagementBaseObject disco in discos)
-                {
-                    using (disco)
-                    {
-                        string serie = Convert.ToString(disco["SerialNumber"]);
-                        if (!string.IsNullOrWhiteSpace(serie))
-                        {
-                            series.Add(serie.Trim());
-                        }
-                    }
-                }
-            }
-
-            return series;
-        }
-
         // =====================================================================
         // Antes de copiar
         // =====================================================================
@@ -172,7 +142,6 @@ namespace DigLab.Configurador
 
             /// <summary>La cuenta es la que el equipo ya tenia: no se crea ni se cambia nada de ella.</summary>
             public bool Original;
-            public bool Memoria;
             public bool Actualizar;
             public string RutaAjustes;
         }
@@ -244,7 +213,11 @@ namespace DigLab.Configurador
                 () => Archivos.EscribirAjustes(Archivos.ConfigDigLab(datos.Destino), ajustes));
             if (cadena != null)
             {
-                Sistema.Hacer("Escribir connections.config", () => Archivos.EscribirConexion(datos.Destino, cadena));
+                Sistema.Hacer("Escribir connections.config (con la contraseña cifrada para este equipo)", () => Archivos.EscribirConexion(datos.Destino, cadena));
+            }
+            else
+            {
+                CifrarConexionSiHaceFalta(datos.Destino);
             }
 
             Sistema.Hacer("Dejar " + datos.Destino + " en solo lectura para los usuarios normales", () => Archivos.SoloLectura(datos.Destino));
@@ -260,10 +233,7 @@ namespace DigLab.Configurador
 
         private static void ConfigurarKiosco(Datos datos, string contrasena)
         {
-            if (datos.Memoria)
-            {
-                AutorizarMemoria(datos.Destino);
-            }
+            CopiarMemorias(datos.Destino);
 
             string exeDigLab = Path.Combine(datos.Destino, "DigLab.exe");
             Sistema.Hacer("Anotar la cuenta del kiosco, para poder deshacerlo aunque esto no termine", () => AnotarCuentaKiosco(datos.Cuenta, datos.Original));
@@ -330,9 +300,11 @@ namespace DigLab.Configurador
                 Sistema.Hacer("Devolver los ajustes de este equipo", () => Archivos.ReponerAjustes(datos.Destino, datos.RutaAjustes));
             }
 
+            CifrarConexionSiHaceFalta(datos.Destino);
             Sistema.Hacer("Dejar " + datos.Destino + " en solo lectura para los usuarios normales", () => Archivos.SoloLectura(datos.Destino));
             if (EsKiosco(datos.Modo))
             {
+                CopiarMemorias(datos.Destino);
                 string exeVigilante = Path.Combine(datos.Destino, "Vigilante", "DigLab.Vigilante.exe");
                 Sistema.Hacer("Devolver el reinicio automático de DigLab", () => Kiosco.ReinicioDelShell(true));
                 Sistema.Hacer("Arrancar el vigilante", () =>
@@ -382,49 +354,96 @@ namespace DigLab.Configurador
         }
 
         /// <summary>
-        /// La llave de emergencia: la memoria USB conectada (tiene que haber UNA). Se guarda
-        /// hasheada con el mismo PBKDF2 que las contrasenas de los usuarios, llamando al
-        /// codigo de verdad (DigLab.exe) en vez de reescribir el algoritmo aqui.
+        /// Las llaves de emergencia (db/28): ya no se autoriza ninguna memoria al instalar
+        /// (pedido del 2026-11-07). Se registran en DigLab (Laboratorios > Memorias de
+        /// emergencia) y cualquiera abre cualquier equipo. Aqui solo se copia la lista de la
+        /// base al equipo, para que valga aunque arranque sin servidor; despues la renueva
+        /// el servicio DigLab.Vigilante cada 10 minutos. Lo hace DigLab.exe
+        /// --memorias-emergencia, el mismo codigo que usa el vigilante. Nunca detiene la
+        /// instalacion: sin la lista, el vigilante la copia en cuanto haya conexion.
         /// </summary>
-        private static void AutorizarMemoria(string destino)
+        private static void CopiarMemorias(string destino)
         {
-            Salida.Paso("Autorizar la memoria de emergencia");
-            List<string> series = SeriesUsb();
-            if (series.Count != 1)
+            Salida.Paso("Memorias de emergencia");
+            Sistema.Hacer("Copiar de la base las memorias registradas en DigLab (Laboratorios > Memorias de emergencia)", () =>
             {
-                Salida.Aviso(series.Count == 0
-                    ? "No hay ninguna memoria USB conectada: no se autorizó ninguna."
-                    : "Hay " + series.Count + " memorias USB conectadas y no se sabe cuál autorizar: no se autorizó ninguna.");
+                int codigo;
+                string resultado = LanzarCopiaDeMemorias(Path.Combine(destino, "DigLab.exe"), out codigo);
+                switch (codigo)
+                {
+                    case 0:
+                        Salida.Escribir("INFO", resultado);
+                        break;
+                    case 3:
+                        Salida.Aviso("La base todavía no registra memorias de emergencia (falta db/28): este equipo solo acepta la que "
+                            + "se le autorizó en una instalación anterior, si la tiene.");
+                        break;
+                    case 1:
+                        Salida.Aviso("No se pudo leer la base: el servicio DigLab.Vigilante copiará las memorias en cuanto haya conexión. ("
+                            + resultado + ")");
+                        break;
+                    default:
+                        Salida.Aviso("No se pudieron copiar las memorias de emergencia: " + resultado
+                            + " El servicio DigLab.Vigilante lo intentará otra vez.");
+                        break;
+                }
+            });
+        }
+
+        /// <summary>
+        /// La conexion que el equipo ya tenia, en claro (de antes del cifrado, o de
+        /// deploy\configurar_equipo.ps1): se reescribe cifrada para este equipo (pedido del
+        /// 2026-11-08: que el estudiante que abre connections.config no vea la contrasena).
+        /// La cuenta de Windows y todo lo demas no cambian.
+        /// </summary>
+        private static void CifrarConexionSiHaceFalta(string destino)
+        {
+            if (!Archivos.ConexionEnClaro(destino))
+            {
                 return;
             }
 
-            Sistema.Hacer("Guardar la memoria autorizada (hasheada, nunca en claro)", () =>
+            Sistema.Hacer("Cifrar la contraseña de la base que ya tenía este equipo (connections.config)",
+                () => Archivos.EscribirConexion(destino, Archivos.LeerConexion(destino)));
+        }
+
+        /// <summary>DigLab.exe --memorias-emergencia: lo que dijo, y su codigo de salida (-1 si no termino o no esta).</summary>
+        private static string LanzarCopiaDeMemorias(string exe, out int codigo)
+        {
+            codigo = -1;
+            if (!File.Exists(exe))
             {
-                ResolveEventHandler buscar = (s, e) =>
+                return "No está " + exe + ".";
+            }
+
+            ProcessStartInfo inicio = new ProcessStartInfo(exe, "--memorias-emergencia")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                StandardOutputEncoding = new UTF8Encoding(false),
+                WorkingDirectory = Path.GetDirectoryName(exe) ?? ""
+            };
+            using (Process proceso = Process.Start(inicio))
+            {
+                Task<string> salida = proceso.StandardOutput.ReadToEndAsync();
+                if (!proceso.WaitForExit(90000))
                 {
-                    string dll = Path.Combine(destino, new AssemblyName(e.Name).Name + ".dll");
-                    return File.Exists(dll) ? Assembly.LoadFrom(dll) : null;
-                };
-                AppDomain.CurrentDomain.AssemblyResolve += buscar;
-                try
-                {
-                    Type tipo = Assembly.LoadFrom(Path.Combine(destino, "DigLab.exe")).GetType("DigLab.conexion.Contrasenas");
-                    MethodInfo hash = tipo == null ? null : tipo.GetMethod("Hash", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                    if (hash == null)
+                    try
                     {
-                        throw new FalloDeInstalacion("No se encontró Contrasenas.Hash en DigLab.exe.");
+                        proceso.Kill();
+                    }
+                    catch (Exception)
+                    {
+                        // Ya termino, o no se deja.
                     }
 
-                    Archivos.EscribirAjustes(Archivos.ConfigDigLab(destino), new Dictionary<string, string>
-                    {
-                        { "EmergenciaMemoria", (string)hash.Invoke(null, new object[] { series[0] }) }
-                    });
+                    return "DigLab.exe no terminó en 90 s.";
                 }
-                finally
-                {
-                    AppDomain.CurrentDomain.AssemblyResolve -= buscar;
-                }
-            });
+
+                codigo = proceso.ExitCode;
+                return salida.Wait(5000) ? salida.Result.Trim() : "";
+            }
         }
 
         private static void Recordar(string modo, string cuenta)

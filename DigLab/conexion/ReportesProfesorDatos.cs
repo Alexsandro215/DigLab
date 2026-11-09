@@ -20,6 +20,41 @@ namespace DigLab.conexion
         public string Comentarios;
         public DateTime RegistradoEn;
         public string Profesor;
+        /// <summary>Cuando se dio por resuelta (db/26); null si sigue pendiente.</summary>
+        public DateTime? ResueltaEn;
+        public string NotaDeResuelta;
+
+        public bool Resuelta
+        {
+            get { return ResueltaEn.HasValue; }
+        }
+
+        /// <summary>"Resuelta el 06/11/2026 a las 10:30. Se cambio el monitor."; vacio si sigue pendiente.</summary>
+        public string TextoResuelta
+        {
+            get
+            {
+                return !ResueltaEn.HasValue ? ""
+                    : FraseDeResuelta(ResueltaEn.Value.ToString("dd/MM/yyyy 'a las' HH:mm", CultureInfo.InvariantCulture), NotaDeResuelta);
+            }
+        }
+
+        /// <summary>Renglon y, si ya se resolvio, que se resolvio: para las franjas de las bitacoras.</summary>
+        public string RenglonConEstado
+        {
+            get
+            {
+                string renglon = Renglon;
+                return !Resuelta ? renglon : renglon + (renglon.EndsWith(".", StringComparison.Ordinal) ? " " : ". ") + TextoResuelta;
+            }
+        }
+
+        /// <summary>La misma frase para lo que reporto un estudiante y su docente. cuando: "06/11/2026 a las 10:30".</summary>
+        internal static string FraseDeResuelta(string cuando, string nota)
+        {
+            string queSeHizo = EnUnRenglon(nota).TrimEnd('.');
+            return "Resuelta el " + cuando + "." + (queSeHizo.Length == 0 ? "" : " " + queSeHizo + ".");
+        }
 
         /// <summary>"Hardware: Monitor no enciende (PC-12)", o "(todo el laboratorio)": para las alertas.</summary>
         public string Corto
@@ -204,9 +239,19 @@ namespace DigLab.conexion
             }
         }
 
+        /// <summary>Condicion SQL: nadie ha dado por resuelto el reporte rp. Solo con db/26 (Esquema.FallasResueltas).</summary>
+        internal const string ReporteSinResolver =
+            "NOT EXISTS (SELECT 1 FROM fallas_resueltas frp WHERE frp.origen = 'docente' AND frp.registro_id = rp.idreportes_profesor)";
+
+        /// <summary>" AND (sin resolver)" con db/26; sin ella, nada: lo que se ponga detras de un WHERE sobre rp.</summary>
+        internal static string SoloSinResolver(MySqlConnection conexion)
+        {
+            return Esquema.FallasResueltas(conexion) ? " AND " + ReporteSinResolver : "";
+        }
+
         /// <summary>
-        /// Cuantas fallas reporto el profesor en cada una de esas sesiones (para
-        /// las cifras de su panel). Vacio si la base no tiene db/15.
+        /// Cuantas fallas reporto el profesor en cada una de esas sesiones, sin las
+        /// ya resueltas (para las cifras de su panel). Vacio si la base no tiene db/15.
         /// </summary>
         internal static Dictionary<int, int> ContarPorSesion(MySqlConnection conexion, IEnumerable<int> sesiones)
         {
@@ -218,8 +263,8 @@ namespace DigLab.conexion
             }
 
             using (MySqlCommand comando = new MySqlCommand(
-                "SELECT fk_codigo_accesos, COUNT(*) FROM reportes_profesor WHERE fk_codigo_accesos IN ("
-                + string.Join(",", lista.Select(s => s.ToString(CultureInfo.InvariantCulture))) + ") GROUP BY fk_codigo_accesos", conexion))
+                "SELECT rp.fk_codigo_accesos, COUNT(*) FROM reportes_profesor rp WHERE rp.fk_codigo_accesos IN ("
+                + string.Join(",", lista.Select(s => s.ToString(CultureInfo.InvariantCulture))) + ")" + SoloSinResolver(conexion) + " GROUP BY rp.fk_codigo_accesos", conexion))
             using (MySqlDataReader reader = comando.ExecuteReader())
             {
                 while (reader.Read())
@@ -232,9 +277,9 @@ namespace DigLab.conexion
         }
 
         /// <summary>
-        /// Cuantas fallas reporto el profesor en cada sesion que tenga alguna (para la
-        /// columna Fallas de Bitacoras). Son pocas: se cuentan todas de una vez. Vacio si
-        /// la base no tiene db/15.
+        /// Cuantas fallas sin resolver reporto el profesor en cada sesion que tenga alguna
+        /// (para la columna Fallas de Bitacoras). Son pocas: se cuentan todas de una vez.
+        /// Vacio si la base no tiene db/15.
         /// </summary>
         internal static Dictionary<int, int> ContarTodas(MySqlConnection conexion)
         {
@@ -245,7 +290,29 @@ namespace DigLab.conexion
             }
 
             using (MySqlCommand comando = new MySqlCommand(
-                "SELECT fk_codigo_accesos, COUNT(*) FROM reportes_profesor GROUP BY fk_codigo_accesos", conexion))
+                "SELECT rp.fk_codigo_accesos, COUNT(*) FROM reportes_profesor rp WHERE 1 = 1" + SoloSinResolver(conexion) + " GROUP BY rp.fk_codigo_accesos", conexion))
+            using (MySqlDataReader reader = comando.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    cuenta[reader.GetInt32(0)] = Convert.ToInt32(reader[1]);
+                }
+            }
+
+            return cuenta;
+        }
+
+        /// <summary>Cuantas de las que reporto el profesor en cada sesion ya se resolvieron. Vacio sin db/15 o sin db/26.</summary>
+        internal static Dictionary<int, int> ContarResueltas(MySqlConnection conexion)
+        {
+            Dictionary<int, int> cuenta = new Dictionary<int, int>();
+            if (!Esquema.ReportesDeProfesor(conexion) || !Esquema.FallasResueltas(conexion))
+            {
+                return cuenta;
+            }
+
+            using (MySqlCommand comando = new MySqlCommand(
+                "SELECT rp.fk_codigo_accesos, COUNT(*) FROM reportes_profesor rp WHERE NOT " + ReporteSinResolver + " GROUP BY rp.fk_codigo_accesos", conexion))
             using (MySqlDataReader reader = comando.ExecuteReader())
             {
                 while (reader.Read())
@@ -261,11 +328,14 @@ namespace DigLab.conexion
         internal static List<ReporteProfesor> Leer(MySqlConnection conexion, string condicion, Action<MySqlCommand> parametros)
         {
             List<ReporteProfesor> lista = new List<ReporteProfesor>();
+            bool conResueltas = Esquema.FallasResueltas(conexion);
             using (MySqlCommand comando = new MySqlCommand(@"
                 SELECT rp.idreportes_profesor, rp.fk_codigo_accesos, rp.numero_computadora, rp.area, rp.falla, rp.comentarios, rp.registrado_en,
-                       CONCAT_WS(' ', u.nombre, u.apellido_paterno, u.apellido_materno) AS profesor
+                       CONCAT_WS(' ', u.nombre, u.apellido_paterno, u.apellido_materno) AS profesor,
+                       " + (conResueltas ? "fr.resuelta_en, fr.nota" : "NULL") + (conResueltas ? " AS resuelta_nota" : " AS resuelta_en, NULL AS resuelta_nota") + @"
                 FROM reportes_profesor rp
                 LEFT JOIN usuarios u ON u.idusuarios = rp.fk_usuario
+                " + (conResueltas ? "LEFT JOIN fallas_resueltas fr ON fr.origen = 'docente' AND fr.registro_id = rp.idreportes_profesor" : "") + @"
                 WHERE " + condicion + @"
                 ORDER BY rp.registrado_en, rp.idreportes_profesor", conexion))
             {
@@ -283,7 +353,9 @@ namespace DigLab.conexion
                             Falla = reader.GetString("falla"),
                             Comentarios = reader.IsDBNull(reader.GetOrdinal("comentarios")) ? null : reader.GetString("comentarios"),
                             RegistradoEn = reader.GetDateTime("registrado_en"),
-                            Profesor = reader.IsDBNull(reader.GetOrdinal("profesor")) ? "" : reader.GetString("profesor")
+                            Profesor = reader.IsDBNull(reader.GetOrdinal("profesor")) ? "" : reader.GetString("profesor"),
+                            ResueltaEn = reader.IsDBNull(reader.GetOrdinal("resuelta_en")) ? (DateTime?)null : Convert.ToDateTime(reader["resuelta_en"], CultureInfo.InvariantCulture),
+                            NotaDeResuelta = reader.IsDBNull(reader.GetOrdinal("resuelta_nota")) ? null : Convert.ToString(reader["resuelta_nota"], CultureInfo.InvariantCulture)
                         });
                     }
                 }

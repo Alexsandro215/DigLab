@@ -151,6 +151,14 @@ namespace DigLab.conexion
                     }
                 }
 
+                // Aqui ya se comprobo quien es, por cualquier camino (su contrasena, el SIIA o
+                // su huella, tambien si su cuenta se acaba de crear en otro equipo): asi no se
+                // delata ninguna matricula. Solo los estudiantes se pueden suspender (db/27).
+                if (tipoUsuarioId == TiposUsuario.Alumno && EstaSuspendido(numeroIdentificador))
+                {
+                    return false;
+                }
+
                 // Su contrasena es la del SIIA: Mi perfil no ofrece cambiarla.
                 Datos_User.ContrasenaDelSiia = conSiia;
 
@@ -192,6 +200,25 @@ namespace DigLab.conexion
             Log.Error(contexto, ex);
             MessageBox.Show(MensajeDeFallo.Explicar(queNoSePudo, ex, MensajeDeFallo.AvisaAlLaboratorio),
                 "DigLab", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+
+        /// <summary>Si tiene el acceso suspendido (db/27), se lo dice con hasta cuando y por que, y devuelve true.</summary>
+        private bool EstaSuspendido(string numeroIdentificador)
+        {
+            Suspension suspension;
+            using (MySqlConnection conexion = mconexion.GetConexion())
+            {
+                suspension = SuspensionesDatos.VigentePorIdentificador(conexion, numeroIdentificador);
+            }
+
+            if (suspension == null)
+            {
+                return false;
+            }
+
+            Log.Info("Inicio de sesion rechazado: '" + numeroIdentificador + "' tiene el acceso suspendido hasta " + SuspensionesDatos.Fecha(suspension.Hasta) + ".");
+            MessageBox.Show(SuspensionesDatos.TextoParaElEstudiante(suspension), "Acceso suspendido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return true;
         }
 
         /// <summary>

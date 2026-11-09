@@ -20,11 +20,11 @@ namespace DigLab
     /// <summary>
     /// "Mis grupos" del panel del profesor. Arriba, una sola linea: el titulo, el
     /// grupo elegido con su materia, cuando se leyo su lista y los botones
-    /// Copiar la lista, Guardar en Excel (CSV), Actualizar (o F5) y Cerrar; mientras
+    /// Copiar la lista, Guardar en Excel, Actualizar (o F5) y Cerrar; mientras
     /// dura la clase elegida, antes de ellos, "Dar asistencia..." (relleno de verde).
     /// "Copiar la lista" pone la hoja entera en el portapapeles para pegarla en
-    /// Excel y lo dice unos segundos en el estado; "Guardar en Excel (CSV)..." la
-    /// guarda en un archivo que Excel abre con doble clic (GuardarCsv). Ninguno de
+    /// Excel y lo dice unos segundos en el estado; "Guardar en Excel..." la
+    /// guarda como libro de Excel, con su formato (GuardarEnExcel). Ninguno de
     /// los dos se ofrece en kiosco (ni dialogos de archivos): alli el
     /// profesor no tiene donde pegarla y quien entra despues si (el alumno abre el
     /// escritorio en la misma sesion de Windows); al cerrar, el portapapeles se
@@ -84,7 +84,7 @@ namespace DigLab
         private const string TextoNoSeCopio = "No se copió: inténtalo de nuevo.";
         private const string TextoGuardada = "Lista guardada: ábrela con Excel.";
         private const string TextoDada = "Asistencia dada.";
-        private const string TituloGuardarCsv = "Guardar en Excel (CSV)...";
+        private const string TituloGuardarCsv = "Guardar en Excel...";
         /// <summary>Todo lo que puede decir el estado (con la hora mas ancha): el mas largo fija su ancho.</summary>
         private static readonly string[] TextosDeEstado =
         {
@@ -146,7 +146,7 @@ namespace DigLab
         private readonly BotonCabecera btnDar;
         private bool verDar;
         private readonly BotonCabecera btnCopiar;
-        // "Guardar en Excel (CSV)...": la hoja en un archivo (GuardarCsv). Como Copiar, nunca en kiosco.
+        // "Guardar en Excel...": la hoja en un libro de Excel (GuardarEnExcel). Como Copiar, nunca en kiosco.
         private readonly BotonCabecera btnGuardarCsv;
         private readonly BotonCabecera btnActualizar;
         private readonly BotonCabecera btnCerrar;
@@ -276,9 +276,9 @@ namespace DigLab
                 + "Ctrl+C en la hoja copia solo las casillas que elijas.");
             // En kiosco tampoco: alli no hay dialogos de archivos (seria una salida al escritorio).
             btnGuardarCsv = new BotonCabecera(TituloGuardarCsv) { TabIndex = 5, Visible = !Kiosco.Activo };
-            btnGuardarCsv.Click += (s, e) => GuardarCsv();
-            ayuda.SetToolTip(btnGuardarCsv, "Guarda la hoja entera en un archivo que Excel abre con doble clic, "
-                + "con la materia, el grupo y el periodo en las primeras líneas.");
+            btnGuardarCsv.Click += (s, e) => GuardarEnExcel();
+            ayuda.SetToolTip(btnGuardarCsv, "Guarda la hoja entera como libro de Excel, con sus colores, la materia, el grupo "
+                + "y el periodo, lista para imprimir. También se puede guardar como CSV.");
             btnActualizar = new BotonCabecera("Actualizar") { TabIndex = 6 };
             btnActualizar.Click += (s, e) => Actualizar();
             ayuda.SetToolTip(btnActualizar, "Vuelve a leer tus grupos y la lista (F5).");
@@ -483,7 +483,7 @@ namespace DigLab
 
             using (Graphics g = Graphics.FromHwnd(IntPtr.Zero))
             {
-                // Cerrar pegado al margen; Actualizar, Guardar en Excel (CSV) y Copiar la lista
+                // Cerrar pegado al margen; Actualizar, Guardar en Excel y Copiar la lista
                 // 8 px antes cada uno, y el estado 12 px antes de Copiar (su sitio se guarda
                 // aunque, sin grupos, no se vean). En kiosco Copiar y Guardar nunca se ven: el
                 // estado va 12 px antes de Actualizar.
@@ -1551,15 +1551,15 @@ namespace DigLab
         }
 
         /// <summary>
-        /// "Guardar en Excel (CSV)...": la hoja entera en un archivo .csv que Excel
-        /// abre con doble clic (HojaAsistencia.ComoCsv: el membrete en las primeras
-        /// lineas), en UTF-8 con BOM para que Excel lea los acentos. Pide donde
-        /// guardarlo (en Documentos, con el grupo, la materia y la fecha en el
-        /// nombre). Si sale bien, lo dice el estado unos segundos (la ruta, en su
-        /// ayuda); si Windows no deja guardarlo, un mensaje con por que y que hacer.
-        /// En kiosco no se ofrece (alli no hay dialogos de archivos): si se pidiera, nada.
+        /// "Guardar en Excel...": la hoja entera como libro de Excel, con su formato
+        /// (HojaAsistencia.ComoExcel); en el dialogo, tambien el CSV de antes
+        /// (HojaAsistencia.FiltroGuardar). Pide donde guardarlo (en Documentos, con el
+        /// grupo, la materia y la fecha en el nombre). Si sale bien, lo dice el estado
+        /// unos segundos (la ruta, en su ayuda); si Windows no deja guardarlo, un mensaje
+        /// con por que y que hacer. En kiosco no se ofrece (alli no hay dialogos de
+        /// archivos): si se pidiera, nada.
         /// </summary>
-        private void GuardarCsv()
+        private void GuardarEnExcel()
         {
             if (Kiosco.Activo)
             {
@@ -1567,11 +1567,10 @@ namespace DigLab
             }
 
             GrupoDelProfesor grupo = Elegido;
-            HojaAsistencia.Copia como;
-            string texto = hoja.ComoCsv(out como);
-            if (texto == null || grupo == null)
+            HojaAsistencia.Copia como = HojaAsistencia.Copia.SinLista;
+            if (grupo == null || hoja.ComoExcel(out como) == null)
             {
-                Avisar(como == HojaAsistencia.Copia.SinAlumnos ? TextoSinAlumnosQueCopiar
+                Avisar(grupo != null && como == HojaAsistencia.Copia.SinAlumnos ? TextoSinAlumnosQueCopiar
                     : leyendoGrupos || leyendoHoja ? TextoEsperaLista : TextoSinListaQueGuardar, TextoGris, null);
                 return;
             }
@@ -1579,9 +1578,10 @@ namespace DigLab
             string ruta;
             using (SaveFileDialog dialogo = new SaveFileDialog
             {
-                Title = "Guardar la lista de asistencia para Excel",
-                Filter = "Archivo CSV para Excel (*.csv)|*.csv",
-                DefaultExt = "csv",
+                Title = "Guardar la lista de asistencia en Excel",
+                Filter = HojaAsistencia.FiltroGuardar,
+                FilterIndex = 1,
+                DefaultExt = "xlsx",
                 AddExtension = true,
                 OverwritePrompt = true,
                 FileName = NombreDelCsv(grupo),
@@ -1596,25 +1596,26 @@ namespace DigLab
                 ruta = dialogo.FileName;
             }
 
+            bool comoCsv;
             try
             {
-                File.WriteAllText(ruta, texto, new UTF8Encoding(true));
+                comoCsv = hoja.GuardarEn(ruta, out como);
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is System.Security.SecurityException
                 || ex is NotSupportedException || ex is ArgumentException)
             {
                 // La causa y que hacer; el detalle (con la ruta), al registro.
-                Log.Error("Mis grupos: guardar en CSV la lista de la clase " + grupo.Clase.Id, ex);
-                MessageBox.Show(this, VisorPdf.ExplicarArchivo("No se pudo guardar la lista", ex, "Excel"), "Guardar en Excel (CSV)",
+                Log.Error("Mis grupos: guardar en Excel la lista de la clase " + grupo.Clase.Id, ex);
+                MessageBox.Show(this, VisorPdf.ExplicarArchivo("No se pudo guardar la lista", ex, "Excel"), "Guardar en Excel",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
-            Log.Info("Mis grupos: lista de la clase " + grupo.Clase.Id + " guardada en CSV.");
+            Log.Info("Mis grupos: lista de la clase " + grupo.Clase.Id + " guardada " + (comoCsv ? "en CSV." : "como libro de Excel."));
             Avisar(TextoGuardada, Color.DarkGreen, "Se guardó en " + ruta + ". Ábrela con doble clic: se abre en Excel.");
         }
 
-        /// <summary>"Lista de asistencia ISC-7001 Programacion Web 2026-10-16.csv", sin los caracteres que Windows no admite en un nombre.</summary>
+        /// <summary>"Lista de asistencia ISC-7001 Programacion Web 2026-10-16" (la extension la pone el dialogo), sin los caracteres que Windows no admite en un nombre.</summary>
         private string NombreDelCsv(GrupoDelProfesor grupo)
         {
             string nombre = "Lista de asistencia " + grupo.Clase.Grupo + " " + grupo.Clase.Materia + " "
@@ -1624,7 +1625,7 @@ namespace DigLab
                 nombre = nombre.Replace(invalido, '-');
             }
 
-            return nombre.Trim() + ".csv";
+            return nombre.Trim();
         }
 
         /// <summary>Una tarjeta del tablero: marca a sus alumnos en la hoja; otra vez, quita la marca.</summary>

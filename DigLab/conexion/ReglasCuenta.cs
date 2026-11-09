@@ -21,6 +21,23 @@ namespace DigLab.conexion
             get { return "Al menos " + LargoMinimoContrasena + " caracteres."; }
         }
 
+        /// <summary>usuarios.numero_identificador es VARCHAR(45) en la base de la escuela.</summary>
+        public const int LargoMaximoUsuario = 45;
+
+        /// <summary>
+        /// Si ese usuario se puede escribir para entrar, en todas partes (inicio de
+        /// sesion, recuperar contrasena, alta de cuentas y la API). El del SIIA puede
+        /// llevar guion bajo, punto u otros simbolos, asi que solo se rechaza lo que
+        /// nunca es un usuario: espacios y caracteres de control (errores al teclear
+        /// o al pegar) y emojis (no caben en el utf8 de 3 bytes de la base). Ningun
+        /// simbolo es un riesgo: todas las consultas llevan el usuario como parametro.
+        /// </summary>
+        public static bool UsuarioValido(string usuario)
+        {
+            return !string.IsNullOrEmpty(usuario) && usuario.Length <= LargoMaximoUsuario
+                && !usuario.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || char.IsSurrogate(c));
+        }
+
         /// <summary>usuarios.correo es VARCHAR(45) en la base de la escuela: lo que pase, se recortaria sin avisar.</summary>
         public const int LargoMaximoCorreo = 45;
 

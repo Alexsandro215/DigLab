@@ -281,7 +281,43 @@ namespace DigLab
                     "Falta la cadena de conexion '" + NombreConexion + "'. " + Ayuda);
             }
 
-            return ajuste.ConnectionString;
+            return EnClaro(ajuste.ConnectionString);
+        }
+
+        // La ultima cadena cifrada y su descifrado: cada consulta pide la cadena, y DPAPI
+        // no es gratis. Se guardan juntas para que nunca se mezclen.
+        private static Tuple<string, string> ultimaDescifrada;
+
+        /// <summary>
+        /// La cadena de connections.config en claro: el instalador la escribe cifrada
+        /// para este equipo (CadenaCifrada); una sin cifrar va tal cual. Si no se puede
+        /// descifrar aqui (se copio de otro equipo, o se dano), lo dice como un problema
+        /// de la configuracion: la pantalla de arranque pide volver a instalar.
+        /// </summary>
+        private static string EnClaro(string valor)
+        {
+            if (!CadenaCifrada.EstaCifrada(valor))
+            {
+                return valor;
+            }
+
+            Tuple<string, string> guardada = ultimaDescifrada;
+            if (guardada != null && guardada.Item1 == valor)
+            {
+                return guardada.Item2;
+            }
+
+            try
+            {
+                string cadena = CadenaCifrada.Descifrar(valor);
+                ultimaDescifrada = Tuple.Create(valor, cadena);
+                return cadena;
+            }
+            catch (System.Security.Cryptography.CryptographicException ex)
+            {
+                throw new ConfigurationErrorsException("La conexion de connections.config esta cifrada y no se puede descifrar en este equipo "
+                    + "(se cifro en otra computadora, o el archivo se dano). Vuelve a instalar este equipo con DigLab-Setup.exe.", ex);
+            }
         }
     }
 }

@@ -23,8 +23,6 @@ namespace DigLab
         private const int Ancho = 520;
         private const int Alto = 430;
         private static readonly Regex SoloCifras = new Regex("^[0-9]{6}$");
-        // La misma regla que el inicio de sesion (Login.cs) y la API.
-        private static readonly Regex Identificador = new Regex("^[A-Za-z0-9]+$");
         private static readonly Color Gris = Color.FromArgb(70, 70, 70);
         private static readonly Color Rojo = Color.FromArgb(190, 30, 30);
 
@@ -269,7 +267,8 @@ namespace DigLab
         private void PedirCodigo()
         {
             string matricula = txtMatricula.Text.Trim();
-            if (!Identificador.IsMatch(matricula))
+            // La misma regla que el inicio de sesion y la API.
+            if (!ReglasCuenta.UsuarioValido(matricula))
             {
                 MostrarPaso1();
                 Error("Escribe tu matrícula (o tu número de empleado), sin espacios.", txtMatricula);
@@ -631,18 +630,27 @@ namespace DigLab
             return caja;
         }
 
-        /// <summary>Que en esa caja solo se escriban cifras (las teclas de control, como borrar, siguen).</summary>
-        public static void SoloCifras(TextBox caja)
+        /// <summary>
+        /// Que en esa caja solo se escriban cifras (las teclas de control, como borrar,
+        /// siguen). Con <paramref name="mientras"/>, solo mientras diga que si: una caja
+        /// que tambien sirve para otra cosa, como la del inicio de sesion.
+        /// </summary>
+        public static void SoloCifras(TextBox caja, Func<bool> mientras = null)
         {
             caja.KeyPress += (s, e) =>
             {
-                if (!char.IsControl(e.KeyChar) && (e.KeyChar < '0' || e.KeyChar > '9'))
+                if ((mientras == null || mientras()) && !char.IsControl(e.KeyChar) && (e.KeyChar < '0' || e.KeyChar > '9'))
                 {
                     e.Handled = true;
                 }
             };
             caja.TextChanged += (s, e) =>
             {
+                if (mientras != null && !mientras())
+                {
+                    return;
+                }
+
                 string cifras = new string(caja.Text.Where(c => c >= '0' && c <= '9').Take(4).ToArray());
                 if (cifras != caja.Text)
                 {

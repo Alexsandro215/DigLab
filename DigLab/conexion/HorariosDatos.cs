@@ -4661,7 +4661,7 @@ namespace DigLab.conexion
             using (MySqlCommand comando = new MySqlCommand(@"
                 SELECT ca.idcodigos_accesos, ca.horarios_idhorarios, ca.horario_excepciones_id, ca.codigo,
                        COUNT(DISTINCT rb.fk_usuario) AS alumnos,
-                       COUNT(DISTINCT CASE WHEN " + Consultas.CondicionConFalla + @" THEN rb.fk_usuario END) AS con_fallas"
+                       COUNT(DISTINCT CASE WHEN " + Consultas.CondicionFallaPendiente(conexion) + @" THEN rb.fk_usuario END) AS con_fallas"
                 + (deClasesTerminadas ? @",
                        ca.laboratorios_idlaboratorios AS lab, ca.usuarios_idusuarios AS profesor, ca.materias_id_materia AS materia,
                        ca.grupos_idgrupos AS grupo, ca.hora_entrada, ca.hora_salida,

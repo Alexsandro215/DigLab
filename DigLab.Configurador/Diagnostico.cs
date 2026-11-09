@@ -48,6 +48,8 @@ namespace DigLab.Configurador
             }
             else
             {
+                // Quien abra connections.config no debe ver la contrasena (CadenaCifrada).
+                Linea(!Archivos.ConexionEnClaro(destino), "La contraseña de la base va cifrada para este equipo");
                 try
                 {
                     BaseDatos.Laboratorios(cadena);
@@ -102,6 +104,19 @@ namespace DigLab.Configurador
             if (string.IsNullOrWhiteSpace(maquina))
             {
                 Salida.Aviso("Sin número de máquina: en las bitácoras saldrá el nombre de Windows (" + Environment.MachineName + ").");
+            }
+
+            // Las memorias de emergencia (db/28): la copia de la base que deja DigLab.exe
+            // --memorias-emergencia. Mientras no haya ninguna, vale la de una instalacion anterior.
+            int enLaCopia = MemoriasEnLaCopia(Path.Combine(destino, "memorias_emergencia.txt"));
+            if (enLaCopia > 0)
+            {
+                Linea(true, "Memorias de emergencia que abren este equipo sin servidor: " + enLaCopia);
+            }
+            else if (string.IsNullOrWhiteSpace(Archivos.LeerAjuste(config, "EmergenciaMemoria")))
+            {
+                Salida.Aviso("Sin memorias de emergencia: regístralas en DigLab (Laboratorios > Memorias de emergencia). Sin servidor y "
+                    + "sin bitácora, solo se llega al escritorio con otra cuenta del equipo, si la hay.");
             }
 
             if (string.IsNullOrWhiteSpace(cuenta) || !Cuenta.Existe(cuenta))
@@ -200,10 +215,18 @@ namespace DigLab.Configurador
             {
                 Salida.Aviso("No se pudo revisar la cuenta «" + cuenta + "»: " + ex.Message);
             }
+        }
 
-            if (string.IsNullOrWhiteSpace(Archivos.LeerAjuste(config, "EmergenciaMemoria")))
+        /// <summary>Cuantas memorias trae la copia (renglones que no son comentario); 0 si no hay copia.</summary>
+        private static int MemoriasEnLaCopia(string ruta)
+        {
+            try
             {
-                Salida.Aviso("Sin memoria de emergencia: si no hay otra cuenta en el equipo, sin bitácora no hay forma de llegar al escritorio.");
+                return File.Exists(ruta) ? File.ReadAllLines(ruta).Count(l => l.Length > 0 && !l.StartsWith("#", StringComparison.Ordinal)) : 0;
+            }
+            catch (Exception)
+            {
+                return 0;
             }
         }
     }

@@ -34,5 +34,7 @@ using System.Runtime.InteropServices;
 // [assembly: AssemblyVersion("1.0.*")]
 // 1.1: modos de acceso a las clases (db/11). deploy\diagnostico_equipo.ps1 avisa
 // de los equipos con una anterior, que pediria siempre el codigo fijo.
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+// 1.2: memorias de emergencia en la base (db/28), reinicio al terminar la clase, conexion cifrada,
+// lista en Excel, fallas resueltas (db/26) y suspensiones (db/27).
+[assembly: AssemblyVersion("1.2.0.0")]
+[assembly: AssemblyFileVersion("1.2.0.0")]

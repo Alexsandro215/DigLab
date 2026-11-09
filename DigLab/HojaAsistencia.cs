@@ -328,7 +328,7 @@ namespace DigLab
                 Partir = true,
                 Font = fuenteChica,
                 ForeColor = TextoGris,
-                Text = "Para pasarla a Excel, pulsa «Copiar la lista» y pégala, o guárdala en un archivo con «Guardar en Excel (CSV)...»; "
+                Text = "Para pasarla a Excel, pulsa «Copiar la lista» y pégala, o guárdala con «Guardar en Excel...», con sus colores; "
                     + "Ctrl+C copia solo las casillas que elijas.",
                 Visible = false
             };
@@ -1566,6 +1566,368 @@ namespace DigLab
 
             resultado = Copia.Hecha;
             return csv.ToString();
+        }
+
+        // =====================================================================
+        // La hoja entera como libro de Excel (.xlsx), con su formato
+        // =====================================================================
+
+        /// <summary>Lo que ofrece el dialogo de "Guardar en Excel...": el libro, y el CSV de antes por si alguien lo necesita.</summary>
+        internal const string FiltroGuardar = "Libro de Excel (*.xlsx)|*.xlsx|Texto separado por comas, CSV (*.csv)|*.csv";
+
+        /// <summary>
+        /// Guarda la lista en esa ruta: con .csv, el CSV de siempre (ComoCsv, en UTF-8 con
+        /// BOM); con cualquier otra, el libro de Excel (ComoExcel). Lanza lo que lance
+        /// Windows al escribir; resultado dice si no habia nada que guardar (y no escribe).
+        /// Devuelve true si es CSV.
+        /// </summary>
+        internal bool GuardarEn(string ruta, out Copia resultado)
+        {
+            bool comoCsv = string.Equals(System.IO.Path.GetExtension(ruta), ".csv", StringComparison.OrdinalIgnoreCase);
+            if (comoCsv)
+            {
+                string texto = ComoCsv(out resultado);
+                if (texto != null)
+                {
+                    System.IO.File.WriteAllText(ruta, texto, new System.Text.UTF8Encoding(true));
+                }
+            }
+            else
+            {
+                byte[] libro = ComoExcel(out resultado);
+                if (libro != null)
+                {
+                    System.IO.File.WriteAllBytes(ruta, libro);
+                }
+            }
+
+            return comoCsv;
+        }
+
+        /// <summary>
+        /// La hoja entera como un libro de Excel con la cara que tiene aqui (pedido del
+        /// 2026-11-08: "que se vea mejor cuando se descargue"; antes era un CSV, sin
+        /// formato). Arriba el titulo y los datos de la lista (materia, grupo, docente,
+        /// periodo con sus fechas y cuando se leyo); la tabla con el encabezado verde, las
+        /// fechas en vertical (la de hoy en amarillo), cada casilla con los colores de la
+        /// pantalla (faltas en rojo, la naranja, la verde, la P, el guion), las lineas que
+        /// separan los bloques, el % como porcentaje de verdad (en rojo sin derecho) y el
+        /// derecho a evaluacion en verde o rojo; la fila Asistieron; y abajo la simbologia
+        /// con sus muestras de color. Congelada bajo el encabezado y tras el nombre; al
+        /// imprimir, horizontal, todo el ancho en una hoja y el encabezado en cada pagina.
+        /// Las asistencias que dio el docente van en su propia pestana. Null si no hay
+        /// nada que guardar, y por que en resultado (como ComoCsv).
+        /// </summary>
+        public byte[] ComoExcel(out Copia resultado)
+        {
+            if (asistencia == null || cargando)
+            {
+                resultado = Copia.SinLista;
+                return null;
+            }
+
+            if (asistencia.Alumnos.Count == 0 || grid.Rows.Count == 0)
+            {
+                resultado = Copia.SinAlumnos;
+                return null;
+            }
+
+            List<DataGridViewColumn> columnas = grid.Columns.Cast<DataGridViewColumn>().Where(c => c.Visible).OrderBy(c => c.DisplayIndex).ToList();
+            int n = columnas.Count;
+            int total = asistencia.Dias.Count;
+            DateTime? ultima = total == 0 ? (DateTime?)null : asistencia.Dias[total - 1].Fecha;
+            string periodo = ultima == null ? "desde el " + asistencia.VigenteDesde.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)
+                : "del " + asistencia.VigenteDesde.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) + " al " + ultima.Value.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+
+            EstiloExcel titulo = new EstiloExcel { Negrita = true, Tamano = 16F, Letra = VerdeExcel };
+            EstiloExcel etiqueta = new EstiloExcel { Negrita = true, Letra = Color.FromArgb(89, 89, 89) };
+            EstiloExcel dato = new EstiloExcel();
+            EstiloExcel encabezado = new EstiloExcel { Negrita = true, Letra = Color.White, Fondo = VerdeExcel, Horizontal = "center", Ajustar = true, Cuadricula = true };
+            EstiloExcel casilla = new EstiloExcel { Cuadricula = true };
+
+            HojaExcel hoja = new HojaExcel("Asistencia") { Pie = "Lista de asistencia · " + asistencia.Grupo + " · " + asistencia.Materia };
+            hoja.Texto(1, 1, "Lista de asistencia", titulo);
+            hoja.Combinar(1, 1, n);
+            hoja.Alto(1, 26);
+            int fila = 1;
+            Action<string, string> renglon = (texto, valor) =>
+            {
+                fila++;
+                hoja.Texto(fila, 1, texto, etiqueta);
+                hoja.Combinar(fila, 1, 2);
+                hoja.Texto(fila, 3, valor, dato);
+                hoja.Combinar(fila, 3, n);
+            };
+            renglon("Materia:", asistencia.Materia);
+            renglon("Grupo:", asistencia.Grupo);
+            if (!string.IsNullOrWhiteSpace(docente))
+            {
+                renglon("Docente:", docente);
+            }
+
+            renglon("Periodo:", periodo);
+            renglon("Actualizada:", "el " + asistencia.AhoraServidor.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)
+                + " a las " + asistencia.AhoraServidor.ToString("HH:mm", CultureInfo.InvariantCulture));
+
+            // Los encabezados: cada clase con su dia y su fecha completa, en vertical.
+            fila += 2;
+            int filaEncabezado = fila;
+            for (int i = 0; i < n; i++)
+            {
+                DataGridViewColumn columna = columnas[i];
+                DiaDeAsistencia dia = columna.Tag as DiaDeAsistencia;
+                EstiloExcel estilo = encabezado.Copiar();
+                estilo.DivisoriaDerecha = divisorias.Contains(columna.Name);
+                string texto = columna.HeaderText;
+                if (dia != null)
+                {
+                    estilo.Rotacion = 90;
+                    texto = (dia.EnCurso ? "hoy" : dia.Fecha.ToString("ddd", Espanol).Replace(".", "")) + " "
+                        + dia.Fecha.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+                    if (dia.EnCurso)
+                    {
+                        estilo.Fondo = HoyFondo;
+                        estilo.Letra = HoyTexto;
+                    }
+                }
+
+                hoja.Texto(fila, i + 1, texto, estilo);
+            }
+
+            hoja.Alto(fila, total > 0 ? 80 : 32);
+
+            // Un renglon por estudiante y la fila Asistieron, con lo que se ve en la pantalla.
+            int largoNombre = 16;
+            foreach (DataGridViewRow renglonDeLaHoja in grid.Rows)
+            {
+                fila++;
+                bool esTotal = Equals(renglonDeLaHoja.Tag, "total");
+                Color fondoFila = esTotal ? TotalFondo
+                    : renglonDeLaHoja.DefaultCellStyle.BackColor.IsEmpty || renglonDeLaHoja.DefaultCellStyle.BackColor.ToArgb() == Color.White.ToArgb()
+                        ? Color.Empty : renglonDeLaHoja.DefaultCellStyle.BackColor;
+                hoja.Alto(fila, 18);
+                for (int i = 0; i < n; i++)
+                {
+                    DataGridViewColumn columna = columnas[i];
+                    DataGridViewCell celda = renglonDeLaHoja.Cells[columna.Index];
+                    EstiloExcel estilo = casilla.Copiar();
+                    estilo.Fondo = fondoFila;
+                    estilo.Negrita = esTotal;
+                    estilo.LineaArriba = esTotal;
+                    estilo.DivisoriaDerecha = divisorias.Contains(columna.Name);
+                    string texto = Convert.ToString(celda.Value, CultureInfo.CurrentCulture);
+                    switch (columna.Name)
+                    {
+                        case "no":
+                        case "asist":
+                        case "faltas":
+                            estilo.Horizontal = "center";
+                            if (celda.Value is int)
+                            {
+                                hoja.Numero(fila, i + 1, (int)celda.Value, estilo);
+                            }
+                            else
+                            {
+                                hoja.Texto(fila, i + 1, texto, estilo);
+                            }
+
+                            continue;
+                        case "matricula":
+                            estilo.Horizontal = "left";
+                            break;
+                        case "alumno":
+                            estilo.Horizontal = esTotal ? "right" : "left";
+                            if (!esTotal)
+                            {
+                                largoNombre = Math.Max(largoNombre, texto.Length);
+                            }
+
+                            break;
+                        case "porciento":
+                        {
+                            // Un porcentaje de verdad, con la misma regla que la pantalla (truncado).
+                            object valor = renglonDeLaHoja.Cells["derecho"].Tag;
+                            estilo.Horizontal = "center";
+                            if (valor is double)
+                            {
+                                double porciento = (double)valor;
+                                estilo.Formato = "0%";
+                                if (!ResumenAsistencia.TieneDerecho(porciento))
+                                {
+                                    estilo.Letra = FaltaTexto;
+                                    estilo.Negrita = true;
+                                }
+
+                                hoja.Numero(fila, i + 1, ResumenAsistencia.PorcentajeMostrado(porciento) / 100.0, estilo);
+                            }
+                            else
+                            {
+                                hoja.Vacia(fila, i + 1, estilo);
+                            }
+
+                            continue;
+                        }
+
+                        case "derecho":
+                        {
+                            object valor = celda.Tag;
+                            estilo.Horizontal = "center";
+                            if (valor is double && !esTotal)
+                            {
+                                bool conDerecho = ResumenAsistencia.TieneDerecho((double)valor);
+                                estilo.Fondo = conDerecho ? DadaFondo : FaltaFondo;
+                                estilo.Letra = conDerecho ? DadaTexto : FaltaTexto;
+                                estilo.Negrita = true;
+                            }
+                            else if (!esTotal)
+                            {
+                                estilo.Letra = TextoGris;
+                            }
+
+                            break;
+                        }
+
+                        default:
+                            // Las clases: la letra en negrita, al centro, con los colores de su casilla.
+                            estilo.Horizontal = "center";
+                            estilo.Negrita = true;
+                            if (!celda.Style.BackColor.IsEmpty)
+                            {
+                                estilo.Fondo = celda.Style.BackColor;
+                            }
+
+                            if (!celda.Style.ForeColor.IsEmpty)
+                            {
+                                estilo.Letra = celda.Style.ForeColor;
+                            }
+
+                            if (celda.Value is int)
+                            {
+                                hoja.Numero(fila, i + 1, (int)celda.Value, estilo);
+                                continue;
+                            }
+
+                            break;
+                    }
+
+                    hoja.Texto(fila, i + 1, texto, estilo);
+                }
+            }
+
+            hoja.Congelar(filaEncabezado, 3);
+            hoja.RepetirAlImprimir = filaEncabezado;
+            for (int i = 0; i < n; i++)
+            {
+                string nombre = columnas[i].Name;
+                hoja.Ancho(i + 1, nombre == "no" ? 5.5 : nombre == "matricula" ? 13 : nombre == "alumno" ? Math.Min(48, Math.Max(26, largoNombre * 1.05 + 2))
+                    : nombre == "asist" || nombre == "faltas" || nombre == "porciento" ? 8 : nombre == "derecho" ? 20 : 4.7);
+            }
+
+            // La simbologia, con solo lo que aplica a esta lista, cada letra con su color.
+            HashSet<DateTime> diasDeLaLista = new HashSet<DateTime>(asistencia.Dias.Select(d => d.Fecha.Date));
+            List<Tuple<AlumnoDeAsistencia, AsistenciaDada>> dadas = asistencia.Alumnos
+                .SelectMany(a => a.Dadas.Values.Where(d => diasDeLaLista.Contains(d.Fecha.Date)).Select(d => Tuple.Create(a, d)))
+                .ToList();
+            fila += 2;
+            hoja.Texto(fila, 1, "Simbología", new EstiloExcel { Negrita = true, Letra = VerdeExcel });
+            Action<string, Color, Color, string> muestra = (letra, fondo, color, texto) =>
+            {
+                fila++;
+                hoja.Texto(fila, 1, letra, new EstiloExcel { Negrita = true, Horizontal = "center", Cuadricula = true, Fondo = fondo, Letra = color });
+                hoja.Texto(fila, 2, texto, dato);
+                hoja.Combinar(fila, 2, n);
+                hoja.Alto(fila, 17);
+            };
+            muestra("A", Color.Empty, Color.Black, "Asistencia: registró su bitácora.");
+            if (dadas.Count > 0)
+            {
+                muestra("A", DadaFondo, DadaTexto, "Asistencia que " + (enTerceraPersona ? "le dio su docente" : "diste") + " sin bitácora: su equipo no pudo registrarla "
+                    + "(en la pestaña «Asistencias dadas», cuáles y por qué).");
+            }
+
+            muestra("F", FaltaFondo, FaltaTexto, "Falta: no registró su bitácora.");
+            if (asistencia.Alumnos.Any(a => a.Retiradas.Count > 0))
+            {
+                muestra("F", RetiradaFondo, RetiradaTexto, "Falta: registró su bitácora sin estar en el salón y se le quitó la asistencia (su fila va en naranja).");
+            }
+
+            if (hoy != null)
+            {
+                muestra("P", HoyFondo, HoyTexto, "Pendiente: aún no registra y la clase de hoy sigue; no cuenta como falta.");
+            }
+
+            if (asistencia.Dias.Any(d => d.SinFaltas))
+            {
+                muestra(SinFaltaTexto, Color.Empty, TextoGris, AyudaSinFalta);
+            }
+
+            fila++;
+            hoja.Texto(fila, 2, "Derecho a evaluación: con " + MinimoDeAsistencia + " % o más de asistencia. El % no cuenta lo pendiente de hoy.", dato);
+            hoja.Combinar(fila, 2, n);
+
+            List<HojaExcel> hojas = new List<HojaExcel> { hoja };
+            if (dadas.Count > 0)
+            {
+                hojas.Add(HojaDeDadas(dadas, encabezado, casilla, titulo, dato));
+            }
+
+            resultado = Copia.Hecha;
+            return LibroExcel.Crear(hojas, "Lista de asistencia " + asistencia.Grupo + " " + asistencia.Materia);
+        }
+
+        /// <summary>La pestana "Asistencias dadas": las que dio el docente sin bitacora en los dias de la lista, por dia.</summary>
+        private HojaExcel HojaDeDadas(List<Tuple<AlumnoDeAsistencia, AsistenciaDada>> dadas, EstiloExcel encabezado, EstiloExcel casilla, EstiloExcel titulo, EstiloExcel dato)
+        {
+            HojaExcel hoja = new HojaExcel("Asistencias dadas") { Pie = "Asistencias dadas · " + asistencia.Grupo + " · " + asistencia.Materia };
+            string[] titulos = { "Fecha", "Matrícula", "Nombre completo", "Hora", "Motivo", "Equipo", "Detalle" };
+            hoja.Texto(1, 1, (enTerceraPersona ? "Asistencias que dio su docente" : "Asistencias que diste") + " sin bitácora", titulo);
+            hoja.Combinar(1, 1, titulos.Length);
+            hoja.Alto(1, 26);
+            hoja.Texto(2, 1, asistencia.Materia + " · " + asistencia.Grupo, dato);
+            hoja.Combinar(2, 1, titulos.Length);
+            for (int i = 0; i < titulos.Length; i++)
+            {
+                hoja.Texto(4, i + 1, titulos[i], encabezado);
+            }
+
+            hoja.Alto(4, 22);
+            int fila = 4;
+            List<AlumnoDeAsistencia> orden = asistencia.Alumnos;
+            foreach (Tuple<AlumnoDeAsistencia, AsistenciaDada> par in dadas.OrderBy(p => p.Item2.Fecha).ThenBy(p => orden.IndexOf(p.Item1)).ThenBy(p => p.Item2.DadaEn))
+            {
+                fila++;
+                AlumnoDeAsistencia alumno = par.Item1;
+                AsistenciaDada dada = par.Item2;
+                DateTime fecha = dada.Fecha.Date;
+                bool llegoSuBitacora = !alumno.SinBitacora.Contains(fecha) && alumno.BitacorasDelDia.ContainsKey(fecha);
+                string[] valores =
+                {
+                    fecha.ToString("ddd", Espanol).Replace(".", "") + " " + fecha.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),
+                    alumno.Matricula,
+                    alumno.Nombre,
+                    Hora(dada.DadaEn),
+                    AsistenciasDadas.NombreDeMotivo(dada.Motivo) + (llegoSuBitacora ? " (después llegó su bitácora)" : ""),
+                    AsistenciasDadas.ConEquipo(dada.Motivo) ? (dada.Equipo ?? "").Trim() : "",
+                    (dada.Comentario ?? "").Trim()
+                };
+                for (int i = 0; i < valores.Length; i++)
+                {
+                    EstiloExcel estilo = casilla.Copiar();
+                    estilo.Ajustar = i == 4 || i == 6;
+                    estilo.Horizontal = i == 3 || i == 5 ? "center" : "left";
+                    hoja.Texto(fila, i + 1, valores[i], estilo);
+                }
+            }
+
+            double[] anchos = { 16, 13, 34, 8, 38, 10, 46 };
+            for (int i = 0; i < anchos.Length; i++)
+            {
+                hoja.Ancho(i + 1, anchos[i]);
+            }
+
+            hoja.Congelar(4, 0);
+            hoja.RepetirAlImprimir = 4;
+            return hoja;
         }
 
         /// <summary>El separador de listas de Windows (con el que Excel abre un CSV en este equipo); "," si no hay uno util.</summary>

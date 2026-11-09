@@ -257,6 +257,45 @@ namespace DigLab.conexion
             return TablaPorAsignar.Existe(conexion, transaccion);
         }
 
+        // La escribe la administracion (digbit_admin); los equipos (digbit_equipo) y el
+        // encargado (digbit_consulta) solo la leen, con el permiso de db/26. Sin ella
+        // todo sigue como antes: lo reportado en naranja y sin "Resolver fallas...".
+        private static readonly Columna TablaFallasResueltas = new Columna("fallas_resueltas", "resuelta_en",
+            "La base no tiene la tabla fallas_resueltas (o este usuario no puede leerla): falta db/26_fallas_resueltas.sql. "
+            + "Hasta aplicarla, lo reportado se queda en naranja y en Alertas y no se puede dar por resuelto.");
+
+        /// <summary>True si se pueden dar por resueltas las fallas reportadas (db/26_fallas_resueltas.sql).</summary>
+        public static bool FallasResueltas(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablaFallasResueltas.Existe(conexion, transaccion);
+        }
+
+        // La escribe la administracion (digbit_admin); los equipos (digbit_equipo) y el
+        // encargado (digbit_consulta) solo la leen, con el permiso de db/27. Sin ella, o
+        // sin ese permiso, nadie queda suspendido en ese equipo: por eso va al log.
+        private static readonly Columna TablaSuspensiones = new Columna("suspensiones", "hasta",
+            "La base no tiene la tabla suspensiones (o este usuario no puede leerla): falta db/27_suspensiones.sql. "
+            + "Hasta aplicarla, en este equipo no vale ninguna suspensión de acceso y no se puede suspender a nadie.");
+
+        /// <summary>True si se puede suspender el acceso de un estudiante y este equipo lo ve (db/27_suspensiones.sql).</summary>
+        public static bool Suspensiones(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablaSuspensiones.Existe(conexion, transaccion);
+        }
+
+        // La escribe la administracion (digbit_admin); los equipos (digbit_equipo) solo la
+        // leen, con el permiso de db/28. Sin ella, o sin ese permiso, cada equipo sigue con
+        // la memoria que se autorizo al instalarlo: por eso va al log.
+        private static readonly Columna TablaMemoriasEmergencia = new Columna("memorias_emergencia", "huella",
+            "La base no tiene la tabla memorias_emergencia (o este usuario no puede leerla): falta db/28_memorias_emergencia.sql. "
+            + "Hasta aplicarla, este equipo solo acepta la memoria de emergencia que se autorizó al instalarlo.");
+
+        /// <summary>True si las memorias de emergencia se registran en la base y este equipo las ve (db/28_memorias_emergencia.sql).</summary>
+        public static bool MemoriasEmergencia(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablaMemoriasEmergencia.Existe(conexion, transaccion);
+        }
+
         private static bool usoLibre;
         private static bool avisadoUsoLibre;
         private static readonly NoReciente sinUsoLibre = new NoReciente();

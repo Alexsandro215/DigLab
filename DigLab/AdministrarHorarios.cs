@@ -1042,6 +1042,7 @@ namespace DigLab
             menuFranja.Items.Add(TextosDelHorario.CambiarHoras, null, (s, e) => EditarFranja());
             menuFranja.Items.Add(TextosDelHorario.QuitarEstasHoras, null, (s, e) => BorrarFranja());
             menuFranja.Items.Add(new ToolStripSeparator());
+            menuFranja.Items.Add("Poner otra clase solo ese día...", null, (s, e) => PonerOtraClaseEseDia());
             menuFranja.Items.Add("Cancelar esta clase ese día...", null, (s, e) => CancelarDiaDeLaSemana());
             menuFranja.Items.Add("Volver a darla ese día...", null, (s, e) => QuitarCancelacionDeFranja());
             menuFranja.Items.Add("Ver esta clase en Clases", null, (s, e) => VerFranjaEnClases());
@@ -1058,8 +1059,8 @@ namespace DigLab
             menuFranja.Items.Add(TextosDelHorario.PonerEligiendo, null, (s, e) => NuevaFranja(null, null));
             // Solo consulta: quedan "Ver esta clase en Clases" y "Ver ese dia en
             // Cambios de un dia" (se ocultan, no se quitan: MostrarMenuFranja usa la posicion).
-            Permisos.Ocultar(menuFranja.Items[0], menuFranja.Items[1], menuFranja.Items[2], menuFranja.Items[3], menuFranja.Items[4],
-                menuFranja.Items[7], menuFranja.Items[8]);
+            Permisos.Ocultar(menuFranja.Items[0], menuFranja.Items[1], menuFranja.Items[2], menuFranja.Items[3], menuFranja.Items[4], menuFranja.Items[5],
+                menuFranja.Items[8], menuFranja.Items[9]);
 
             menuExtra = new ContextMenuStrip { Font = new DrawingFont("Century Gothic", 9.5F) };
             menuExtra.Items.Add("Quitar esta sesión extra...", null, (s, e) => QuitarExtraDeCuadricula());
@@ -3100,23 +3101,48 @@ namespace DigLab
         /// </summary>
         private void AplicarExcepcionASeleccion()
         {
-            if (Permisos.Bloquear(this, "Hacer un cambio de un dia en cuadros del horario")) return;
-            OpcionCombo laboratorio = LaboratorioHorario();
             // El boton y el menu solo se encienden con un laboratorio y cuadros elegidos.
             List<RangoHueco> rangos = lienzo.ObtenerRangosSeleccionados(false);
-            if (laboratorio == null || rangos.Count == 0)
+            if (LaboratorioHorario() == null || rangos.Count == 0)
             {
                 ActualizarBotonesFranjas();
                 return;
             }
 
+            HacerCambioDeUnDia(rangos, null);
+        }
+
+        /// <summary>
+        /// Del menu de una clase: otra clase en su lugar solo el dia de su columna en
+        /// la semana que se ve (el horario no cambia). Empieza con las horas de la
+        /// clase; en el dialogo se pueden acortar. Un clic en una clase saca este
+        /// menu, asi que sin esto, en una clase de un solo cuadro no se podia llegar
+        /// al cambio de un dia (se llegaba arrastrando sobre varios cuadros).
+        /// </summary>
+        private void PonerOtraClaseEseDia()
+        {
+            FranjaInfo franja = FranjaSeleccionada();
+            if (franja == null || LaboratorioHorario() == null)
+            {
+                ActualizarBotonesFranjas();
+                return;
+            }
+
+            HacerCambioDeUnDia(new List<RangoHueco> { new RangoHueco { Dia = franja.DiaSemana, Inicio = franja.Inicio, Fin = franja.Fin } }, franja);
+        }
+
+        /// <param name="claseQueSeCambia">La clase del menu desde la que se llego; null, desde los cuadros elegidos.</param>
+        private void HacerCambioDeUnDia(List<RangoHueco> rangos, FranjaInfo claseQueSeCambia)
+        {
+            if (Permisos.Bloquear(this, "Hacer un cambio de un dia en cuadros del horario")) return;
+            OpcionCombo laboratorio = LaboratorioHorario();
             List<ExcepcionPlaneada> plan;
             bool esExtra;
             int claseId;
             string motivo;
             DateTime lunes;
             using (DialogoExcepcionCuadricula dialogo = new DialogoExcepcionCuadricula(ClasesActivas(), laboratorio, rangos, lienzo.Franjas, lienzo.Excepciones,
-                lienzo.Ahora, selectorSemana.Lunes, LeerExcepcionesDeLaSemana, CrearClaseDesdeDialogo))
+                lienzo.Ahora, selectorSemana.Lunes, LeerExcepcionesDeLaSemana, CrearClaseDesdeDialogo, claseQueSeCambia))
             {
                 if (dialogo.ShowDialog(this) != DialogResult.OK)
                 {
@@ -3230,20 +3256,24 @@ namespace DigLab
             // Los cambios de un dia son de un dia: el de la columna, en la semana que se ve.
             DateTime fecha = lienzo.FechaDeColumna(franja.DiaSemana);
             string dia = TextosDelHorario.Dia(franja.DiaSemana) + " " + fecha.ToString("dd/MM");
-            menuFranja.Items[6].Text = "Ver el " + dia + " en Cambios de un día";
+            menuFranja.Items[7].Text = "Ver el " + dia + " en Cambios de un día";
             if (!soloConsulta)
             {
                 bool vigente = FranjaVigente(franja, fecha);
+                bool paso = YaPaso(fecha, franja.Fin);
                 ExcepcionInfo cancelacion = lienzo.CancelacionDe(franja);
                 menuFranja.Items[0].Text = TextosDelHorario.MenuCambiarHoras(franja.Materia, franja.Grupo, franja.DiaSemana, franja.Inicio, franja.Fin);
-                menuFranja.Items[3].Text = "Cancelar esta clase solo el " + dia + (YaPaso(fecha, franja.Fin) ? " (ya pasó)" : "") + "...";
-                menuFranja.Items[3].Visible = cancelacion == null;
-                menuFranja.Items[3].Enabled = vigente;
+                // Si ya paso, nadie podria usar la otra clase: se elige otra semana con las flechas.
+                menuFranja.Items[3].Text = "Poner otra clase solo el " + dia + (paso ? " (ya pasó)" : "") + "...";
+                menuFranja.Items[3].Enabled = vigente && !paso;
+                menuFranja.Items[4].Text = "Cancelar esta clase solo el " + dia + (paso ? " (ya pasó)" : "") + "...";
+                menuFranja.Items[4].Visible = cancelacion == null;
+                menuFranja.Items[4].Enabled = vigente;
                 // Una clase que ya no vale ese dia no vuelve: quitar su cancelacion solo pondria faltas.
-                menuFranja.Items[4].Visible = cancelacion != null && vigente;
+                menuFranja.Items[5].Visible = cancelacion != null && vigente;
                 if (cancelacion != null)
                 {
-                    menuFranja.Items[4].Text = "Volver a darla el " + TextosDelHorario.Dia(((int)cancelacion.Fecha.DayOfWeek + 6) % 7 + 1) + " "
+                    menuFranja.Items[5].Text = "Volver a darla el " + TextosDelHorario.Dia(((int)cancelacion.Fecha.DayOfWeek + 6) % 7 + 1) + " "
                         + cancelacion.Fecha.ToString("dd/MM") + " (quitar la cancelación)...";
                 }
             }
@@ -8615,7 +8645,7 @@ namespace DigLab
                 // Tres lineas enteras (con 50 la tercera no salia).
                 Size = new Size(510, 58),
                 Text = "Solo ese día y a esas horas: con el código de su docente se podrá registrar en este laboratorio. "
-                    + "No se guarda si se cruza con otra clase que se da ese día (no cancelada) o con otra sesión extra."
+                    + "Si a esa hora ya hay otra clase en este laboratorio, antes de guardar pregunta si la quitas solo ese día."
             };
 
             btnGuardar = EstiloAdmin.BotonPrincipal("Dar la sesión extra", new Point(204, 368), new Size(180, 40));
@@ -8681,11 +8711,46 @@ namespace DigLab
             }
             catch (InvalidOperationException ex) when (EstiloHorarios.EsAvisoDeDigLab(ex))
             {
+                if (TextosDelHorario.EsDelMismoLaboratorio(ex.Message))
+                {
+                    QuitarLaOtraYPonerEsta(ex.Message, clase, inicio, fin);
+                    return;
+                }
+
                 MessageBox.Show(ex.Message, TextosDelHorario.TituloDeCruce(ex.Message), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             catch (Exception ex)
             {
                 AvisoDeFalloAdmin.Mostrar(EstiloHorarios.Dueno(this), "DialogoExtra.Guardar", ex, "No se pudo dar la sesión extra", Text);
+            }
+        }
+
+        /// <summary>
+        /// A esa hora el laboratorio ya tiene otra clase: si se quiere, se le quita
+        /// solo lo que se cruza, solo ese dia, y entra esta (HorariosDatos.AplicarExcepcion,
+        /// todo o nada: si la clase elegida choca en otro laboratorio, no cambia nada).
+        /// </summary>
+        private void QuitarLaOtraYPonerEsta(string cruce, ClaseInfo clase, TimeSpan inicio, TimeSpan fin)
+        {
+            if (!DialogoConfirmacion.Preguntar(this, "Poner otra clase solo ese día", "¿Quitar lo que hay a esa hora, solo ese día, y poner esta clase?",
+                cruce + " A lo que se cruza se le quita solo lo que se cruza; las demás semanas no cambian.", "Poner esta clase", false))
+            {
+                return;
+            }
+
+            try
+            {
+                datos.AplicarExcepcion(laboratorio.Id, fecha, inicio, fin, clase.Id, txtMotivo.Text.Trim(), creadaPor);
+                DialogResult = DialogResult.OK;
+                Close();
+            }
+            catch (InvalidOperationException ex) when (EstiloHorarios.EsAvisoDeDigLab(ex))
+            {
+                MessageBox.Show(ex.Message, TextosDelHorario.TituloDeCruce(ex.Message), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            catch (Exception ex)
+            {
+                AvisoDeFalloAdmin.Mostrar(EstiloHorarios.Dueno(this), "DialogoExtra.QuitarLaOtraYPonerEsta", ex, "No se pudo poner la clase", Text);
             }
         }
     }
@@ -9247,6 +9312,9 @@ namespace DigLab
         private readonly SelectorClase selector;
         private readonly TextBox txtMotivo;
         private readonly TextBox txtResumen;
+        // Solo desde el menu de una clase: sus horas, que se pueden acortar. Null, desde los cuadros.
+        private readonly ComboBox cboInicio;
+        private readonly ComboBox cboFin;
         private bool sinExcepciones;
 
         public List<ExcepcionPlaneada> Plan { get; private set; }
@@ -9263,19 +9331,25 @@ namespace DigLab
         /// <param name="excepcionesDeLaSemana">Las del laboratorio en la semana de lunes (las que dibuja la cuadricula).</param>
         /// <param name="ahora">Reloj del servidor: lo que ya paso.</param>
         /// <param name="leerExcepciones">Las del laboratorio en la semana de ese lunes, si se cambia de semana aqui.</param>
+        /// <param name="claseQueSeCambia">
+        /// Desde el menu de una clase: se dice cual y sus horas se pueden acortar (un
+        /// solo bloque en rangos). Null, desde los cuadros elegidos: esas horas.
+        /// </param>
         public DialogoExcepcionCuadricula(List<ClaseInfo> clasesActivas, OpcionCombo laboratorio, List<RangoHueco> rangos, List<FranjaInfo> franjasDelLaboratorio,
             List<ExcepcionInfo> excepcionesDeLaSemana, DateTime ahora, DateTime lunes, Func<DateTime, List<ExcepcionInfo>> leerExcepciones,
-            Func<IWin32Window, List<ClaseInfo>> crearClase)
+            Func<IWin32Window, List<ClaseInfo>> crearClase, FranjaInfo claseQueSeCambia = null)
         {
             this.rangos = rangos;
             this.franjasDelLaboratorio = franjasDelLaboratorio ?? new List<FranjaInfo>();
             this.ahora = ahora;
             this.leerExcepciones = leerExcepciones;
             excepcionesPorSemana[CuadriculaSemanal.LunesDe(lunes)] = excepcionesDeLaSemana ?? new List<ExcepcionInfo>();
+            // Lo que ocupa la clase y sus horas: lo de abajo baja eso.
+            int abajo = claseQueSeCambia == null ? 0 : 66;
 
             Text = "Cambio de un día";
             BackColor = Color.White;
-            ClientSize = new Size(640, 632);
+            ClientSize = new Size(640, 632 + abajo);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -9288,7 +9362,7 @@ namespace DigLab
                 Font = new DrawingFont("Century Gothic", 14F, FontStyle.Bold),
                 ForeColor = Color.DarkGreen,
                 Location = new Point(20, 14),
-                Text = "Cambio de un día en " + laboratorio.Texto
+                Text = (claseQueSeCambia == null ? "Cambio de un día en " : "Poner otra clase solo un día en ") + laboratorio.Texto
             };
 
             Label lblSemana = EstiloHorarios.CrearEtiqueta("Semana", new Point(22, 54));
@@ -9310,37 +9384,37 @@ namespace DigLab
             {
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 10F),
-                Location = new Point(22, 122),
+                Location = new Point(22, 122 + abajo),
                 Text = "Quitar esas horas ese día (no habrá clase)"
             };
             rbExtra = new RadioButton
             {
                 AutoSize = true,
                 Font = new DrawingFont("Century Gothic", 10F),
-                Location = new Point(22, 148),
-                Text = "Dar una sesión extra en esas horas",
+                Location = new Point(22, 148 + abajo),
+                Text = "Poner una clase solo ese día en esas horas (sesión extra)",
                 Checked = true
             };
             rbCancelar.CheckedChanged += (s, e) => Recalcular();
             rbExtra.CheckedChanged += (s, e) => Recalcular();
 
-            selector = new SelectorClase(clasesActivas, 596, crearClase) { Location = new Point(22, 180) };
+            selector = new SelectorClase(clasesActivas, 596, crearClase) { Location = new Point(22, 180 + abajo) };
             selector.Cambio += () => Recalcular();
 
-            Label lblMotivo = EstiloHorarios.CrearEtiqueta("Motivo (opcional)", new Point(22, 318));
+            Label lblMotivo = EstiloHorarios.CrearEtiqueta("Motivo (opcional)", new Point(22, 318 + abajo));
             txtMotivo = new TextBox
             {
                 Font = new DrawingFont("Century Gothic", 10F),
-                Location = new Point(22, 344),
+                Location = new Point(22, 344 + abajo),
                 Size = new Size(596, 26),
                 MaxLength = 200
             };
 
-            Label lblResumen = EstiloHorarios.CrearEtiqueta("Qué se va a hacer", new Point(22, 386));
+            Label lblResumen = EstiloHorarios.CrearEtiqueta("Qué se va a hacer", new Point(22, 386 + abajo));
             txtResumen = new TextBox
             {
                 Font = new DrawingFont("Century Gothic", 9F),
-                Location = new Point(22, 412),
+                Location = new Point(22, 412 + abajo),
                 Size = new Size(596, 148),
                 Multiline = true,
                 ReadOnly = true,
@@ -9348,13 +9422,44 @@ namespace DigLab
                 BackColor = Color.FromArgb(248, 248, 248)
             };
 
-            Button btnAplicar = EstiloAdmin.BotonPrincipal("Hacer el cambio", new Point(331, 572), new Size(160, 40));
+            Button btnAplicar = EstiloAdmin.BotonPrincipal("Hacer el cambio", new Point(331, 572 + abajo), new Size(160, 40));
             btnAplicar.Click += (s, e) => Aceptar();
-            Button btnCancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(503, 572), new Size(115, 40));
+            Button btnCancelar = EstiloHorarios.CrearBoton("Cancelar", new Point(503, 572 + abajo), new Size(115, 40));
             btnCancelar.Click += (s, e) => DialogResult = DialogResult.Cancel;
 
             AcceptButton = btnAplicar;
             CancelButton = btnCancelar;
+
+            if (claseQueSeCambia != null)
+            {
+                Controls.Add(new Label
+                {
+                    AutoSize = false,
+                    AutoEllipsis = true,
+                    UseMnemonic = false,
+                    Font = new DrawingFont("Century Gothic", 10F, FontStyle.Bold),
+                    Location = new Point(22, 120),
+                    Size = new Size(596, 22),
+                    Text = "Se cambia: " + claseQueSeCambia.Materia + " con " + claseQueSeCambia.Grupo + " (" + claseQueSeCambia.Profesor + ")"
+                });
+                Controls.Add(EstiloHorarios.CrearEtiqueta("De", new Point(22, 152)));
+                cboInicio = EstiloHorarios.CrearComboHoras(new Point(52, 148), claseQueSeCambia.Inicio);
+                cboInicio.TextChanged += (s, e) => Recalcular();
+                Controls.Add(cboInicio);
+                Controls.Add(EstiloHorarios.CrearEtiqueta("a", new Point(152, 152)));
+                cboFin = EstiloHorarios.CrearComboHoras(new Point(172, 148), claseQueSeCambia.Fin);
+                cboFin.TextChanged += (s, e) => Recalcular();
+                Controls.Add(cboFin);
+                Controls.Add(new Label
+                {
+                    AutoSize = false,
+                    Font = new DrawingFont("Century Gothic", 8.5F),
+                    ForeColor = Color.Gray,
+                    Location = new Point(276, 152),
+                    Size = new Size(342, 20),
+                    Text = "Si solo es una parte de la clase, cambia estas horas."
+                });
+            }
 
             Controls.Add(lblTitulo);
             Controls.Add(lblSemana);
@@ -9598,9 +9703,34 @@ namespace DigLab
             return bloques;
         }
 
+        /// <summary>Desde el menu de una clase, las horas escritas pasan a su unico bloque. False si no se pueden leer.</summary>
+        private bool LeerHoras()
+        {
+            if (cboInicio == null)
+            {
+                return true;
+            }
+
+            TimeSpan inicio, fin;
+            if (!EstiloHorarios.LeerHora(cboInicio, out inicio) || !EstiloHorarios.LeerHora(cboFin, out fin) || fin <= inicio)
+            {
+                return false;
+            }
+
+            rangos[0].Inicio = inicio;
+            rangos[0].Fin = fin;
+            return true;
+        }
+
         private void Recalcular()
         {
             selector.Enabled = rbExtra.Checked;
+            if (!LeerHoras())
+            {
+                txtResumen.Text = TextoHorasNoValidas;
+                return;
+            }
+
             List<BloqueSimulado> bloques = Simular(rbExtra.Checked ? selector.ClaseElegida : null);
             sinExcepciones = !excepcionesPorSemana.ContainsKey(selectorSemana.Lunes);
             txtResumen.Text = string.Join(Environment.NewLine + Environment.NewLine,
@@ -9609,15 +9739,24 @@ namespace DigLab
                     + "(No se pudieron leer las cancelaciones y sesiones extra de esa semana: al hacer el cambio, la base dirá si algo choca.)" : "");
         }
 
+        private const string TextoHorasNoValidas = "Escribe las horas como HH:mm (por ejemplo 08:00), y la de fin después de la de inicio.";
+
         private void Aceptar()
         {
+            if (!LeerHoras())
+            {
+                MessageBox.Show(TextoHorasNoValidas, "Hora no válida", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                cboInicio.Focus();
+                return;
+            }
+
             ClaseInfo elegida = null;
             if (rbExtra.Checked)
             {
                 elegida = selector.ClaseElegida;
                 if (elegida == null)
                 {
-                    MessageBox.Show(selector.ProfesorElegido ? "Elige cuál de sus clases tiene la sesión extra." : "Elige a la persona docente y la clase de la sesión extra.",
+                    MessageBox.Show(selector.ProfesorElegido ? "Elige cuál de sus clases se pone." : "Elige a la persona docente y la clase que se pone.",
                         "Clase requerida", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
@@ -9634,7 +9773,7 @@ namespace DigLab
 
             if (!rbExtra.Checked && bloques.Sum(b => b.AQuitar) == 0 && !sinExcepciones)
             {
-                MessageBox.Show("Esa semana no hay clases en esas horas: no hay nada que quitar. Si quieres ocupar el hueco, elige «Dar una sesión extra en esas horas».",
+                MessageBox.Show("Esa semana no hay clases en esas horas: no hay nada que quitar. Si quieres ocupar el hueco, elige «Poner una clase solo ese día en esas horas».",
                     "Nada que quitar", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }

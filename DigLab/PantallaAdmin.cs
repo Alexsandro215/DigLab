@@ -628,9 +628,6 @@ namespace DigLab
     /// </summary>
     internal class DialogoUsuario : Form
     {
-        // La misma regla que el inicio de sesion (Login.cs): si no, se daria de
-        // alta a alguien que despues no puede entrar.
-        private static readonly Regex IdentificadorValido = new Regex("^[A-Za-z0-9]+$");
         // "Crear cuenta": solo matriculas de alumno, que en el TESCHI son 10
         // cifras (las de 26 de los 30 alumnos de la base, 2026-10-04). Asi nadie
         // aparta desde el laboratorio un numero de empleado (TREJON) o un texto.
@@ -1257,10 +1254,12 @@ namespace DigLab
                 Marcar(txtIdentificador, "La matrícula son las 10 cifras de tu credencial. Si la tuya es distinta, pide a la administración "
                     + "de DigLab que te dé de alta.", errores, ref primero);
             }
-            else if (!IdentificadorValido.IsMatch(identificador))
+            else if (!ReglasCuenta.UsuarioValido(identificador))
             {
+                // La misma regla que el inicio de sesion: si no, se daria de alta a
+                // alguien que despues no puede entrar.
                 Marcar(txtIdentificador, (EsAlumno ? "La " : "El ") + nombreIdentificador
-                    + " solo puede tener letras y números, sin espacios (así lo pide el inicio de sesión).", errores, ref primero);
+                    + " no puede llevar espacios ni emojis (así lo pide el inicio de sesión).", errores, ref primero);
             }
 
             if (txtNombre.Text.Trim().Length == 0)
