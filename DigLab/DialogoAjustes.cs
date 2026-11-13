@@ -281,7 +281,7 @@ namespace DigLab
                         + "«¿Olvidaste tu contraseña?» les dice que pidan a la administración de DigLab una contraseña nueva.";
                     lblAviso.ForeColor = Naranja;
                     lblAviso.Text = "Para configurarlo falta aplicar db/13_recuperacion_contrasena.sql en la base. Mientras tanto, "
-                        + "«Crear cuenta» no muestra ningún aviso de privacidad.";
+                        + "el inicio de sesión no muestra ningún aviso de privacidad.";
                     // Sin la 13 no hay donde guardarlo; la 20 solo se nombra si tambien falta.
                     bool conDb20 = false;
                     try
@@ -378,7 +378,7 @@ namespace DigLab
             if (avisoGuardado.Trim().Length == 0)
             {
                 lblAviso.ForeColor = Gris;
-                lblAviso.Text = "Sin aviso: «Crear cuenta» y «¿Olvidaste tu contraseña?» no muestran ninguno. Con «Configurar...» pega el aviso "
+                lblAviso.Text = "Sin aviso: el inicio de sesión con el SIIA y «¿Olvidaste tu contraseña?» no muestran ninguno. Con «Configurar...» pega el aviso "
                     + "simplificado que publique la Unidad de Transparencia del TESCHI y la dirección del integral.";
                 ayuda.SetToolTip(lblAviso, null);
                 return;
@@ -387,7 +387,7 @@ namespace DigLab
             int caracteres = avisoGuardado.Trim().Length;
             lblAviso.ForeColor = Gris;
             lblAviso.Text = "Activado (" + caracteres.ToString("N0", System.Globalization.CultureInfo.GetCultureInfo("es-MX"))
-                + (caracteres == 1 ? " carácter" : " caracteres") + "): «Crear cuenta» lo muestra y pide marcar «Leí el aviso de privacidad»; "
+                + (caracteres == 1 ? " carácter" : " caracteres") + "): el paso del NIP del inicio de sesión lo enlaza; "
                 + "«¿Olvidaste tu contraseña?» lo menciona. "
                 + (avisoUrlGuardada.Length == 0 ? "Sin enlace al aviso integral."
                     : "Con enlace al aviso integral" + (Uri.TryCreate(avisoUrlGuardada, UriKind.Absolute, out uri) ? " (" + uri.Host + ")." : "."));
@@ -855,7 +855,7 @@ namespace DigLab
             chkDocentes = Casilla("Los docentes entran con el SIIA", docentes, 134);
             ayuda.SetToolTip(chkDocentes, "La primera vez, cada docente queda en Alertas > «Docentes por enlazar» hasta que lo enlaces con su cuenta.");
             chkEstudiantes = Casilla("Los estudiantes entran con el SIIA", estudiantes, 160);
-            ayuda.SetToolTip(chkEstudiantes, "Su cuenta de DigLab se usa (o se crea sola) por su matrícula; el kiosco ya no ofrece «Crear cuenta».");
+            ayuda.SetToolTip(chkEstudiantes, "Su cuenta de DigLab se usa (o se crea sola) por su matrícula.");
 
             Label etiquetaUrl = EstiloHorarios.CrearEtiqueta("Dirección del inicio de sesión del SIIA (login.ashx)", new Point(24, 192));
             Controls.Add(etiquetaUrl);
@@ -1130,8 +1130,8 @@ namespace DigLab
             if (estudiantes != estudiantesAntes)
             {
                 partes.Add(estudiantes
-                    ? "Los estudiantes entrarán con su matrícula, su contraseña y su NIP del SIIA; su cuenta se crea sola y el kiosco ya no ofrece «Crear cuenta»."
-                    : "Los estudiantes volverán a entrar con su contraseña de DigLab y a crear su cuenta en «Crear cuenta».");
+                    ? "Los estudiantes entrarán con su matrícula, su contraseña y su NIP del SIIA; su cuenta se crea sola la primera vez."
+                    : "Los estudiantes volverán a entrar con su contraseña de DigLab; sus cuentas las da de alta la administración en Estudiantes.");
             }
 
             if (url != urlAntes || recuperar != recuperarAntes || pagina != paginaAntes)
@@ -1235,7 +1235,7 @@ namespace DigLab
                 ForeColor = Gris,
                 Location = new Point(24, 52),
                 Size = new Size(Ancho - 48, 56),
-                Text = "Lo ve quien crea su cuenta en «Crear cuenta», que no se puede crear sin marcar «Leí el aviso de privacidad», "
+                Text = "Lo ve quien entra con el SIIA (un enlace en el paso del NIP) "
                     + "y quien recupera su contraseña. Pega aquí el aviso simplificado y la dirección del aviso integral que publique la "
                     + "Unidad de Transparencia del TESCHI. Sin texto no se muestra ningún aviso. Vale en cuanto guardes, en todos los equipos con esta versión de DigLab."
             });
@@ -1293,7 +1293,7 @@ namespace DigLab
             Controls.Add(notaUrl);
 
             // --- Como se vera -------------------------------------------------------
-            Controls.Add(EstiloHorarios.CrearEtiqueta("Así se verá en «Crear cuenta»", new Point(XVista, 114)));
+            Controls.Add(EstiloHorarios.CrearEtiqueta("Así se verá", new Point(XVista, 114)));
             Panel vista = new Panel
             {
                 BackColor = Color.White,
@@ -1443,7 +1443,7 @@ namespace DigLab
             string texto = Limpiar(txtAviso.Text);
             bool conTexto = texto.Length > 0;
             bool conEnlace = conTexto && txtUrl.Text.Trim().Length > 0;
-            txtVista.Text = conTexto ? texto : "(Sin aviso: «Crear cuenta» no muestra nada aquí.)";
+            txtVista.Text = conTexto ? texto : "(Sin aviso: no se muestra nada aquí.)";
             txtVista.ForeColor = conTexto ? Color.FromArgb(40, 40, 40) : Color.Gray;
             lnkVista.Visible = conEnlace;
             chkVista.Visible = conTexto;
@@ -1532,7 +1532,7 @@ namespace DigLab
             }
 
             if (texto.Length == 0
-                && MessageBox.Show(this, "Sin texto, «Crear cuenta» deja de mostrar el aviso de privacidad en todos los equipos. ¿Lo quitas?",
+                && MessageBox.Show(this, "Sin texto, el inicio de sesión deja de mostrar el aviso de privacidad en todos los equipos. ¿Lo quitas?",
                     "Aviso de privacidad", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
             {
                 return;

@@ -9,8 +9,9 @@ namespace DigLab
 {
     /// <summary>
     /// "Suspender acceso..." de Estudiantes: cuantos dias, desde este momento, y por
-    /// que. Dice de una vez hasta cuando seria y que la persona vera la razon. Al
-    /// vencer el plazo vuelve a entrar sola. Solo la administracion llega aqui.
+    /// que. Dice de una vez desde que dia vuelve a entrar (al empezar ese dia, no a la
+    /// hora en que se suspende) y que la persona vera la razon. Al vencer el plazo
+    /// vuelve a entrar sola. Solo la administracion llega aqui.
     /// </summary>
     internal sealed class DialogoSuspenderAcceso : Form
     {
@@ -68,14 +69,15 @@ namespace DigLab
             numDias.KeyUp += (s, e) => MostrarLoTecleado();
             Controls.Add(numDias);
 
+            // Dos renglones: "Podra volver a entrar desde el miercoles 18/11/2026, al empezar el dia."
             lblHasta = new Label
             {
                 AutoSize = false,
-                Font = new DrawingFont("Century Gothic", 10F, FontStyle.Bold),
+                Font = new DrawingFont("Century Gothic", 9.5F, FontStyle.Bold),
                 ForeColor = EstiloAdmin.TextoOscuro,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Location = new Point(126, 128),
-                Size = new Size(Ancho - 150, 30)
+                Location = new Point(126, 124),
+                Size = new Size(Ancho - 150, 40)
             };
             Controls.Add(lblHasta);
 
@@ -119,7 +121,8 @@ namespace DigLab
         private void MostrarHasta(int dias)
         {
             lblHasta.Text = DiasValidos(dias)
-                ? "Podrá volver a entrar el " + SuspensionesDatos.Fecha(DateTime.Now + desfase + TimeSpan.FromDays(dias)) + "."
+                ? "Podrá volver a entrar desde el " + SuspensionesDatos.Regreso(SuspensionesDatos.RegresoSiSeSuspende(DateTime.Now + desfase, dias))
+                    + ", al empezar el día."
                 : "De 1 a " + SuspensionesDatos.MaximoDias + " días.";
         }
 

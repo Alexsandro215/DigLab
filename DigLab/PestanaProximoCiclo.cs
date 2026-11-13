@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 using DrawingFont = System.Drawing.Font;
@@ -266,6 +267,12 @@ namespace DigLab
         private readonly ToolStripSeparator sepDescartar;
         private readonly ToolStripMenuItem itemEmpezarDeNuevo;
         private readonly ToolStripMenuItem itemDescartar;
+        // El horario en Excel (pedido del 2026-11-12): cargar uno en cuadricula o descargar este para llenarlo.
+        private readonly Button btnExcel;
+        private readonly ContextMenuStrip menuExcel;
+        private readonly ToolStripSeparator sepExcel;
+        private readonly ToolStripMenuItem itemCargarExcel;
+        private readonly ToolStripMenuItem itemDescargarExcel;
         private readonly Panel panelLeyenda;
         private readonly Label lblEstadoAbierta;
         private readonly Panel contenedorSemana;
@@ -289,7 +296,6 @@ namespace DigLab
         // --- Paso 3: aplicar con fechas
         private readonly Panel panelAplicar;
         private readonly PestanaAplicacion aplicacion;
-        private readonly Button btnDarDeBaja;
 
         // Lo de la plantilla abierta.
         private CicloLeido leido;
@@ -357,12 +363,9 @@ namespace DigLab
             barraPasos.Controls.Add(pasoAplicar);
             AcomodarBarra();
 
-            // Junto a los pasos, salvo en la preparacion (Mostrar la pasa al panel que se ve).
-            btnDarDeBaja = EstiloAdmin.Peligroso(EstiloAdmin.BotonPrincipal("Dar de baja el horario actual...", Point.Empty, new Size(270, 34)));
-            btnDarDeBaja.Visible = false;
-            btnDarDeBaja.Click += (s, e) => DarDeBajaElHorario();
-            ayuda.SetToolTip(btnDarDeBaja, "Deja todos los laboratorios sin clases desde ahora, sin poner otro horario. Para cambiarlo no hace falta: «Ahora mismo» ya sustituye el de hoy.\n"
-                + "Lo ya registrado se conserva y antes se guarda una copia como plantilla. Pide tu contraseña.");
+            // Sin "Dar de baja el horario actual..." (pedido del 2026-11-12): dejaba todos los
+            // laboratorios sin clases. El horario en uso solo se quita al aplicar otro con
+            // "Ahora mismo", que ya lo sustituye (tambien lo que empezo hoy).
 
             // ----------------------------------------------------------- sin base
             panelSinBase = new Panel { BackColor = Color.White, Dock = DockStyle.Fill, Visible = false };
@@ -486,7 +489,8 @@ namespace DigLab
             lblVacioTexto = PiezasConfiguracion.Texto("", new Point(24, 52), new Size(632, 60), 10F, Color.FromArgb(50, 50, 50));
             btnPrepararVacio = EstiloAdmin.BotonPrincipal("Crear horario nuevo...", new Point(24, 124), new Size(260, 38));
             btnPrepararVacio.Click += (s, e) => CrearHorario(null);
-            ayuda.SetToolTip(btnPrepararVacio, "Copia uno completo, solo sus clases sin horas, o empieza en blanco. Te explica cada opción.");
+            ayuda.SetToolTip(btnPrepararVacio, "Copia uno completo, solo sus clases sin horas, empieza en blanco o desde un Excel en cuadrícula. Te explica cada opción.\n"
+                + "También puedes arrastrar aquí un Excel con el horario.");
             btnIrAplicarVacio = EstiloHorarios.CrearBoton("Ir a «3. Aplicar con fechas»", new Point(24, 124), new Size(260, 38));
             btnIrAplicarVacio.Click += (s, e) => IrAPaso(PasoProximoCiclo.Aplicar);
             tarjetaVacio.Controls.Add(lblVacioTitulo);
@@ -599,8 +603,24 @@ namespace DigLab
             sepDescartar = new ToolStripSeparator();
             itemEmpezarDeNuevo = new ToolStripMenuItem("Empezar de nuevo (copiar otro horario, solo sus clases o en blanco)...", null, (s, e) => CrearHorario(null));
             itemDescartar = new ToolStripMenuItem("Descartar este horario en preparación...", null, (s, e) => Descartar());
-            menuMas.Items.AddRange(new ToolStripItem[] { itemVista, itemImprimir, sepVista, itemGuardarComo, itemGuardarEn, itemCambiarNombre, sepDescartar, itemEmpezarDeNuevo, itemDescartar });
+            sepExcel = new ToolStripSeparator();
+            itemCargarExcel = new ToolStripMenuItem("Cargar un Excel en este horario...", null, (s, e) => ElegirExcel());
+            itemDescargarExcel = new ToolStripMenuItem("Descargar este horario en Excel (para llenarlo)...", null, (s, e) => DescargarExcel());
+            menuMas.Items.AddRange(new ToolStripItem[]
+            {
+                itemVista, itemImprimir, sepVista, itemGuardarComo, itemGuardarEn, itemCambiarNombre, sepExcel, itemCargarExcel, itemDescargarExcel,
+                sepDescartar, itemEmpezarDeNuevo, itemDescartar
+            });
             btnMas.Click += (s, e) => MostrarMenuMas();
+
+            btnExcel = EstiloHorarios.CrearBoton("Excel ▾", Point.Empty, new Size(96, 34));
+            menuExcel = new ContextMenuStrip { Font = new DrawingFont("Century Gothic", 9.5F) };
+            menuExcel.Items.Add(new ToolStripMenuItem("Cargar un Excel en este horario...", null, (s, e) => ElegirExcel()));
+            menuExcel.Items.Add(new ToolStripMenuItem("Descargar este horario en Excel (para llenarlo)...", null, (s, e) => DescargarExcel()));
+            btnExcel.Click += (s, e) => menuExcel.Show(btnExcel, new Point(btnExcel.Width, btnExcel.Height), ToolStripDropDownDirection.BelowLeft);
+            ayuda.SetToolTip(btnExcel, "El horario en una hoja de Excel por laboratorio (días en columnas, horas en renglones).\n"
+                + "Descarga este para llenarlo, o carga uno ya lleno: también puedes arrastrar el archivo hasta el horario.\n"
+                + "Lo de cada laboratorio del Excel reemplaza lo que este horario tiene en ese laboratorio; nada se usa hasta aplicarlo.");
 
             panelLeyenda = new Panel { BackColor = Color.White, Size = new Size(600, 26) };
             lblEstadoAbierta = PiezasConfiguracion.Texto("", Point.Empty, new Size(400, 20), 9.5F, Color.DarkGreen);
@@ -776,7 +796,7 @@ namespace DigLab
             {
                 btnCerrarVentana, pastMarca, pastChoques, pastSinDocente, pastSinHorario, pastFaltaAsignar,
                 lblLaboratorio, cboLaboratorio, btnPoner, btnCambiarHoras, btnQuitarHoras,
-                btnVerTabla, btnImprimir, lblLeyenda, btnMas,
+                btnVerTabla, btnExcel, btnImprimir, lblLeyenda, btnMas,
                 panelLeyenda, lblEstadoAbierta, contenedorSemana,
                 lnkVolverSemana, lblDocenteFiltro, cboDocenteFiltro, lblBuscarClases, txtBuscarClases, pastFiltro,
                 dgvClases, btnVerEnSemana, btnNuevaClase, btnCambiarClase, btnQuitarClases
@@ -786,6 +806,10 @@ namespace DigLab
             }
 
             panelAbierta.Resize += (s, e) => AcomodarAbierta();
+
+            // Un Excel se puede soltar sobre el horario en preparacion o sobre el paso 2 vacio.
+            PermitirSoltarExcel(panelAbierta);
+            PermitirSoltarExcel(panelVacio);
 
             // ----------------------------------------------------------- paso 3: aplicar con fechas
             panelAplicar = new Panel { BackColor = Color.White, Dock = DockStyle.Fill, Visible = false };
@@ -804,7 +828,7 @@ namespace DigLab
             Controls.Add(panelAplicar);
 
             // Solo consulta: nada que escriba se ve, ni antes de la primera colocacion.
-            Permisos.Ocultar(btnDarDeBaja, btnCrearHorario, btnRenombrar, btnBorrar, btnPoner, btnCambiarHoras, btnQuitarHoras,
+            Permisos.Ocultar(btnCrearHorario, btnRenombrar, btnBorrar, btnPoner, btnCambiarHoras, btnQuitarHoras,
                 pastChoques, pastSinDocente, pastSinHorario, pastFaltaAsignar, btnNuevaClase, btnCambiarClase,
                 btnQuitarClases);
             ColoresProfesor.Cambio += ColoresCambiaron;
@@ -1365,20 +1389,6 @@ namespace DigLab
             barraPasos.Visible = conBarra;
             barraPasos.Location = new Point(Margen, 6);
 
-            // Fuera de la preparacion, donde esa fila ya va llena.
-            bool conBaja = conBarra && panel != panelAbierta;
-            if (conBaja && btnDarDeBaja.Parent != panel)
-            {
-                if (btnDarDeBaja.Parent != null)
-                {
-                    btnDarDeBaja.Parent.Controls.Remove(btnDarDeBaja);
-                }
-
-                panel.Controls.Add(btnDarDeBaja);
-            }
-
-            btnDarDeBaja.Visible = conBaja;
-            ColocarBaja();
             PintarPasos();
             foreach (Panel p in new[] { panelSinBase, panelLista, panelVacio, panelAbierta, panelAplicar })
             {
@@ -1412,106 +1422,6 @@ namespace DigLab
             ayuda.SetToolTip(pasoPreparacion, borrador == null
                 ? "Todavía no hay un horario en preparación: créalo como copia de otro, solo con sus clases o en blanco."
                 : "«" + borrador.Nombre + "»: " + RevisionCiclo.Resumen(borrador) + ". Se ve y se cambia como Horario semanal; nada se usa hasta aplicarlo.");
-        }
-
-        /// <summary>A la derecha, en la fila de los pasos; en la lista, junto a "Crear horario nuevo...".</summary>
-        private void ColocarBaja()
-        {
-            Control padre = btnDarDeBaja.Parent;
-            if (padre != null)
-            {
-                btnDarDeBaja.Location = new Point(Math.Max(Margen, padre.ClientSize.Width - Margen - btnDarDeBaja.Width), 4);
-                btnDarDeBaja.BringToFront();
-            }
-        }
-
-        private void DarDeBajaElHorario()
-        {
-            const string TituloBaja = "Dar de baja el horario actual";
-            if (Permisos.Bloquear(this, TituloBaja))
-            {
-                return;
-            }
-
-            InfoDeBaja info;
-            Cursor anterior = Cursor.Current;
-            Cursor.Current = Cursors.WaitCursor;
-            try
-            {
-                info = datos.LeerParaDarDeBaja();
-            }
-            catch (Exception ex)
-            {
-                MostrarFallo("Revisar el horario actual para darlo de baja", "No se pudo revisar el horario actual", ex);
-                return;
-            }
-            finally
-            {
-                Cursor.Current = anterior;
-            }
-
-            if (info.Motivo != null)
-            {
-                MessageBox.Show(this, info.Motivo, TituloBaja, MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            string detalle = "Todos los laboratorios se quedan sin clases desde ahora"
-                + (info.EmpiezanDespues > 0
-                    ? ", salvo " + RevisionCiclo.TextoClases(info.EmpiezanDespues) + (info.EmpiezanDespues == 1 ? " que empieza" : " que empiezan") + " más adelante"
-                    : "")
-                + ": " + CicloPreliminarDatos.TextoDeLaBaja(info.Terminan, info.SeQuitan, info.ConRegistrosDeHoy, info.ExtrasQueSeQuitan) + ". "
-                + "Las bitácoras y asistencias ya registradas se conservan y siguen contando. En las clases de hoy que aún no terminan, nadie tendrá falta por no alcanzar a registrar.\n\n"
-                + (info.SiguenCanceladas.Count > 0 ? RevisionAplicacion.TextoSiguenCanceladas(info.SiguenCanceladas) + "\n\n" : "")
-                + "Antes se guarda una copia como plantilla, «" + info.NombreCopia + "», para poder volver a aplicarlo. Esto no se deshace.";
-            if (!DialogoContrasenaAdmin.Confirmar(this, "¿Dar de baja el horario actual?", detalle, "Dar de baja"))
-            {
-                return;
-            }
-
-            ResultadoBaja resultado;
-            Cursor.Current = Cursors.WaitCursor;
-            try
-            {
-                resultado = datos.DarDeBajaElHorarioActual(IdAdministrador());
-            }
-            catch (Exception ex)
-            {
-                MostrarFallo("Dar de baja el horario actual", "No se dio de baja el horario", ex);
-                // En el mismo paso, con lo que haya ahora (quiza otra persona cambio algo).
-                bool callaba = callarFallos;
-                callarFallos = true;
-                try
-                {
-                    Cargar();
-                }
-                finally
-                {
-                    callarFallos = callaba;
-                }
-
-                if (panelVisible != panelAplicar)
-                {
-                    Estado(AvisoDeFalloAdmin.Texto("No se dio de baja el horario", ex), true);
-                }
-
-                return;
-            }
-            finally
-            {
-                Cursor.Current = anterior;
-            }
-
-            Cargar();
-            string texto = "Listo: " + CicloPreliminarDatos.TextoDeLaBaja(resultado.Terminan, resultado.SeQuitan, resultado.ConRegistrosDeHoy, resultado.ExtrasQueSeQuitan) + ". "
-                + "Ya puedes aplicar otro horario.";
-            if (resultado.NombreCopia != null)
-            {
-                texto += "\n\nEl horario que había quedó como plantilla: «" + resultado.NombreCopia + "».";
-            }
-
-            texto += "\n\nUn equipo sin conexión sigue con su copia del horario hasta que vuelva la red.";
-            MessageBox.Show(this, texto, TituloBaja, MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private void AcomodarBarra()
@@ -1867,8 +1777,7 @@ namespace DigLab
             }
 
             btnCrearHorario.Visible = !soloConsulta;
-            btnCrearHorario.Location = new Point(ancho - Margen - btnDarDeBaja.Width - 10 - btnCrearHorario.Width, 4);
-            ColocarBaja();
+            btnCrearHorario.Location = new Point(ancho - Margen - btnCrearHorario.Width, 4);
             lblListaTexto.SetBounds(Margen, 42, ancho - 2 * Margen, 20);
             lblGuardadas.Location = new Point(Margen, 76);
             txtBuscarLista.Location = new Point(lblGuardadas.Right + 8, 72);
@@ -2024,7 +1933,6 @@ namespace DigLab
             tarjetaVacio.Size = new Size(w, Math.Max(150, btnPrepararVacio.Bottom + 20));
             tarjetaVacio.Location = new Point(Math.Max(Margen, (ancho - w) / 2), Math.Max(50, (alto - tarjetaVacio.Height) / 2 - 40));
             lblEstadoVacio.SetBounds(tarjetaVacio.Left, tarjetaVacio.Bottom + 10, w, 40);
-            ColocarBaja();
         }
 
         // =====================================================================
@@ -2045,7 +1953,6 @@ namespace DigLab
             int alto = panelAplicar.ClientSize.Height;
             int arriba = soloConsulta ? 0 : 40;
             aplicacion.SetBounds(0, arriba, Math.Max(100, ancho), Math.Max(100, alto - arriba));
-            ColocarBaja();
         }
 
         /// <summary>
@@ -2074,7 +1981,8 @@ namespace DigLab
         /// con las clases o en blanco (DialogoCrearHorario). Queda en preparacion.
         /// </summary>
         /// <param name="desde">La plantilla que se propone (la elegida en la lista), o null.</param>
-        private void CrearHorario(int? desde)
+        /// <param name="excel">Un Excel soltado en el paso 2 vacio: el dialogo abre con "Desde un Excel" y ese archivo.</param>
+        private void CrearHorario(int? desde, string excel = null)
         {
             if (Permisos.Bloquear(this, "Crear un horario nuevo"))
             {
@@ -2120,8 +2028,11 @@ namespace DigLab
             ResultadoEmpezar resultado;
             string deDonde;
             bool sinHoras;
+            ResultadoCargaExcel conExcel;
+            string falloExcel;
+            string archivoExcel;
             using (DialogoCrearHorario dialogo = new DialogoCrearHorario(datos, situacion.Hoy, situacion.Configuraciones,
-                situacion.Borrador, desde, IdAdministrador))
+                situacion.Borrador, desde, IdAdministrador, excel))
             {
                 if (dialogo.ShowDialog(this) != DialogResult.OK)
                 {
@@ -2141,12 +2052,28 @@ namespace DigLab
                 resultado = dialogo.Resultado;
                 deDonde = dialogo.DeDonde;
                 sinHoras = dialogo.SinHoras;
+                conExcel = dialogo.ExcelCargado;
+                falloExcel = dialogo.FalloDelExcel;
+                archivoExcel = dialogo.ArchivoExcel;
             }
 
             LeerSituacion();
             leido = null;
             abiertaRecordada = null;
             pasoRecordado = PasoProximoCiclo.Preparacion;
+            if (falloExcel != null)
+            {
+                MostrarPreparacion(Vista.Semana, FiltroClases.Ninguno, falloExcel, true);
+                return;
+            }
+
+            if (conExcel != null)
+            {
+                MostrarPreparacion(Vista.Semana, FiltroClases.Ninguno, "Listo: horario nuevo con «" + archivoExcel + "»: "
+                    + RevisionCiclo.TextoClases(conExcel.Nuevas) + " con " + RevisionCiclo.TextoHorarios(conExcel.Franjas) + ". Revísalo con las flechas del laboratorio.");
+                return;
+            }
+
             string origen = deDonde == null ? "" : " " + deDonde;
             string estado = resultado.Clases == 0
                 ? "Listo: horario en blanco. Arrastra sobre los cuadros libres para poner la primera clase."
@@ -2592,6 +2519,7 @@ namespace DigLab
             btnMas.Visible = prep;
             // Si no cabe en la fila, AcomodarAbierta lo esconde y sale en "Mas acciones".
             btnImprimir.Visible = prep && semana && !Kiosco.Activo;
+            btnExcel.Visible = prep && semana && !Kiosco.Activo;
             lblLaboratorio.Visible = semana;
             cboLaboratorio.Visible = semana;
             lblLeyenda.Visible = semana;
@@ -2762,6 +2690,14 @@ namespace DigLab
                     btnImprimir.Visible = imprimirEnLaFila;
                     btnImprimir.Location = new Point(derecha - btnImprimir.Width, filaB);
                     int derechaLeyenda = imprimirEnLaFila ? btnImprimir.Left : derecha;
+                    // "Excel" a su izquierda, si cabe (lo suyo tambien esta en "Mas acciones").
+                    bool excelEnLaFila = Editable && !Kiosco.Activo && xb + 6 + btnExcel.Width + 8 <= derechaLeyenda;
+                    btnExcel.Visible = excelEnLaFila;
+                    btnExcel.Location = new Point(derechaLeyenda - (imprimirEnLaFila ? 8 : 0) - btnExcel.Width, filaB);
+                    if (excelEnLaFila)
+                    {
+                        derechaLeyenda = btnExcel.Left;
+                    }
 
                     // La leyenda, entre los botones e "Imprimir PDF", entera en una o dos lineas:
                     // la larga, la corta, la minima o ninguna (la ayuda al pasar el raton la dice entera).
@@ -3261,6 +3197,9 @@ namespace DigLab
             itemGuardarEn.Visible = prep && leido.Ciclo.SeGuardaEnOrigen;
             itemGuardarEn.Text = "Guardar en «" + leido.Ciclo.OrigenNombre + "» (la reemplaza)...";
             itemCambiarNombre.Visible = prep;
+            sepExcel.Visible = prep && !Kiosco.Activo;
+            itemCargarExcel.Visible = prep && !Kiosco.Activo;
+            itemDescargarExcel.Visible = prep && !Kiosco.Activo;
             sepDescartar.Visible = prep;
             itemEmpezarDeNuevo.Visible = prep;
             itemDescartar.Visible = prep;
@@ -4069,6 +4008,241 @@ namespace DigLab
         /// en Horario semanal (PdfHorario), pero de una semana tipo, sin fechas ni
         /// codigos, en el visor de PDF de DigLab (ahi se ve y, si se quiere, se guarda).
         /// </summary>
+        // =====================================================================
+        // El horario en Excel (pedido del 2026-11-12)
+        // =====================================================================
+
+        /// <summary>Soltar un Excel en ese panel y en todo lo que tenga dentro (tambien lo que se agregue despues).</summary>
+        private void PermitirSoltarExcel(Control control)
+        {
+            control.AllowDrop = true;
+            control.DragEnter += AlArrastrarExcel;
+            control.DragOver += AlArrastrarExcel;
+            control.DragDrop += AlSoltarExcel;
+            // Si se lleva el archivo afuera sin soltarlo, la linea de estado deja de decir "Suelta...".
+            control.DragLeave += (s, e) =>
+            {
+                Label linea = panelVisible == panelAbierta ? lblEstadoAbierta : panelVisible == panelVacio ? lblEstadoVacio : null;
+                if (linea != null && linea.Text.StartsWith("Suelta «", StringComparison.Ordinal))
+                {
+                    Estado(null);
+                }
+            };
+            control.ControlAdded += (s, e) => PermitirSoltarExcel(e.Control);
+            foreach (Control hijo in control.Controls)
+            {
+                PermitirSoltarExcel(hijo);
+            }
+        }
+
+        /// <summary>El unico archivo que se arrastra, si es un Excel y aqui se puede soltar; si no, null.</summary>
+        private string ExcelArrastrado(DragEventArgs e)
+        {
+            if (Kiosco.Activo || soloConsulta || !e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                return null;
+            }
+
+            bool aqui = (panelVisible == panelAbierta && Editable) || (panelVisible == panelVacio && btnPrepararVacio.Visible);
+            string[] archivos = e.Data.GetData(DataFormats.FileDrop) as string[];
+            return aqui && archivos != null && archivos.Length == 1 && ExcelDeHorario.EsExcel(archivos[0]) ? archivos[0] : null;
+        }
+
+        private void AlArrastrarExcel(object sender, DragEventArgs e)
+        {
+            string ruta = ExcelArrastrado(e);
+            e.Effect = ruta != null ? DragDropEffects.Copy : DragDropEffects.None;
+            if (ruta != null)
+            {
+                string texto = panelVisible == panelVacio ? "Suelta «" + Path.GetFileName(ruta) + "» para crear el horario con él."
+                    : "Suelta «" + Path.GetFileName(ruta) + "» para cargarlo en este horario (antes te dice qué cambia).";
+                Label linea = panelVisible == panelAbierta ? lblEstadoAbierta : lblEstadoVacio;
+                if (linea.Text != texto)
+                {
+                    Estado(texto);
+                }
+            }
+        }
+
+        private void AlSoltarExcel(object sender, DragEventArgs e)
+        {
+            string ruta = ExcelArrastrado(e);
+            if (ruta == null)
+            {
+                return;
+            }
+
+            // Despues de soltar: el Explorador no se queda esperando mientras se ven los dialogos.
+            BeginInvoke(new Action(() => CargarExcel(ruta)));
+        }
+
+        /// <summary>"Cargar un Excel en este horario...": se elige el archivo.</summary>
+        private void ElegirExcel()
+        {
+            if (!Editable)
+            {
+                return;
+            }
+
+            using (OpenFileDialog dialogo = new OpenFileDialog
+            {
+                Title = "Cargar un Excel en «" + leido.Ciclo.Nombre + "»",
+                Filter = "Libro de Excel (*.xlsx)|*.xlsx;*.xlsm|Todos los archivos (*.*)|*.*",
+                CheckFileExists = true
+            })
+            {
+                if (dialogo.ShowDialog(EstiloHorarios.Dueno(this)) == DialogResult.OK)
+                {
+                    CargarExcel(dialogo.FileName);
+                }
+            }
+        }
+
+        /// <summary>"Descargar este horario en Excel": la plantilla con lo que ya tiene, para llenarla.</summary>
+        private void DescargarExcel()
+        {
+            if (leido == null || Kiosco.Activo)
+            {
+                return;
+            }
+
+            byte[] libro;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                libro = HorarioEnExcel.Crear(leido, datos.LeerCatalogosDeHorario(), leido.Ciclo.Nombre);
+            }
+            catch (Exception ex)
+            {
+                Cursor = Cursors.Default;
+                MostrarFallo("PestanaProximoCiclo.DescargarExcel", "No se pudo preparar el Excel del horario", ex);
+                return;
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+
+            string guardado = ExcelDeHorario.Guardar(EstiloHorarios.Dueno(this), libro, leido.Ciclo.Nombre);
+            if (guardado != null)
+            {
+                Estado("Listo: se guardó «" + Path.GetFileName(guardado) + "». Llénalo en Excel y cárgalo aquí con «Excel ▾» o arrastrándolo hasta el horario.");
+            }
+        }
+
+        /// <summary>
+        /// Carga un Excel: sin horario en preparacion, crea uno con el (Crear horario nuevo,
+        /// "Desde un Excel"); con uno, lo revisa contra lo registrado y, si todo esta
+        /// registrado, ensena que cambia en cada laboratorio y lo carga si se confirma.
+        /// Con algo por corregir lo dice y no carga nada.
+        /// </summary>
+        private void CargarExcel(string ruta)
+        {
+            if (Permisos.Bloquear(this, "Cargar un Excel en el horario en preparacion"))
+            {
+                return;
+            }
+
+            if (panelVisible == panelVacio)
+            {
+                CrearHorario(null, ruta);
+                return;
+            }
+
+            if (!Editable)
+            {
+                return;
+            }
+
+            string archivo = Path.GetFileName(ruta);
+            int idCiclo = leido.Ciclo.Id;
+            LecturaDeHorario lectura;
+            string error;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                // Lo de ahora (otra ventana pudo cambiarlo), para comparar con el Excel.
+                CicloLeido actual = datos.Leer(idCiclo);
+                if (actual == null || !actual.Ciclo.EnPreparacion)
+                {
+                    Cursor = Cursors.Default;
+                    VolverALeerTrasFallo("Este horario ya no está en preparación: no se cargó el Excel.");
+                    return;
+                }
+
+                lectura = ExcelDeHorario.Leer(ruta, datos, actual, out error);
+            }
+            catch (Exception ex)
+            {
+                Cursor = Cursors.Default;
+                MostrarFallo("PestanaProximoCiclo.CargarExcel (leer)", "No se pudo revisar el Excel", ex);
+                return;
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+
+            if (lectura == null)
+            {
+                MessageBox.Show(EstiloHorarios.Dueno(this), error, "Cargar un Excel", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Estado("No se cargó nada: " + error, true);
+                return;
+            }
+
+            if (!lectura.SePuedeCargar)
+            {
+                using (DialogoProblemasExcel problemas = new DialogoProblemasExcel(archivo, lectura))
+                {
+                    problemas.ShowDialog(EstiloHorarios.Dueno(this));
+                }
+
+                Estado("No se cargó nada: «" + archivo + "» tiene " + (lectura.Problemas.Count == 1 ? "una cosa" : lectura.Problemas.Count + " cosas")
+                    + " por corregir.", true);
+                return;
+            }
+
+            using (DialogoConfirmarExcel confirmar = new DialogoConfirmarExcel(archivo, leido.Ciclo.Nombre, lectura, false))
+            {
+                if (confirmar.ShowDialog(EstiloHorarios.Dueno(this)) != DialogResult.OK)
+                {
+                    Estado("No se cargó el Excel: se canceló.");
+                    return;
+                }
+            }
+
+            ResultadoCargaExcel resultado;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                resultado = datos.CargarDesdeExcel(idCiclo, lectura.Laboratorios.Select(l => l.Id).ToList(), lectura.Clases, IdAdministrador());
+            }
+            catch (Exception ex)
+            {
+                Cursor = Cursors.Default;
+                FalloAlEscribir("PestanaProximoCiclo.CargarExcel", "No se pudo cargar el Excel", ex);
+                return;
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+
+            // Si se veia un laboratorio que no venia en el Excel, se ve el primero del Excel.
+            if (!lectura.Laboratorios.Any(l => l.Id == laboratorioElegido))
+            {
+                laboratorioElegido = lectura.Laboratorios[0].Id;
+                laboratorioRecordado = laboratorioElegido;
+            }
+
+            int labs = lectura.Laboratorios.Count;
+            Releer("Listo: se cargó «" + archivo + "» en " + (labs == 1 ? EstiloHorarios.NombreLaboratorio(lectura.Laboratorios[0].Nombre) : labs + " laboratorios") + ": "
+                + RevisionCiclo.TextoHorarios(resultado.Franjas)
+                + (resultado.Nuevas > 0 ? ", " + RevisionCiclo.TextoClases(resultado.Nuevas) + (resultado.Nuevas == 1 ? " nueva" : " nuevas") : "")
+                + (resultado.Quitadas > 0 ? "; se " + (resultado.Quitadas == 1 ? "quitó 1 clase que no venía" : "quitaron " + resultado.Quitadas + " clases que no venían") : "")
+                + ".");
+        }
+
         private void ImprimirPdf()
         {
             ItemLaboratorio laboratorio = cboLaboratorio.SelectedItem as ItemLaboratorio;

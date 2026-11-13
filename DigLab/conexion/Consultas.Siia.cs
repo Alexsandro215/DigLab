@@ -265,7 +265,7 @@ namespace DigLab.conexion
             Avisar("Tu contraseña del SIIA es correcta, pero tu cuenta del SIIA es de estudiante, y esa no es una cuenta de docente."
                 + Environment.NewLine + Environment.NewLine
                 + (siia.Estudiantes ? "Como estudiante entras con tu matrícula, tu contraseña y tu NIP del SIIA."
-                    : "Como estudiante entras con tu cuenta de DigLab; si todavía no tienes una, créala con «Crear cuenta»."),
+                    : "Como estudiante entras con tu cuenta de DigLab; si todavía no tienes una, pide a la administración que te dé de alta."),
                 TituloInicio, MessageBoxIcon.Information);
         }
 

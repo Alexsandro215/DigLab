@@ -241,6 +241,26 @@ namespace DigLab.conexion
         }
 
         /// <summary>
+        /// Condicion SQL (entre parentesis): la bitacora rb reporta algo que "Resolver
+        /// fallas..." ofrece (una falla, un comentario o un aviso de otros equipos sin
+        /// internet) y nadie lo ha dado por resuelto: la columna Fallas de Bitacoras. Con
+        /// solo CondicionFallaPendiente, el aviso de un estudiante sin resolver no contaba y,
+        /// al resolver lo de su docente, la sesion salia en verde (fallo del 2026-11-13).
+        /// Sin db/26, CondicionFallaPendiente: no hay nada resuelto que pintar de verde.
+        /// </summary>
+        internal static string CondicionReportePendiente(MySqlConnection conexion)
+        {
+            if (!Esquema.FallasResueltas(conexion))
+            {
+                return CondicionFallaPendiente(conexion);
+            }
+
+            return "(((" + CondicionConFalla + ")"
+                + (Esquema.EquiposSinInternet(conexion) ? " OR COALESCE(rb.equipos_sin_internet, '') <> ''" : "")
+                + ") AND " + BitacoraSinResolver + ")";
+        }
+
+        /// <summary>
         /// Condicion SQL (entre parentesis): lo que reporta la bitacora rb, una falla, un
         /// comentario o un aviso de otros equipos, ya se dio por resuelto. Sin db/26, nunca.
         /// </summary>
@@ -542,7 +562,7 @@ namespace DigLab.conexion
                        CONCAT_WS(' ', prof.nombre, prof.apellido_paterno, prof.apellido_materno) AS profesor,
                        COALESCE(l.nombre_laboratorio, '') AS laboratorio,
                        COUNT(DISTINCT rb.fk_usuario)      AS alumnos,
-                       COUNT(DISTINCT CASE WHEN " + CondicionFallaPendiente(conexion) + @" THEN rb.fk_usuario END) AS con_fallas," + resueltas + @"
+                       COUNT(DISTINCT CASE WHEN " + CondicionReportePendiente(conexion) + @" THEN rb.fk_usuario END) AS con_fallas," + resueltas + @"
                        COUNT(DISTINCT CASE WHEN rb.registrado_sin_conexion = 1 THEN rb.fk_usuario END) AS sin_conexion,
                        " + avisos + @" AS sin_internet,
                        IF(" + HorariosDatos.CondicionUsoLibre + @", 1, 0) AS uso_libre

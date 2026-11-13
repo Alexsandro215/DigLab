@@ -54,6 +54,12 @@ namespace DigLab.Infraestructura
         internal readonly SortedDictionary<int, double> Anchos = new SortedDictionary<int, double>();
         internal readonly Dictionary<int, double> Altos = new Dictionary<int, double>();
         internal readonly List<string> Combinadas = new List<string>();
+        /// <summary>Casillas con lista desplegable: el rango ("B5:G18"), el nombre de la lista y el aviso si se escribe otra cosa.</summary>
+        internal readonly List<string[]> Listas = new List<string[]>();
+        /// <summary>Nombres de rangos de esta hoja (el nombre y "$I$2:$I$80"), para las listas desplegables.</summary>
+        internal readonly List<string[]> Nombres = new List<string[]>();
+        /// <summary>Formato condicional: el rango, la formula (relativa a su primera casilla) y el relleno si se cumple.</summary>
+        internal readonly List<Tuple<string, string, Color>> Condicionales = new List<Tuple<string, string, Color>>();
         internal int FilasCongeladas;
         internal int ColumnasCongeladas;
         /// <summary>La fila de encabezados que se repite arriba de cada pagina al imprimir (0: ninguna).</summary>
@@ -103,6 +109,73 @@ namespace DigLab.Infraestructura
             }
 
             Combinadas.Add(LibroExcel.Celda(fila, desde) + ":" + LibroExcel.Celda(fila, hasta));
+        }
+
+        /// <summary>
+        /// Junta un rectangulo (una clase de dos horas: dos renglones de una columna); las de
+        /// en medio llevan el estilo de la primera (asi se ven sus orillas).
+        /// </summary>
+        public void Combinar(int filaDesde, int columnaDesde, int filaHasta, int columnaHasta)
+        {
+            if (filaHasta < filaDesde || columnaHasta < columnaDesde || (filaHasta == filaDesde && columnaHasta == columnaDesde))
+            {
+                return;
+            }
+
+            Casilla primera = Buscar(filaDesde, columnaDesde);
+            EstiloExcel estilo = primera == null ? null : primera.Estilo;
+            for (int f = filaDesde; f <= filaHasta; f++)
+            {
+                for (int c = columnaDesde; c <= columnaHasta; c++)
+                {
+                    if ((f != filaDesde || c != columnaDesde) && estilo != null)
+                    {
+                        Vacia(f, c, estilo);
+                    }
+                }
+            }
+
+            Combinadas.Add(LibroExcel.Celda(filaDesde, columnaDesde) + ":" + LibroExcel.Celda(filaHasta, columnaHasta));
+        }
+
+        /// <summary>
+        /// Una flecha en cada casilla del rectangulo para elegir de la lista con ese nombre
+        /// (Nombrar). Escribir otra cosa se puede, despues de un aviso (titulo de 32 letras
+        /// como mucho; el aviso, de 225).
+        /// </summary>
+        public void ListaDesplegable(int filaDesde, int columnaDesde, int filaHasta, int columnaHasta, string nombreLista, string tituloAviso, string aviso)
+        {
+            Listas.Add(new[]
+            {
+                LibroExcel.Celda(filaDesde, columnaDesde) + ":" + LibroExcel.Celda(filaHasta, columnaHasta), nombreLista,
+                Corto(tituloAviso, 32), Corto(aviso, 225)
+            });
+        }
+
+        /// <summary>
+        /// Formato condicional: las casillas del rectangulo en las que se cumple la formula se
+        /// rellenan de ese color (la formula se escribe para la primera casilla, sin $: Excel la
+        /// mueve a cada una). Lo calcula Excel al escribir, sin macros.
+        /// </summary>
+        public void RellenoSi(int filaDesde, int columnaDesde, int filaHasta, int columnaHasta, string formula, Color fondo)
+        {
+            Condicionales.Add(Tuple.Create(LibroExcel.Celda(filaDesde, columnaDesde) + ":" + LibroExcel.Celda(filaHasta, columnaHasta), formula, fondo));
+        }
+
+        /// <summary>Un nombre del libro para un rectangulo de esta hoja (lo usan las listas desplegables).</summary>
+        public void Nombrar(string nombre, int filaDesde, int columnaDesde, int filaHasta, int columnaHasta)
+        {
+            Nombres.Add(new[]
+            {
+                nombre,
+                "$" + LibroExcel.Letras(columnaDesde) + "$" + filaDesde + ":$" + LibroExcel.Letras(columnaHasta) + "$" + filaHasta
+            });
+        }
+
+        private static string Corto(string texto, int largo)
+        {
+            texto = texto ?? "";
+            return texto.Length <= largo ? texto : texto.Substring(0, largo);
         }
 
         public void Ancho(int columna, double ancho)
@@ -281,6 +354,14 @@ namespace DigLab.Infraestructura
 
             xml.Append("</sheets>");
             List<string> titulos = new List<string>();
+            // Los nombres de rangos (las listas desplegables), en orden alfabetico como los guarda Excel.
+            foreach (KeyValuePair<string, string> nombre in hojas
+                .SelectMany(h => h.Nombres.Select(n => new KeyValuePair<string, string>(n[0], "'" + h.Nombre.Replace("'", "''") + "'!" + n[1])))
+                .OrderBy(n => n.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                titulos.Add("<definedName name=\"" + Xml(nombre.Key) + "\">" + Xml(nombre.Value) + "</definedName>");
+            }
+
             for (int i = 0; i < hojas.Count; i++)
             {
                 if (hojas[i].RepetirAlImprimir > 0)
@@ -396,6 +477,36 @@ namespace DigLab.Infraestructura
                 xml.Append("</mergeCells>");
             }
 
+            if (hoja.Condicionales.Count > 0)
+            {
+                int prioridad = 1;
+                foreach (IGrouping<string, Tuple<string, string, Color>> rango in hoja.Condicionales.GroupBy(c => c.Item1))
+                {
+                    xml.Append("<conditionalFormatting sqref=\"").Append(rango.Key).Append("\">");
+                    foreach (Tuple<string, string, Color> regla in rango)
+                    {
+                        xml.Append("<cfRule type=\"expression\" dxfId=\"").Append(estilos.Diferencial(regla.Item3)).Append("\" priority=\"").Append(prioridad++)
+                            .Append("\"><formula>").Append(Xml(regla.Item2)).Append("</formula></cfRule>");
+                    }
+
+                    xml.Append("</conditionalFormatting>");
+                }
+            }
+
+            if (hoja.Listas.Count > 0)
+            {
+                // Escribir otra cosa se puede (errorStyle warning): Excel avisa y pregunta si seguir.
+                xml.Append("<dataValidations count=\"").Append(hoja.Listas.Count).Append("\">");
+                foreach (string[] lista in hoja.Listas)
+                {
+                    xml.Append("<dataValidation type=\"list\" errorStyle=\"warning\" allowBlank=\"1\" showErrorMessage=\"1\" errorTitle=\"")
+                        .Append(Xml(lista[2])).Append("\" error=\"").Append(Xml(lista[3])).Append("\" sqref=\"").Append(lista[0])
+                        .Append("\"><formula1>").Append(Xml(lista[1])).Append("</formula1></dataValidation>");
+                }
+
+                xml.Append("</dataValidations>");
+            }
+
             xml.Append("<pageMargins left=\"0.4\" right=\"0.4\" top=\"0.5\" bottom=\"0.6\" header=\"0.3\" footer=\"0.3\"/>");
             // Carta (paperSize 1), horizontal y todo el ancho en una pagina; de alto, las que hagan falta.
             xml.Append("<pageSetup paperSize=\"1\" orientation=\"").Append(hoja.Horizontal ? "landscape" : "portrait").Append('"')
@@ -482,6 +593,14 @@ namespace DigLab.Infraestructura
             private readonly List<string> formatos = new List<string>();
             private readonly List<string> casillas = new List<string> { "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>" };
             private readonly Dictionary<string, int> indices = new Dictionary<string, int>();
+            // Los formatos del formato condicional (dxf): solo un relleno.
+            private readonly List<string> diferenciales = new List<string>();
+
+            /// <summary>El dxf con ese relleno (en un dxf el color solido va en bgColor).</summary>
+            public int Diferencial(Color fondo)
+            {
+                return Agregar(diferenciales, "<dxf><fill><patternFill patternType=\"solid\"><bgColor rgb=\"" + Argb(fondo) + "\"/></patternFill></fill></dxf>");
+            }
 
             public int Indice(EstiloExcel estilo)
             {
@@ -591,6 +710,11 @@ namespace DigLab.Infraestructura
                 xml.Append("<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>");
                 xml.Append("<cellXfs count=\"").Append(casillas.Count).Append("\">").Append(string.Concat(casillas)).Append("</cellXfs>");
                 xml.Append("<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>");
+                if (diferenciales.Count > 0)
+                {
+                    xml.Append("<dxfs count=\"").Append(diferenciales.Count).Append("\">").Append(string.Concat(diferenciales)).Append("</dxfs>");
+                }
+
                 return xml.Append("</styleSheet>").ToString();
             }
         }

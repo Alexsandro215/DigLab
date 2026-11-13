@@ -31,9 +31,11 @@ namespace DigLab.conexion
         public const string PorAsignar = "por_asignar";
         /// <summary>Una memoria USB de emergencia que se registro o se quito (db/28).</summary>
         public const string MemoriaEmergencia = "memoria_emergencia";
+        /// <summary>Una version de DigLab que se publico en la base para que los equipos se actualicen, o se retiro (db/29).</summary>
+        public const string VersionDigLab = "version_diglab";
 
         /// <summary>Todos, en el orden del filtro Tipo del historial.</summary>
-        public static readonly string[] Todos = { Franja, Clase, Cancelacion, Extra, Horario, PorAsignar, Bitacora, Laboratorio, FormaDeEntrar, Cuenta, MemoriaEmergencia };
+        public static readonly string[] Todos = { Franja, Clase, Cancelacion, Extra, Horario, PorAsignar, Bitacora, Laboratorio, FormaDeEntrar, Cuenta, MemoriaEmergencia, VersionDigLab };
 
         /// <summary>Los que avisan como alerta "Cambio de horario": el horario de las clases (tambien uno entero que se aplico).</summary>
         public static bool EsDeHorario(string tipo)
@@ -68,6 +70,8 @@ namespace DigLab.conexion
                     return "Cuentas (anonimizadas y del SIIA)";
                 case MemoriaEmergencia:
                     return "Memorias de emergencia";
+                case VersionDigLab:
+                    return "Versiones de DigLab";
                 default:
                     return tipo ?? "";
             }
@@ -122,6 +126,8 @@ namespace DigLab.conexion
         public const string Suspender = "suspender";
         /// <summary>Se le quita la suspension antes de tiempo (TipoDeCambio.Cuenta, db/27).</summary>
         public const string QuitarSuspension = "quitar_suspension";
+        /// <summary>Se mandaron apagar los equipos de un laboratorio o de todos (TipoDeCambio.Laboratorio, ordenes_equipos).</summary>
+        public const string Apagar = "apagar";
     }
 
     /// <summary>Un cambio por anotar (HistorialCambios.Anotar), en la misma transaccion que el cambio.</summary>
@@ -441,6 +447,8 @@ namespace DigLab.conexion
                             return "Laboratorio habilitado";
                         case AccionDeCambio.Desactivar:
                             return "Laboratorio deshabilitado";
+                        case AccionDeCambio.Apagar:
+                            return "Se mandó apagar los equipos";
                         default:
                             return "Laboratorio renombrado";
                     }
@@ -457,6 +465,9 @@ namespace DigLab.conexion
                         : accion == AccionDeCambio.Cambio ? "Carrera tomada del SIIA" : "Cuenta anonimizada";
                 case TipoDeCambio.MemoriaEmergencia:
                     return accion == AccionDeCambio.Quitar ? "Memoria de emergencia quitada" : "Memoria de emergencia registrada";
+                case TipoDeCambio.VersionDigLab:
+                    return accion == AccionDeCambio.Quitar ? "Versión de DigLab retirada"
+                        : accion == AccionDeCambio.Cambio ? "Se mandó actualizar ya" : "Versión de DigLab publicada";
                 default:
                     return ((tipo ?? "") + " " + (accion ?? "")).Trim();
             }

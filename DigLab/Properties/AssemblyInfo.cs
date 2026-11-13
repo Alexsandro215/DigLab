@@ -36,5 +36,13 @@ using System.Runtime.InteropServices;
 // de los equipos con una anterior, que pediria siempre el codigo fijo.
 // 1.2: memorias de emergencia en la base (db/28), reinicio al terminar la clase, conexion cifrada,
 // lista en Excel, fallas resueltas (db/26) y suspensiones (db/27).
-[assembly: AssemblyVersion("1.2.0.0")]
-[assembly: AssemblyFileVersion("1.2.0.0")]
+// 1.2.1: el horario en Excel (cuadricula con lista desplegable y color del docente) y sin
+// "Dar de baja el horario actual". Sin migracion.
+// 1.2.3: actualizar los equipos desde la base (db/29): "Version de DigLab..." en Laboratorios,
+// aviso al abrir DigLab, boton en el kiosco y el vigilante que la instala solo.
+// 1.3.0: apagar los equipos desde Laboratorios (ordenes_equipos), indicador de internet y
+// version a la vista en el kiosco, sin "Crear cuenta" ni contrasena o correo de estudiantes
+// en la administracion, suspension hasta el inicio del dia, los cambios de cada version con
+// sus autores, y Bitacoras ya no pinta de verde una sesion con avisos de estudiantes pendientes.
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]

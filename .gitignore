@@ -33,6 +33,12 @@ connections.config
 appsettings.Development.json
 appsettings.Local.json
 
+# ---- Libros de Excel (horarios y listas descargados de DigLab: llevan nombres reales) ----
+*.xlsx
+*.xlsm
+*.xls
+~$*
+
 # ---- Editores ----
 .vscode/
 .idea/

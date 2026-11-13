@@ -10,7 +10,8 @@ namespace DigLab
 {
     /// <summary>
     /// Seccion Alumnos del administrador: una lista con buscador y, sobre el alumno
-    /// elegido, editar, restablecer la contrasena y dar de baja o reactivar.
+    /// elegido, editar y dar de baja o reactivar (su contrasena es la del SIIA: aqui no
+    /// se restablece ni se cambia, desde el 2026-11-13).
     /// Sustituye a las pantallas viejas de alta, edicion y borrado: ya no hace
     /// falta saberse una matricula de memoria, y quitar a un alumno ya no borra
     /// sus bitacoras. "Ver sus bitacoras" abre su historial (VentanaHistorialAlumno),
@@ -38,7 +39,7 @@ namespace DigLab
         private readonly Dictionary<int, string> textoBusqueda = new Dictionary<int, string>();
         private List<AlumnoInfo> alumnos = new List<AlumnoInfo>();
         // El encargado de laboratorio: sin "Registrar estudiante", "Editar",
-        // "Restablecer contrasena", "Dar de baja" ni "Datos personales" (no se
+        // "Dar de baja" ni "Datos personales" (no se
         // crean); el doble clic abre sus bitacoras.
         private readonly bool soloConsulta = Permisos.SoloConsulta;
 
@@ -47,7 +48,6 @@ namespace DigLab
         private readonly ComboBox cboMostrar;
         private readonly Button btnEditar;
         private readonly Button btnBitacoras;
-        private readonly Button btnContrasena;
         private readonly Button btnBaja;
         private readonly Button btnDatosPersonales;
         private readonly Button btnSuspender;
@@ -154,12 +154,8 @@ namespace DigLab
             {
                 btnBaja = BotonAbajo("Dar de baja", 150);
                 btnBaja.Click += (s, e) => CambiarEstadoSeleccionado();
-                // Con el SIIA su contrasena es la del SIIA y se recupera alla: aqui no se restablece.
-                if (!estudiantesConSiia)
-                {
-                    btnContrasena = BotonAbajo("Restablecer contraseña", 210);
-                    btnContrasena.Click += (s, e) => RestablecerContrasenaSeleccionado();
-                }
+                // Sin "Restablecer contrasena" (pedido del 2026-11-13: "aqui no le incumbe
+                // al admin"): la contrasena de un estudiante es la del SIIA y se cambia alla.
             }
 
             // Su historial: cada bitacora que registro, con "Ver la sesion" y la
@@ -430,7 +426,7 @@ namespace DigLab
                 AlumnoInfo alumno = (AlumnoInfo)fila.Tag;
                 if (alumno.Suspendida)
                 {
-                    string motivo = "Acceso suspendido hasta el " + SuspensionesDatos.Fecha(alumno.SuspendidaHasta.Value) + "."
+                    string motivo = "Acceso suspendido: vuelve a entrar desde el " + SuspensionesDatos.Regreso(alumno.SuspendidaHasta.Value) + "."
                         + Environment.NewLine + "Razón: " + alumno.RazonSuspension;
                     foreach (DataGridViewCell celda in fila.Cells)
                     {
@@ -465,10 +461,14 @@ namespace DigLab
             }
         }
 
-        /// <summary>"Suspendida hasta 09/11": corto, para que el nombre conserve el ancho. Con el año solo si no es este; la hora, al pasar el raton.</summary>
+        /// <summary>
+        /// "Suspendida, vuelve el 09/11": corto, para que el nombre conserve el ancho. Con
+        /// el año solo si no es este; el dia de la semana (o la hora, en las de antes del
+        /// 2026-11-13), al pasar el raton.
+        /// </summary>
         private static string EstadoSuspendida(DateTime hasta)
         {
-            return "Suspendida hasta " + hasta.ToString(hasta.Year == DateTime.Now.Year ? "dd/MM" : "dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture);
+            return "Suspendida, vuelve el " + hasta.ToString(hasta.Year == DateTime.Now.Year ? "dd/MM" : "dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture);
         }
 
         /// <summary>La columna Estado: la cuenta activa, de baja (con su fecha) o anonimizada.</summary>
@@ -498,10 +498,6 @@ namespace DigLab
             // Una cuenta anonimizada ya no se edita ni se reactiva (UsuariosDatos.Anonimizar).
             bool anonimizada = alumno != null && alumno.Anonimizada;
             btnEditar.Enabled = alumno != null && !anonimizada;
-            if (btnContrasena != null)
-            {
-                btnContrasena.Enabled = alumno != null && alumno.Activo;
-            }
             btnBaja.Enabled = alumno != null && datos.BajasDisponibles && !anonimizada;
             btnBaja.Text = alumno != null && !alumno.Activo ? "Reactivar" : "Dar de baja";
             btnDatosPersonales.Enabled = alumno != null;
@@ -644,7 +640,7 @@ namespace DigLab
                     if (dialogo.ShowDialog(this) == DialogResult.OK)
                     {
                         Recargar(alumno.Matricula);
-                        Avisar("Acceso suspendido hasta el " + SuspensionesDatos.Fecha(dialogo.Hasta) + ".");
+                        Avisar("Acceso suspendido: podrá volver a entrar desde el " + SuspensionesDatos.Regreso(dialogo.Hasta) + ".");
                     }
                 }
 
@@ -654,8 +650,8 @@ namespace DigLab
             // Aqui se lee la razon entera: este dialogo crece con el texto. Devolverle el
             // acceso no le quita nada: no va en rojo.
             using (DialogoTextoYBotones dialogo = new DialogoTextoYBotones("Quitar suspensión",
-                alumno.NombreCompleto + " (" + alumno.Matricula + ") tiene el acceso suspendido hasta el "
-                + SuspensionesDatos.Fecha(alumno.SuspendidaHasta.Value) + "." + Environment.NewLine + Environment.NewLine
+                alumno.NombreCompleto + " (" + alumno.Matricula + ") tiene el acceso suspendido: vuelve a entrar desde el "
+                + SuspensionesDatos.Regreso(alumno.SuspendidaHasta.Value) + "." + Environment.NewLine + Environment.NewLine
                 + "Razón: " + alumno.RazonSuspension + Environment.NewLine + Environment.NewLine
                 + "Si se la quitas, podrá volver a entrar de inmediato.",
                 "Quitar suspensión", false))
@@ -680,35 +676,6 @@ namespace DigLab
             catch (Exception ex)
             {
                 AvisoDeFalloAdmin.Mostrar(this, "Quitar la suspension del alumno " + alumno.Matricula, ex, "No se pudo quitar la suspensión", Text);
-            }
-        }
-
-        private void RestablecerContrasenaSeleccionado()
-        {
-            if (Permisos.Bloquear(this, "Restablecer la contrasena de un alumno")) return;
-
-            AlumnoInfo alumno = Seleccionado<AlumnoInfo>();
-            if (alumno == null)
-            {
-                return;
-            }
-
-            using (DialogoContrasena dialogo = new DialogoContrasena(alumno.NombreCompleto + " (" + alumno.Matricula + ")"))
-            {
-                if (dialogo.ShowDialog(this) != DialogResult.OK)
-                {
-                    return;
-                }
-
-                try
-                {
-                    datos.RestablecerContrasena(alumno.Id, dialogo.Contrasena);
-                    Avisar("Contraseña nueva para " + alumno.NombreCompleto + ". Ya puede entrar con ella.");
-                }
-                catch (Exception ex)
-                {
-                    AvisoDeFalloAdmin.Mostrar(this, "Restablecer la contrasena de " + alumno.Matricula, ex, "No se pudo cambiar la contraseña", Text);
-                }
             }
         }
 

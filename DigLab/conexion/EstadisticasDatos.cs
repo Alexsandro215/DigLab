@@ -399,6 +399,8 @@ namespace DigLab.conexion
         public int? LaboratorioId;
         /// <summary>El dia de su sesion (VigenciaFranjas.DiaDeSesion).</summary>
         public DateTime Dia;
+        /// <summary>Ya se dio por resuelto en Bitacoras (db/26).</summary>
+        public bool Resuelta;
     }
 
     /// <summary>Una bitacora con falla o con aviso de equipos sin internet (E10).</summary>
@@ -415,6 +417,8 @@ namespace DigLab.conexion
         public DateTime? Cuando;
         /// <summary>"Red: Sin cable de red | Hardware: No sirve el mouse" (Consultas.DescribirFallas sin el aviso), o null sin falla.</summary>
         public string QueReporto;
+        /// <summary>Lo que reporta (su falla y su aviso) ya se dio por resuelto en Bitacoras (db/26).</summary>
+        public bool Resuelta;
     }
 
     /// <summary>
@@ -459,6 +463,8 @@ namespace DigLab.conexion
         /// <summary>Esquema.ReportesDeProfesor (db/15) y Esquema.EquiposSinInternet (db/10).</summary>
         public bool ConReportesDocentes;
         public bool ConAvisos;
+        /// <summary>Esquema.FallasResueltas (db/26): Equipos dice lo que sigue por resolver.</summary>
+        public bool ConResueltas;
         /// <summary>Cuando se leyo (reloj de este equipo, en UTC): la cache dura 10 minutos.</summary>
         public DateTime LeidaUtc;
         /// <summary>Lo que tardo la lectura entera.</summary>
@@ -1091,6 +1097,11 @@ namespace DigLab.conexion
         public int Red;
         public int DeDocentes;
         public int Avisos;
+        /// <summary>
+        /// De sus fallas, reportes de docentes y avisos, los que nadie ha dado por resueltos en
+        /// Bitacoras (db/26; sin ella, todos): lo que todavia hay que atender en el equipo.
+        /// </summary>
+        public int PorResolver;
         public int DiasConReporte;
         /// <summary>El dia (de la sesion) y la hora (del registro) del ultimo reporte; sin hora, null.</summary>
         public DateTime? UltimoDia;
@@ -1201,6 +1212,8 @@ namespace DigLab.conexion
         public bool ConReportesDocentes;
         public bool ConAvisos;
         public bool ConDadas;
+        /// <summary>Con db/26: la columna "Por resolver" de Equipos.</summary>
+        public bool ConResueltas;
         /// <summary>Lo que tardo Calcular (si pasa de 300 ms, la ventana dice "Calculando...").</summary>
         public TimeSpan Duracion;
     }
@@ -1484,6 +1497,7 @@ namespace DigLab.conexion
                 lectura.ConAvisos = Esquema.EquiposSinInternet(conexion);
                 bool conLlegada = lectura.ConAvisos && Esquema.HoraDeLlegada(conexion);
                 lectura.ConReportesDocentes = Esquema.ReportesDeProfesor(conexion);
+                lectura.ConResueltas = Esquema.FallasResueltas(conexion);
                 LeerLaboratorios(conexion, lectura, Esquema.LaboratoriosDesactivables(conexion));
                 if (lectura.ConReportesDocentes)
                 {
@@ -1698,13 +1712,16 @@ namespace DigLab.conexion
         /// <summary>E8: los reportes de docentes de [DesdeLectura, HastaLectura] (db/15).</summary>
         private static void LeerReportesDocentes(MySqlConnection conexion, LecturaEstadisticas lectura)
         {
+            // Si ya se dio por resuelto (db/26): la columna "Por resolver" de Equipos.
             using (MySqlCommand comando = new MySqlCommand(@"
                 SELECT rp.idreportes_profesor, rp.fk_codigo_accesos, rp.fk_usuario,
                        NULLIF(TRIM(COALESCE(rp.numero_computadora, '')), '') AS equipo, rp.area, rp.falla,
                        DATE_FORMAT(rp.registrado_en, '%Y-%m-%d %H:%i:%s') AS registrado_en,
-                       ca.laboratorios_idlaboratorios AS lab, " + VigenciaFranjas.DiaDeSesion("ca") + @" AS dia
+                       ca.laboratorios_idlaboratorios AS lab, " + VigenciaFranjas.DiaDeSesion("ca") + @" AS dia, "
+                + (lectura.ConResueltas ? "IF(fr.idfallas_resueltas IS NULL, 0, 1)" : "0") + @" AS resuelta
                 FROM reportes_profesor rp
-                INNER JOIN codigos_accesos ca ON ca.idcodigos_accesos = rp.fk_codigo_accesos
+                INNER JOIN codigos_accesos ca ON ca.idcodigos_accesos = rp.fk_codigo_accesos "
+                + (lectura.ConResueltas ? "LEFT JOIN fallas_resueltas fr ON fr.origen = 'docente' AND fr.registro_id = rp.idreportes_profesor " : "") + @"
                 WHERE " + VigenciaFranjas.DiaDeSesion("ca") + " BETWEEN @Desde AND @Hasta", conexion))
             {
                 comando.CommandTimeout = 60;
@@ -1729,7 +1746,8 @@ namespace DigLab.conexion
                             Falla = reader.IsDBNull(5) ? "" : reader.GetString(5),
                             RegistradoEn = FechaYHora(reader[6]),
                             LaboratorioId = reader.IsDBNull(7) ? (int?)null : reader.GetInt32(7),
-                            Dia = Convert.ToDateTime(reader[8], Inv).Date
+                            Dia = Convert.ToDateTime(reader[8], Inv).Date,
+                            Resuelta = Convert.ToInt32(reader[9], Inv) == 1
                         });
                     }
                 }
@@ -1749,9 +1767,12 @@ namespace DigLab.conexion
                 + "CASE WHEN " + falla + " THEN 1 ELSE 0 END AS con_falla, "
                 + "rb.falla_red, rb.comentarios_red, rb.falla_hardware, rb.comentarios_hardware, rb.falla_software, rb.comentarios_software, "
                 + (lectura.ConAvisos ? "NULLIF(TRIM(COALESCE(rb.equipos_sin_internet, '')), '')" : "NULL") + " AS sin_internet, "
-                + "DATE_FORMAT(" + (conLlegada ? "COALESCE(rb.registrado_en, rb.recibido_en)" : "rb.registrado_en") + ", '%Y-%m-%d %H:%i:%s') AS cuando "
+                + "DATE_FORMAT(" + (conLlegada ? "COALESCE(rb.registrado_en, rb.recibido_en)" : "rb.registrado_en") + ", '%Y-%m-%d %H:%i:%s') AS cuando, "
+                // Si ya se dio por resuelto lo que reporta (db/26), su falla y su aviso: "Por resolver" de Equipos.
+                + (lectura.ConResueltas ? "IF(fr.idfallas_resueltas IS NULL, 0, 1)" : "0") + " AS resuelta "
                 + "FROM registros_bitacoras rb "
                 + "INNER JOIN codigos_accesos ca ON ca.idcodigos_accesos = rb.fk_codigo_accesos "
+                + (lectura.ConResueltas ? "LEFT JOIN fallas_resueltas fr ON fr.origen = 'bitacora' AND fr.registro_id = rb.idregistros_bitacoras " : "")
                 + "WHERE " + VigenciaFranjas.DiaDeSesion("ca") + " BETWEEN @Desde AND @Hasta "
                 + "AND (" + falla + (lectura.ConAvisos ? " OR TRIM(COALESCE(rb.equipos_sin_internet, '')) <> ''" : "") + ")", conexion))
             {
@@ -1776,7 +1797,8 @@ namespace DigLab.conexion
                         ConFalla = conFalla,
                         SinInternet = fila["sin_internet"] == DBNull.Value ? null : Convert.ToString(fila["sin_internet"], Inv),
                         Cuando = FechaYHora(fila["cuando"]),
-                        QueReporto = describe == null || describe == "Sin novedad" ? null : describe
+                        QueReporto = describe == null || describe == "Sin novedad" ? null : describe,
+                        Resuelta = Convert.ToInt32(fila["resuelta"], Inv) == 1
                     };
                     lectura.Detalles[detalle.Id] = detalle;
                 }
@@ -2841,6 +2863,7 @@ namespace DigLab.conexion
                 R.Ciclo = F.Tipo == TipoPeriodo.CicloPasado ? F.Ciclo : F.Tipo == TipoPeriodo.Ciclo ? L.CicloEnCurso : null;
                 R.Plantilla = F.Tipo == TipoPeriodo.Plantilla ? F.Plantilla : null;
                 R.ConAvisos = L.ConAvisos;
+                R.ConResueltas = L.ConResueltas;
                 R.ConReportesDocentes = L.ConReportesDocentes;
                 R.ConDadas = L.ConDadas;
                 R.CicloEntero = F.EsCiclo && lab == 0;
@@ -3422,10 +3445,12 @@ namespace DigLab.conexion
 
                     DetalleDeReporte detalle;
                     L.Detalles.TryGetValue(b.Id, out detalle);
+                    bool resuelta = detalle != null && detalle.Resuelta;
                     if (falla)
                     {
                         equipo.SesionesConFalla.Add(sesion.Id);
                         equipo.Fila.Fallas++;
+                        equipo.Fila.PorResolver += resuelta ? 0 : 1;
                         equipo.Fila.Hardware += (b.Banderas & BitacoraLeida.BanderaHardware) != 0 ? 1 : 0;
                         equipo.Fila.Software += (b.Banderas & BitacoraLeida.BanderaSoftware) != 0 ? 1 : 0;
                         equipo.Fila.Red += (b.Banderas & BitacoraLeida.BanderaRed) != 0 ? 1 : 0;
@@ -3447,6 +3472,7 @@ namespace DigLab.conexion
 
                             Equipo deAviso = fila(laboratorio, clave, TipoFilaEquipo.Equipo);
                             deAviso.Fila.Avisos++;
+                            deAviso.Fila.PorResolver += resuelta ? 0 : 1;
                             int ese;
                             deAviso.AvisosPorDia.TryGetValue(sesion.Fecha, out ese);
                             deAviso.AvisosPorDia[sesion.Fecha] = ese + 1;
@@ -3465,6 +3491,7 @@ namespace DigLab.conexion
                         : fila(laboratorio, claveDe(laboratorio, reporte.Equipo), TipoFilaEquipo.Equipo);
                     equipo.Fila.Fallas++;
                     equipo.Fila.DeDocentes++;
+                    equipo.Fila.PorResolver += reporte.Resuelta ? 0 : 1;
                     equipo.Fila.Hardware += reporte.Area == "hardware" ? 1 : 0;
                     equipo.Fila.Software += reporte.Area == "software" ? 1 : 0;
                     equipo.Fila.Red += reporte.Area == "red" ? 1 : 0;
@@ -3530,8 +3557,10 @@ namespace DigLab.conexion
                 int registraron = delFiltro.Count(e => e.Fila.Tipo == TipoFilaEquipo.Equipo && e.BitacorasRegistradas > 0);
                 List<FilaEquipo> conReporte = ordenadas.Where(e => EnElFiltroDeLaboratorio(e.LaboratorioId) && e.Tipo == TipoFilaEquipo.Equipo).ToList();
                 int repetidos = conReporte.Count(e => e.Repetido);
+                int porResolver = conReporte.Count(e => e.PorResolver > 0);
                 R.LineaEquipos = Contar(conReporte.Count, "equipo", "equipos") + " con fallas o avisos (" + Miles(registraron)
                     + (registraron == 1 ? " registró" : " registraron") + " en el periodo)"
+                    + (L.ConResueltas ? "; " + (porResolver == 0 ? "ninguno con algo por resolver" : Miles(porResolver) + " con algo por resolver") : "")
                     + (repetidos > 0 ? "; " + Miles(repetidos) + " con reportes en 2 días o más (en naranja)." : ".");
                 List<Equipo> deWindows = delFiltro.Where(e => e.Fila.EsNombreDeWindows && e.BitacorasRegistradas > 0).ToList();
                 if (deWindows.Count > 0)

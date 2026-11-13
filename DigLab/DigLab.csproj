@@ -152,6 +152,7 @@
     <Compile Include="conexion\CicloPreliminarDatos.cs" />
     <Compile Include="conexion\CicloPreliminarDatos.Aplicar.cs" />
     <Compile Include="conexion\CicloPreliminarDatos.Baja.cs" />
+    <Compile Include="conexion\CicloPreliminarDatos.Excel.cs" />
     <Compile Include="conexion\RevisionCiclo.cs" />
     <Compile Include="conexion\RevisionAplicacion.cs" />
     <Compile Include="Infraestructura\Inactividad.cs" />
@@ -185,6 +186,8 @@
     <Compile Include="conexion\FallasResueltasDatos.cs" />
     <Compile Include="conexion\SuspensionesDatos.cs" />
     <Compile Include="conexion\MemoriasEmergenciaDatos.cs" />
+    <Compile Include="conexion\ActualizacionesDatos.cs" />
+    <Compile Include="conexion\OrdenesEquiposDatos.cs" />
     <Compile Include="conexion\ReportesProfesorDatos.cs" />
     <Compile Include="conexion\SesionDeHoy.cs" />
     <Compile Include="conexion\AsistenciaDatos.cs" />
@@ -222,12 +225,14 @@
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Infraestructura\AppContexto.cs" />
+    <Compile Include="Infraestructura\Actualizador.cs" />
     <Compile Include="Infraestructura\CarpetaDatos.cs" />
     <Compile Include="Infraestructura\CadenaCifrada.cs" />
     <Compile Include="Infraestructura\NombreAnterior.cs" />
     <Compile Include="Infraestructura\DirectivasKiosco.cs" />
     <Compile Include="Infraestructura\Emergencia.cs" />
     <Compile Include="Infraestructura\LibroExcel.cs" />
+    <Compile Include="Infraestructura\LectorExcel.cs" />
     <Compile Include="Infraestructura\EnviadorBitacoras.cs" />
     <Compile Include="Infraestructura\AvisoApagado.cs" />
     <Compile Include="DialogoEmergencia.cs" />
@@ -316,6 +321,19 @@
     <Compile Include="DialogoMemoriasEmergencia.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="DialogoVersionesDigLab.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DialogoApagarEquipos.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DialogoVersionNueva.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DialogosExcel.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HorarioEnExcel.cs" />
     <Compile Include="DialogoReporteFalla.cs">
       <SubType>Form</SubType>
     </Compile>

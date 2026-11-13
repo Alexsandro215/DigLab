@@ -51,6 +51,16 @@
     los equipos. Con root deja ademas que digbit_consulta la lea (la persona
     responsable ve "Falta asignar"); con otro usuario, lo dice con un AVISO.
 
+    De la 26 a la 28 (fallas resueltas, suspensiones y memorias de emergencia)
+    crean una tabla cada una; con root dan permiso de solo lectura a
+    digbit_equipo (y a digbit_consulta la 26 y la 27).
+
+    La 29 (DigLab 1.3: versiones publicadas en la base y ordenes a los equipos,
+    "Actualizar ya" y "Apagar equipos") crea tres tablas y no toca nada mas.
+    Va ANTES de instalar DigLab 1.3 en los equipos. Con la cuenta teschi_otru
+    basta para crearlas; con root da ademas a digbit_equipo solo SELECT sobre
+    ellas (un equipo nunca debe poder publicar un instalador).
+
 .EXAMPLE
     .\migrar_bd.ps1 -Servidor 127.0.0.1 -Usuario root -ContrasenaAdmin "LaDelAdministrador"
     .\migrar_bd.ps1 -Servidor 10.0.0.5 -Usuario root -SoloRevisar
@@ -116,7 +126,8 @@ $migraciones = @(
     "25_horas_por_asignar.sql",
     "26_fallas_resueltas.sql",
     "27_suspensiones.sql",
-    "28_memorias_emergencia.sql"
+    "28_memorias_emergencia.sql",
+    "29_actualizaciones.sql"
 ) | ForEach-Object { Join-Path $carpetaDb $_ }
 
 # Repone la clave foranea que la 04 quita un momento, si una migracion se

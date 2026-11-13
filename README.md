@@ -1,5 +1,9 @@
 # DigLab 2.0
 
+> **⚠ Pendiente en la escuela (13/11/2026):** antes de instalar DigLab 1.3, hay que aplicar
+> `db/29_actualizaciones.sql` en la base de la escuela con `deploy/migrar_bd.ps1`. Los pasos
+> están en [CLAUDE.md](CLAUDE.md). El instalador 1.3 es `instalador/DigLab-Setup.exe`.
+
 Sistema de registro de bitácoras para los laboratorios de cómputo del TESCHI.
 Aplicación de escritorio **WinForms sobre .NET Framework 4.7.2** con base de
 datos **MySQL**.
@@ -374,12 +378,34 @@ y clases»**, en otra ventana). Crear uno con ella, cambiarle el nombre y borrar
 lista del paso 1.
 
 **«Crear horario nuevo...»** (en el paso 1) es el único botón para empezar uno. Pregunta cómo, y explica qué trae cada opción: copiar un horario
-completo, con clases y horas; solo las clases, sin horas, para acomodarlas de nuevo; o en
-blanco. El horario en uso se copia como está hoy, con lo que se le cambió durante el ciclo y
+completo, con clases y horas; solo las clases, sin horas, para acomodarlas de nuevo; en
+blanco; o **desde un Excel en cuadrícula** (abajo). El horario en uso se copia como está hoy, con lo que se le cambió durante el ciclo y
 lo que le falta asignar, también de los laboratorios deshabilitados; una plantilla o un
 horario que ya terminó, como se guardó. No hay que guardar aparte el horario de ahora: al
-aplicar otro, la casilla «Guardar también el horario de ahora» viene marcada, y «Dar de baja
-el horario actual...» siempre guarda una copia.
+aplicar otro, la casilla «Guardar también el horario de ahora» viene marcada.
+
+**El horario en Excel** (sin migración, `HorarioEnExcel.cs`): una hoja por laboratorio,
+con los días en columnas y las horas en renglones. Cada casilla tiene **una flecha para
+elegir la clase** de una lista, sin escribir: las clases del horario y las de Horarios que
+siguen vigentes, como «Marco Llinas · 6ISC11 · Redes de computadoras» (docente y grupo
+primero, porque Excel corta la lista al ancho de la columna; sin docentes de baja). Una
+que no esté se escribe: materia, grupo y docente, cada uno en su renglón (o «Materia /
+Grupo / Docente»); Excel avisa que no está en la lista y deja seguir. Una clase de dos
+horas va en cada hora o en casillas combinadas. Cada casilla con clase se pinta del
+**color de su docente** (el mismo de DigLab) con formato condicional, sin macros: la que
+empieza como una opción de la lista o cuyo último renglón es el nombre completo; al
+borrarla, el color se va. «Sin docente», en gris. En la preparación,
+**«Excel ▾»** (o «Más acciones» si no cabe) descarga el horario así, con lo que ya tiene,
+una hoja «Cómo llenarlo» y otra «Registrados» con los docentes, grupos y materias de
+DigLab, y carga uno ya lleno; también se puede **arrastrar el archivo** hasta el horario,
+o hasta el paso 2 vacío para crear uno con él. Solo valen los docentes, grupos y materias
+registrados: si algo no lo está, o una hora no se entiende, dice qué y en qué casilla
+(«¿es "Base de datos"?») y **no carga nada**. Si todo está bien, enseña por laboratorio lo
+que trae el Excel frente a lo que tiene el horario, las clases que se quitan y los choques,
+y al confirmar **reemplaza lo de esos laboratorios** en una sola transacción; los demás no
+cambian. Una clase que ya estaba (mismo docente, grupo y materia) conserva sus horas de
+otros laboratorios. Lee el .xlsx sin bibliotecas (`Infraestructura\LectorExcel.cs`); un
+.xls antiguo pide guardarlo como .xlsx. Nada se usa hasta aplicarlo en el paso 3.
 
 El horario nuevo empieza de una de dos formas:
 
@@ -423,15 +449,13 @@ o un laboratorio entero, simplemente no se vuelve a crear:
 - Un laboratorio que se queda así no queda deshabilitado: sigue en uso, sin clases,
   hasta que se le pongan o se aplique un horario que lo incluya.
 
-**Sustituir lo que vale hoy** lo hacen «Ahora mismo» y el botón «Dar de baja el horario
-actual...» (en los pasos 1 y 3, y en el 2 si no hay nada en preparación). El botón deja la
-escuela sin clases desde ahora, sin poner otro horario, y guarda antes una copia como
-plantilla («Horario antes de la baja del 04/11/2026»); para cambiar de horario no hace falta,
-porque «Ahora mismo» hace lo mismo y crea las clases nuevas en el mismo paso. Los dos piden
-la contraseña de la administración, no se deshacen, no necesitan migración y anotan un solo
-renglón en el historial (`conexion\CicloPreliminarDatos.Baja.cs`). Se niegan si hay un horario
-aplicado que todavía no empieza (primero hay que deshacerlo) o si hay registros con fecha
-posterior a hoy. Con cada clase que vale hoy:
+**Sustituir lo que vale hoy** lo hace «Ahora mismo»: el horario en uso solo se quita al
+aplicar otro. Hasta el 2026-11-12 también había un botón «Dar de baja el horario
+actual...», que dejaba todos los laboratorios sin clases sin poner otro horario; se quitó
+a pedido del usuario. Pide la contraseña de la administración, no se deshace, no necesita
+migración y anota un solo renglón en el historial (`conexion\CicloPreliminarDatos.Baja.cs`).
+Se niega si hay un horario aplicado que todavía no empieza (primero hay que deshacerlo) o
+si hay registros con fecha posterior a hoy. Con cada clase que vale hoy:
 
 | La clase | Qué le pasa |
 |---|---|
@@ -518,8 +542,8 @@ queda, su renglón también. Se anotan:
   campos que cambiaron;
 - laboratorios (alta, nombre, borrar, deshabilitar y habilitar) y su forma de
   entrar, también la de toda la escuela;
-- aplicar, deshacer o dar de baja un horario de Próximo ciclo, en un solo renglón, no
-  uno por clase.
+- aplicar o deshacer un horario de Próximo ciclo (y, hasta el 2026-11-12, darlo de baja),
+  en un solo renglón, no uno por clase.
 
 Nunca se escribe el código de una clase (la persona responsable de laboratorio también
 lee el historial): solo que cambió. Los renglones no se cambian ni se borran.
@@ -1585,6 +1609,7 @@ DigLab/
     AvisoApagado.cs            Antes de apagar: envía lo pendiente o avisa de que se perdería
     Log.cs                     Registro de diagnóstico (compartido con el vigilante)
     Permisos.cs                Lo que puede cambiar la sesión: la persona responsable de laboratorio (tipo 4), solo consulta
+    LibroExcel.cs, LectorExcel.cs   Escribir y leer libros de Excel (.xlsx) sin bibliotecas: la lista de asistencia y el horario en cuadrícula
     SesionActiva.cs            Archivo de traspaso DigLab ↔ vigilante (compartido)
     SesionEquipo.cs            Equipo liberado: bandeja, aviso, cierre de sesión
   conexion/                    Capa de acceso a datos
@@ -1601,7 +1626,8 @@ DigLab/
     EncargadosDatos.cs         Las personas responsables de laboratorio (tipo 4) para su sección
     CuentaDeConsulta.cs        La cuenta de MySQL de solo lectura con que trabaja la sesión de una persona responsable (db/18)
     LaboratoriosDeshabilitados.cs   Laboratorios deshabilitados: sus periodos en configuracion y qué no corre en ellos
-    CicloPreliminarDatos.cs, CicloPreliminarDatos.Aplicar.cs, CicloPreliminarDatos.Baja.cs   Próximo ciclo: las plantillas, y aplicar, deshacer y dar de baja un horario
+    CicloPreliminarDatos.cs, CicloPreliminarDatos.Aplicar.cs, CicloPreliminarDatos.Baja.cs   Próximo ciclo: las plantillas, y aplicar, deshacer y sustituir lo de hoy
+    CicloPreliminarDatos.Excel.cs   Próximo ciclo: lo registrado para leer un Excel y cargarlo en la preparación (todo o nada)
     RevisionCiclo.cs, RevisionAplicacion.cs   Lo que se revisa antes de aplicar: en rojo no deja, en ámbar avisa
     CatalogosDatos.cs          Carreras, semestres y grupos para los diálogos
     Esquema.cs                 Qué migraciones tiene la base (08 a 25), para no fallar si faltan
@@ -1645,6 +1671,7 @@ DigLab/
   GestionBitacorasAdministrador.cs   Bitácoras: sesiones con filtros, quién registró y PDF (también «Mis bitácoras» del panel docente)
   AdministrarHorarios.cs       Administración: Horarios por laboratorio (pestañas Horario semanal, Clases, Cambios de un día, Faltas y Próximo ciclo; choques de la semana)
   PestanaProximoCiclo.cs, PestanaAplicacion.cs   Horarios → Próximo ciclo: plantillas, preparación y aplicar con fechas
+  HorarioEnExcel.cs, DialogosExcel.cs   Próximo ciclo: el horario en Excel (la plantilla en cuadrícula, leerla contra lo registrado, qué corregir y qué cambia)
   ColoresProfesor.cs           Un color por docente (el elegido o uno automático), el mismo en Horarios, Docentes y el panel
   SelectorColorProfesor.cs     El selector de color del diálogo de docente: muestra, automático, paleta y "Otro..."
   Profesor_Principal.cs, TarjetasProfesor.cs   Docente: su código con las bitácoras de la clase, sus clases de ayer, hoy y mañana, y sus secciones

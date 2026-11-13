@@ -63,6 +63,45 @@ namespace DigLab
         }
 
         /// <summary>
+        /// DigLab.exe --buscar-actualizacion (el servicio DigLab.Vigilante, como SYSTEM): deja
+        /// descargada la version nueva publicada en la base, si la hay (Actualizador). Dice
+        /// lo que paso en una linea y en el codigo de salida.
+        /// </summary>
+        private static int BuscarActualizacion()
+        {
+            int codigo;
+            string detalle;
+            try
+            {
+                codigo = Actualizador.BuscarParaElEquipo(out detalle);
+            }
+            catch (Exception ex)
+            {
+                codigo = 2;
+                detalle = "Fallo inesperado: " + ex.Message;
+            }
+
+            Decir(detalle);
+            return codigo;
+        }
+
+        /// <summary>Una linea para quien lanzo DigLab sin ventana, en UTF-8 (como lo lee el vigilante).</summary>
+        private static void Decir(string linea)
+        {
+            try
+            {
+                using (StreamWriter salida = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false)))
+                {
+                    salida.WriteLine(linea);
+                }
+            }
+            catch (Exception)
+            {
+                // Sin salida a donde escribir: basta el codigo.
+            }
+        }
+
+        /// <summary>
         /// Punto de entrada principal para la aplicación.
         /// </summary>
         [STAThread]
@@ -76,6 +115,33 @@ namespace DigLab
             if (Array.IndexOf(Environment.GetCommandLineArgs(), ArgumentoCopiarMemorias) > 0)
             {
                 Environment.ExitCode = CopiarMemorias();
+                return;
+            }
+
+            // El vigilante: solo dejar descargada la version nueva publicada en la base (db/29).
+            if (Array.IndexOf(Environment.GetCommandLineArgs(), Actualizador.ArgumentoBuscar) > 0)
+            {
+                Environment.ExitCode = BuscarActualizacion();
+                return;
+            }
+
+            // El vigilante, cada minuto: si la administracion mando apagar los equipos (db/29).
+            if (Array.IndexOf(Environment.GetCommandLineArgs(), OrdenesEquiposDatos.ArgumentoRevisar) > 0)
+            {
+                string detalle;
+                int codigo;
+                try
+                {
+                    codigo = OrdenesEquiposDatos.RevisarParaElEquipo(out detalle);
+                }
+                catch (Exception ex)
+                {
+                    codigo = 1;
+                    detalle = "Fallo inesperado: " + ex.Message;
+                }
+
+                Decir(detalle);
+                Environment.ExitCode = codigo;
                 return;
             }
 

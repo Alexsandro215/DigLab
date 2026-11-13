@@ -19,8 +19,9 @@ namespace DigLab.conexion
     /// <summary>
     /// "Suspender acceso..." de Estudiantes: no puede iniciar sesion hasta una fecha,
     /// por una razon que ve al intentarlo. Vale desde el momento en que se aplica,
-    /// con el reloj del servidor, y al vencer el plazo vuelve a entrar sin que nadie
-    /// haga nada. Su cuenta sigue activa y no se le quita nada. Solo la administracion
+    /// con el reloj del servidor, y vence al empezar el dia en que termina el plazo
+    /// (desde el 2026-11-13; antes, a la misma hora en que se puso): entonces vuelve a
+    /// entrar sin que nadie haga nada. Su cuenta sigue activa y no se le quita nada. Solo la administracion
     /// suspende y quita; los renglones no se borran. La razon no va al historial
     /// (lo lee la persona responsable y se queda aunque la cuenta se anonimice) ni a
     /// la copia local de los equipos.
@@ -146,9 +147,12 @@ namespace DigLab.conexion
                         }
                     }
 
+                    // Hasta el inicio del dia en que termina, no a la hora en que se puso
+                    // (pedido del 2026-11-13): 3 dias puestos el lunes a las 15:00 vencen el
+                    // jueves a las 00:00. CURDATE() con la zona de la sesion (-06:00, Conexion).
                     using (MySqlCommand comando = new MySqlCommand(@"
                         INSERT INTO suspensiones (usuarios_idusuarios, desde, hasta, razon, creada_por)
-                        VALUES (@Id, NOW(), DATE_ADD(NOW(), INTERVAL @Dias DAY), @Razon, @Por)", conexion, transaccion))
+                        VALUES (@Id, NOW(), DATE_ADD(CURDATE(), INTERVAL @Dias DAY), @Razon, @Por)", conexion, transaccion))
                     {
                         comando.Parameters.AddWithValue("@Id", idAlumno);
                         comando.Parameters.AddWithValue("@Dias", dias);
@@ -171,9 +175,9 @@ namespace DigLab.conexion
                         Tabla = "usuarios",
                         RegistroId = idAlumno,
                         // Sin la razon ni su nombre: ver el resumen de arriba.
-                        Descripcion = "Acceso suspendido a la matrícula " + matricula + " por " + plazo + ", hasta el " + Fecha(hasta) + ".",
+                        Descripcion = "Acceso suspendido a la matrícula " + matricula + " por " + plazo + "; vuelve a entrar desde el " + Regreso(hasta) + ".",
                         Antes = HistorialCambios.Datos("Acceso", "Normal"),
-                        Despues = HistorialCambios.Datos("Acceso", "Suspendido", "Hasta", Fecha(hasta))
+                        Despues = HistorialCambios.Datos("Acceso", "Suspendido", "Vuelve a entrar", Regreso(hasta))
                     });
                     transaccion.Commit();
                 }
@@ -250,7 +254,7 @@ namespace DigLab.conexion
         /// <summary>El texto del aviso al que intenta entrar. La razon, solo si queda (al anonimizar se vacia).</summary>
         public static string TextoParaElEstudiante(Suspension suspension)
         {
-            return "Tu acceso a DigLab está suspendido hasta el " + Fecha(suspension.Hasta) + "."
+            return "Tu acceso a DigLab está suspendido. Podrás volver a entrar desde el " + Regreso(suspension.Hasta) + "."
                 + (string.IsNullOrWhiteSpace(suspension.Razon) ? "" : Environment.NewLine + Environment.NewLine + "Razón: " + suspension.Razon.Trim())
                 + Environment.NewLine + Environment.NewLine + "Si crees que es un error, acude a la administración de DigLab.";
         }
@@ -259,6 +263,27 @@ namespace DigLab.conexion
         public static string Fecha(DateTime fecha)
         {
             return fecha.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) + " a las " + fecha.ToString("HH:mm", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// Desde cuando vuelve a entrar, para "desde el ...": "sábado 14/11/2026" si vence al
+        /// empezar el dia (las de desde el 2026-11-13); las de antes, con su hora
+        /// ("14/11/2026 a las 15:30").
+        /// </summary>
+        public static string Regreso(DateTime hasta)
+        {
+            if (hasta.TimeOfDay != TimeSpan.Zero)
+            {
+                return Fecha(hasta);
+            }
+
+            return hasta.ToString("dddd", CultureInfo.GetCultureInfo("es-MX")) + " " + hasta.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>El dia en que vuelve a entrar si se suspende hoy por esos dias (el servidor lo calcula igual al guardar).</summary>
+        public static DateTime RegresoSiSeSuspende(DateTime hoyEnElServidor, int dias)
+        {
+            return hoyEnElServidor.Date.AddDays(dias);
         }
 
         private static Suspension Leer(MySqlDataReader lector)

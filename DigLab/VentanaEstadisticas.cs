@@ -79,6 +79,8 @@ namespace DigLab
         private static readonly Color VerdeTexto = Color.FromArgb(46, 125, 50);
         private static readonly Color VerdeOscuro = Color.FromArgb(27, 94, 32);
         private static readonly Color NaranjaTexto = Color.FromArgb(190, 85, 0);
+        // Lo ya resuelto (db/26), con el verde de Bitacoras y Estudiantes.
+        private static readonly Color VerdeResuelta = Color.FromArgb(0, 96, 55);
         private static readonly Color FondoTodos = Color.FromArgb(236, 246, 236);
         private static readonly Color FondoRepetido = Color.FromArgb(255, 240, 214);
         private static readonly Color BordeFicha = Color.FromArgb(215, 222, 215);
@@ -1138,6 +1140,18 @@ namespace DigLab
                 Existe = () => Con(PestanaEstadisticas.Equipos, r => r.ConAvisos),
                 Texto = e => EstadisticasDatos.Miles(e.Avisos), Clave = e => e.Avisos, ColorTexto = e => e.Avisos > 0 ? NaranjaTexto : (Color?)null,
                 AyudaDelTitulo = "Bitácoras de otros estudiantes del mismo laboratorio que avisaron que este equipo no tenía internet (una por bitácora)."
+            });
+            // Lo que sigue pendiente despues de "Resolver fallas..." de Bitacoras (db/26): las
+            // fallas y los avisos cuentan todos, pero esto es lo que falta atender.
+            t.Agregar(new Columna<FilaEquipo>
+            {
+                Nombre = "porresolver", Titulo = "Por resolver", Ancho = 85, Derecha = true, PrimeroDescendente = true,
+                Existe = () => Con(PestanaEstadisticas.Equipos, r => r.ConResueltas),
+                Texto = e => e.PorResolver > 0 ? EstadisticasDatos.Miles(e.PorResolver) : "✓ Ninguna",
+                Clave = e => e.PorResolver,
+                ColorTexto = e => e.PorResolver > 0 ? NaranjaTexto : VerdeResuelta,
+                AyudaDelTitulo = "De sus fallas, reportes de docentes y avisos sin internet, los que nadie ha dado por resueltos en Bitácoras "
+                    + "(«Resolver fallas...»). Con ✓, ya se atendió todo lo de este periodo."
             });
             t.Agregar(new Columna<FilaEquipo>
             {
@@ -3953,6 +3967,12 @@ namespace DigLab
                 titulos.Add("Avisos sin internet");
             }
 
+            bool conResueltas = r.ConResueltas;
+            if (conResueltas)
+            {
+                titulos.Add("Por resolver");
+            }
+
             titulos.AddRange(new[] { "Días con reporte", "Último reporte", "Hora del último reporte", "Lo último que reportaron" });
             renglon(titulos);
             foreach (FilaEquipo e in tEquipos.Visibles)
@@ -3971,6 +3991,11 @@ namespace DigLab
                 if (conAvisos)
                 {
                     campos.Add(N(e.Avisos));
+                }
+
+                if (conResueltas)
+                {
+                    campos.Add(N(e.PorResolver));
                 }
 
                 campos.AddRange(new[]

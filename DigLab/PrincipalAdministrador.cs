@@ -251,7 +251,8 @@ namespace DigLab
             lblSesion.Size = new Size(240, TextRenderer.MeasureText("Ág", lblSesion.Font).Height);
             lblSesion.Location = new Point(titulo.Right + 16, titulo.Top + Ascenso(titulo.Font) - Ascenso(lblSesion.Font));
             // El texto entero, aunque ColocarCabecera lo acorte.
-            Ayuda(lblSesion, "Sesión iniciada como " + usuarioSesion + ".");
+            Ayuda(lblSesion, "Sesión iniciada como " + usuarioSesion + ". DigLab "
+                + ActualizacionesDatos.Mostrar(ActualizacionesDatos.VersionInstalada) + ".");
 
             // Su propia cuenta, junto a la sesion: el encargado de laboratorio, que en
             // lo demas solo consulta, tambien cambia ahi su correo y su contrasena.

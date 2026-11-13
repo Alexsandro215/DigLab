@@ -655,6 +655,8 @@ namespace DigLab
         private const int AltoAvisoCorreo = 18;
         // Editar a un estudiante que entra con el SIIA: en lugar de la contrasena, una nota.
         private readonly bool contrasenaDelSiia;
+        // Editar a un estudiante con el SIIA encendido en Ajustes: tampoco el semestre.
+        private readonly bool alumnoConSiia;
         // Tres renglones: la del docente ("...(Docentes, «Enlazar...»).") con 50 se cortaba.
         private const int AltoNotaSiia = 62;
         private Label lblSinCorreo;
@@ -709,10 +711,14 @@ namespace DigLab
             // se cambia. Estudiantes al editarlos (no se registran: su cuenta se crea
             // sola); docentes al registrarlos y al editarlos (entran con su numero de
             // empleado, su contrasena y su NIP, y la administracion los enlaza).
+            // Desde el 2026-11-13, un estudiante nunca: "Quitar contrasena nueva, repitela,
+            // asi como correo para recuperar contrasena" (el SIIA lo maneja todo; DigLab
+            // solo lo consulta). Sin el SIIA en Ajustes conserva el semestre.
             if (!autoregistro && (EsAlumno || EsProfesor))
             {
                 ConfiguracionSiia siia = InicioConSiia.LeerSinFallar();
-                contrasenaDelSiia = EsAlumno ? existente != null && siia.Estudiantes : siia.Docentes;
+                contrasenaDelSiia = EsAlumno ? existente != null : siia.Docentes;
+                alumnoConSiia = EsAlumno && existente != null && siia.Estudiantes;
             }
             conCodigo = datosProfesores != null && datosProfesores.CodigoPorProfesor;
             ProfesorInfo profesor = existente as ProfesorInfo;
@@ -792,6 +798,15 @@ namespace DigLab
         /// </summary>
         private bool SoloLoDelSiia
         {
+            get { return alumnoConSiia; }
+        }
+
+        /// <summary>
+        /// Editar a un estudiante, con o sin el SIIA: sin el correo para recuperar la
+        /// contrasena (la suya es la del SIIA). El que ya tuviera se conserva al guardar.
+        /// </summary>
+        private bool SinCorreo
+        {
             get { return EsAlumno && contrasenaDelSiia; }
         }
 
@@ -840,7 +855,7 @@ namespace DigLab
 
             txtIdentificador = Campo(char.ToUpper(nombreIdentificador[0]) + nombreIdentificador.Substring(1) + " *", 24, y, 180);
             txtIdentificador.MaxLength = autoregistro ? 10 : 30;
-            if (SoloLoDelSiia)
+            if (SinCorreo)
             {
                 // Sin caja: guarda el que ya tuviera (TerminarDialogo), como las contrasenas.
                 txtCorreo = new TextBox();
@@ -903,9 +918,15 @@ namespace DigLab
             {
                 if (!SoloLoDelSiia)
                 {
-                    AgregarCarrera(24, y, 360);
-                    Controls.Add(EstiloHorarios.CrearEtiqueta("Semestre", new Point(400, y)));
-                    cboSemestre = EstiloHorarios.CrearCombo(new Point(400, y + 26), 120);
+                    // Sin correo, la carrera ya esta junto a la matricula: el semestre, solo.
+                    int xSemestre = SinCorreo ? 24 : 400;
+                    if (!SinCorreo)
+                    {
+                        AgregarCarrera(24, y, 360);
+                    }
+
+                    Controls.Add(EstiloHorarios.CrearEtiqueta("Semestre", new Point(xSemestre, y)));
+                    cboSemestre = EstiloHorarios.CrearCombo(new Point(xSemestre, y + 26), 120);
                     Controls.Add(cboSemestre);
                     y += 66;
                 }
@@ -1274,7 +1295,7 @@ namespace DigLab
 
             string correo = txtCorreo.Text.Trim();
             // Sin la caja no se puede corregir: uno de antes mal escrito no impide guardar lo demas.
-            string problemaCorreo = SoloLoDelSiia ? null : ReglasCuenta.ProblemaDeCorreo(correo);
+            string problemaCorreo = SinCorreo ? null : ReglasCuenta.ProblemaDeCorreo(correo);
             if (problemaCorreo != null)
             {
                 Marcar(txtCorreo, problemaCorreo, errores, ref primero);

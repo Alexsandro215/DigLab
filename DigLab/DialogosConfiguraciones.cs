@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 using DrawingFont = System.Drawing.Font;
@@ -254,6 +255,11 @@ namespace DigLab
         private readonly RadioButton rbCopiar;
         private readonly RadioButton rbClases;
         private readonly RadioButton rbBlanco;
+        // Desde un Excel en cuadricula (pedido del 2026-11-12).
+        private readonly RadioButton rbExcel;
+        private readonly Panel panelExcel;
+        private readonly Label lblArchivoExcel;
+        private string rutaExcel;
         private readonly ComboBox cboConfiguracion;
         private readonly Label lblNombre;
         private readonly TextBox txtNombre;
@@ -301,11 +307,24 @@ namespace DigLab
         /// <summary>Fallo al crear (se dijo aqui): al cancelar, la pestana vuelve a leer.</summary>
         public bool HuboFallo { get; private set; }
 
+        /// <summary>Se creo con un Excel: lo que se cargo (null si no fue con Excel o si fallo al cargarlo).</summary>
+        public ResultadoCargaExcel ExcelCargado { get; private set; }
+
+        /// <summary>Se creo en blanco pero el Excel no se pudo cargar: por que (para la linea de estado).</summary>
+        public string FalloDelExcel { get; private set; }
+
+        /// <summary>El nombre del archivo de Excel con el que se creo, o null.</summary>
+        public string ArchivoExcel
+        {
+            get { return rbExcel.Checked && rutaExcel != null ? Path.GetFileName(rutaExcel) : null; }
+        }
+
         /// <param name="configuraciones">Las guardadas y las aplicadas, de donde se puede copiar.</param>
         /// <param name="borrador">La que ya esta en preparacion, o null: si hay una, se descarta (lo pregunta).</param>
         /// <param name="elegida">La plantilla que se propone copiar (la elegida en la lista).</param>
+        /// <param name="excel">Un Excel que se solto en la pestana: ya elegido, con "Desde un Excel".</param>
         public DialogoCrearHorario(CicloPreliminarDatos datos, DateTime hoy, List<CicloPreliminar> configuraciones,
-            CicloPreliminar borrador, int? elegida, Func<int> idAdministrador)
+            CicloPreliminar borrador, int? elegida, Func<int> idAdministrador, string excel = null)
         {
             this.datos = datos;
             this.idAdministrador = idAdministrador;
@@ -344,6 +363,27 @@ namespace DigLab
                 "De la plantilla que elijas, trae cada docente con su materia y grupo; tú pones las horas." + sinNinguno, cboConfiguracion);
             rbBlanco = AgregarOpcion("En blanco",
                 "Empieza vacío: agregas los docentes, las clases y las horas.", null);
+
+            panelExcel = new Panel { Size = new Size(AnchoDialogo - XDetalle - XOpcion, 62) };
+            Button btnElegirExcel = EstiloHorarios.CrearBoton("Elegir el archivo...", new Point(0, 0), new Size(170, 32));
+            btnElegirExcel.Click += (s, e) => ElegirExcel();
+            lblArchivoExcel = PiezasConfiguracion.Texto("Ningún archivo elegido.", new Point(180, 7), new Size(panelExcel.Width - 180, 20), 9.5F, PiezasConfiguracion.TextoGris);
+            lblArchivoExcel.AutoEllipsis = true;
+            LinkLabel lnkPlantilla = new LinkLabel
+            {
+                AutoSize = true,
+                Font = new DrawingFont("Century Gothic", 9F),
+                Location = new Point(0, 40),
+                Text = "Descargar la plantilla para llenarla (una hoja por laboratorio)..."
+            };
+            lnkPlantilla.LinkClicked += (s, e) => DescargarPlantilla();
+            panelExcel.Controls.Add(btnElegirExcel);
+            panelExcel.Controls.Add(lblArchivoExcel);
+            panelExcel.Controls.Add(lnkPlantilla);
+            Controls.Add(panelExcel);
+            rbExcel = AgregarOpcion("Desde un Excel en cuadrícula",
+                "Una hoja por laboratorio, con los días y las horas; en cada casilla la materia, el grupo y la persona docente registrados. "
+                + "Si algo no está registrado, dice qué y en qué casilla, y no crea nada.", panelExcel);
 
             lblNombre = EstiloHorarios.CrearEtiqueta("Nombre", Point.Empty);
             txtNombre = EstiloHorarios.CrearTexto(Point.Empty, 300);
@@ -384,8 +424,77 @@ namespace DigLab
                 rbBlanco.Checked = true;
             }
 
+            if (!string.IsNullOrEmpty(excel))
+            {
+                PonerExcel(excel);
+                rbExcel.Checked = true;
+            }
+
             Acomodar();
-            ActiveControl = hayDeDonde ? (Control)cboConfiguracion : txtNombre;
+            ActiveControl = rbExcel.Checked ? (Control)txtNombre : hayDeDonde ? (Control)cboConfiguracion : txtNombre;
+        }
+
+        private void PonerExcel(string ruta)
+        {
+            rutaExcel = ruta;
+            lblArchivoExcel.Text = Path.GetFileName(ruta);
+            lblArchivoExcel.ForeColor = Color.Black;
+            if (txtNombre.Text == CicloPreliminarDatos.NombrePreparacion)
+            {
+                string nombre = Path.GetFileNameWithoutExtension(ruta).Trim();
+                if (CicloPreliminarDatos.ErrorDeNombre(nombre) == null)
+                {
+                    txtNombre.Text = nombre;
+                }
+            }
+        }
+
+        private void ElegirExcel()
+        {
+            using (OpenFileDialog dialogo = new OpenFileDialog
+            {
+                Title = "Elegir el Excel con el horario",
+                Filter = "Libro de Excel (*.xlsx)|*.xlsx;*.xlsm|Todos los archivos (*.*)|*.*",
+                CheckFileExists = true
+            })
+            {
+                if (dialogo.ShowDialog(this) == DialogResult.OK)
+                {
+                    PonerExcel(dialogo.FileName);
+                    rbExcel.Checked = true;
+                    MostrarError("");
+                }
+            }
+        }
+
+        /// <summary>La plantilla en blanco: una hoja por laboratorio en uso y la de lo registrado.</summary>
+        private void DescargarPlantilla()
+        {
+            string nombre = string.IsNullOrWhiteSpace(txtNombre.Text) ? CicloPreliminarDatos.NombrePreparacion : txtNombre.Text.Trim();
+            byte[] libro;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                libro = HorarioEnExcel.Crear(null, datos.LeerCatalogosDeHorario(), nombre);
+            }
+            catch (Exception ex)
+            {
+                MostrarError(PiezasConfiguracion.TextoDeFallo("DialogoCrearHorario.DescargarPlantilla", "No se pudo preparar la plantilla de Excel", ex));
+                return;
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+
+            string guardado = ExcelDeHorario.Guardar(this, libro, nombre);
+            if (guardado != null)
+            {
+                PonerExcel(guardado);
+                rbExcel.Checked = true;
+                MostrarError("");
+                lblArchivoExcel.Text = Path.GetFileName(guardado) + " (llénalo, guárdalo y pulsa «Crear»)";
+            }
         }
 
         /// <summary>Si hoy se da alguna clase. Si no se puede leer, el dialogo abre igual, sin esa opcion.</summary>
@@ -450,6 +559,7 @@ namespace DigLab
             int y = 116;
             int orden = 0;
             cboConfiguracion.Visible = rbCopiar.Checked || rbClases.Checked;
+            panelExcel.Visible = rbExcel.Checked;
             // Las opciones seguidas: el combo en medio atrapaba las flechas y sin raton no se llegaba a las demas.
             foreach (OpcionDeInicio opcion in opciones)
             {
@@ -520,6 +630,12 @@ namespace DigLab
                 return;
             }
 
+            if (rbExcel.Checked)
+            {
+                CrearConExcel();
+                return;
+            }
+
             FuentePreparacion fuente;
             string deDonde = null;
             if (rbBlanco.Checked)
@@ -572,6 +688,106 @@ namespace DigLab
             {
                 Cursor = Cursors.Default;
             }
+        }
+
+        /// <summary>
+        /// "Desde un Excel": lo lee y lo revisa contra lo registrado antes de crear nada; con
+        /// algo por corregir lo dice (DialogoProblemasExcel) y no crea. Si todo esta bien, crea
+        /// el horario en blanco y le carga el Excel.
+        /// </summary>
+        private void CrearConExcel()
+        {
+            if (rutaExcel == null)
+            {
+                MostrarError("Elige el archivo de Excel (o descarga la plantilla para llenarla).");
+                return;
+            }
+
+            string archivo = Path.GetFileName(rutaExcel);
+            LecturaDeHorario lectura;
+            string error;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                lectura = ExcelDeHorario.Leer(rutaExcel, datos, null, out error);
+            }
+            catch (Exception ex)
+            {
+                MostrarError(PiezasConfiguracion.TextoDeFallo("DialogoCrearHorario.LeerExcel", "No se pudo revisar el Excel", ex));
+                return;
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+
+            if (lectura == null)
+            {
+                MostrarError(error);
+                return;
+            }
+
+            if (!lectura.SePuedeCargar)
+            {
+                using (DialogoProblemasExcel problemas = new DialogoProblemasExcel(archivo, lectura))
+                {
+                    problemas.ShowDialog(this);
+                }
+
+                MostrarError("No se creó nada: «" + archivo + "» tiene " + (lectura.Problemas.Count == 1 ? "una cosa" : lectura.Problemas.Count + " cosas")
+                    + " por corregir. Corrígelo, guárdalo y vuelve a pulsar «" + btnCrear.Text + "».");
+                return;
+            }
+
+            // Con choques o laboratorios deshabilitados, que lo vea antes; si no, «Crear» basta.
+            if (lectura.Avisos.Count > 0)
+            {
+                using (DialogoConfirmarExcel confirmar = new DialogoConfirmarExcel(archivo, txtNombre.Text.Trim(), lectura, true))
+                {
+                    if (confirmar.ShowDialog(this) != DialogResult.OK)
+                    {
+                        return;
+                    }
+                }
+            }
+
+            if (borrador != null && !DialogoConfirmacion.Preguntar(this, "Descartar el horario en preparación", "¿Descartar «" + borrador.Nombre + "»?",
+                PiezasConfiguracion.SeBorraCon(borrador.Clases) + ". Las plantillas guardadas y el horario que se usa no cambian.", "Descartar"))
+            {
+                return;
+            }
+
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                Resultado = datos.Preparar(txtNombre.Text.Trim(), FuentePreparacion.EnBlanco(), borrador != null, idAdministrador());
+            }
+            catch (Exception ex)
+            {
+                Cursor = Cursors.Default;
+                HuboFallo = true;
+                MostrarError(PiezasConfiguracion.TextoDeFallo("DialogoCrearHorario.CrearConExcel", "No se pudo crear el horario", ex));
+                return;
+            }
+
+            try
+            {
+                ExcelCargado = datos.CargarDesdeExcel(Resultado.CicloId, lectura.Laboratorios.Select(l => l.Id).ToList(), lectura.Clases, idAdministrador());
+            }
+            catch (Exception ex)
+            {
+                // Ya se creo (en blanco): se queda, y la pestana dice que el Excel no entro.
+                FalloDelExcel = PiezasConfiguracion.TextoDeFallo("DialogoCrearHorario.CargarExcel",
+                    "Se creó «" + Resultado.Nombre + "» en blanco, pero no se pudo cargar el Excel", ex);
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+
+            DeDonde = "de «" + archivo + "»";
+            SinHoras = false;
+            DialogResult = DialogResult.OK;
         }
     }
 

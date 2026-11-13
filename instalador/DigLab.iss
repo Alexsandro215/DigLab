@@ -83,6 +83,9 @@ Name: "{autodesktop}\DigLab"; Filename: "{app}\DigLab.exe"; WorkingDir: "{app}";
 [Run]
 ; Como el usuario y no como administrador: elevado, sus registros y datos irian a otro sitio.
 Filename: "{app}\DigLab.exe"; Description: "Abrir DigLab"; Flags: postinstall nowait skipifsilent runasoriginaluser; Check: not EsKiosco
+; Cuando DigLab se actualizo desde la base (db/29): lo lanzo en silencio con /ABRIRDIGLAB y
+; se cerro para dejarse reemplazar; aqui se vuelve a abrir solo, como quien lo usaba.
+Filename: "{app}\DigLab.exe"; Flags: nowait runasoriginaluser; Check: AbrirTrasActualizar
 
 [UninstallDelete]
 ; connections.config y demas los escribe el configurador: el desinstalador no los conoce.
@@ -190,6 +193,13 @@ end;
 function EsKiosco: Boolean;
 begin
   Result := ModoElegido = ModoKiosco;
+end;
+
+// DigLab se actualizo desde la base (Actualizador): el instalador corre en silencio y,
+// fuera del kiosco, vuelve a abrir DigLab al terminar.
+function AbrirTrasActualizar: Boolean;
+begin
+  Result := WizardSilent and (not EsKiosco) and (Pos('/ABRIRDIGLAB', Uppercase(GetCmdTail)) > 0);
 end;
 
 function CuentaElegida: String;
@@ -780,10 +790,13 @@ begin
 end;
 
 // Un kiosco arranca como kiosco despues de reiniciar, tambien al actualizar, que le cierra
-// la sesion: el Finalizar lo ofrece.
+// la sesion: el Finalizar lo ofrece, y en silencio (la actualizacion desde la base que lanza
+// el vigilante, /VERYSILENT) reinicia solo. Sin mirar ConfiguradoBien: Inno pregunta esto
+// ANTES de ssPostInstall, cuando el configurador aun no corre (con "and ConfiguradoBien" nunca
+// se ofrecia; visto en la VM el 2026-11-13).
 function NeedRestart: Boolean;
 begin
-  Result := EsKiosco and ConfiguradoBien;
+  Result := EsKiosco;
 end;
 
 // ---------------------------------------------------------------------------

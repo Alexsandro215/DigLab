@@ -155,8 +155,10 @@ namespace DigLab
             if (Kiosco.Activo)
             {
                 ConstruirInfoKiosco();
+                ConstruirIndicadorInternet();
             }
 
+            ConstruirVersion();
             ActualizarSubtitulo();
             Resize += (s, e) => Colocar();
             Shown += (s, e) => Colocar();
@@ -346,6 +348,12 @@ namespace DigLab
                 y = lnkAvisoNip.Top + lnkAvisoNip.PreferredHeight + 10;
             }
 
+            if (lblVersionTarjeta != null)
+            {
+                lblVersionTarjeta.SetBounds(Margen, y - 4, ancho, 18);
+                y = lblVersionTarjeta.Bottom + 2;
+            }
+
             int alto = y + 8;
             int libre = ClientSize.Height - AltoFranja();
             panelTarjeta.SetBounds((ClientSize.Width - AnchoTarjeta) / 2, Math.Max(Orilla + 8, (libre - alto) / 2), AnchoTarjeta, alto);
@@ -527,6 +535,116 @@ namespace DigLab
             lblEquipo.Location = new Point(40, 36);
             lblHora.Location = new Point(34, lblEquipo.Text.Length > 0 ? 62 : 36);
             lblFecha.Location = new Point(42, lblHora.Bottom + 2);
+            if (indicadorInternet != null)
+            {
+                indicadorInternet.Location = new Point(ClientSize.Width - indicadorInternet.Width - 36, 36);
+            }
+
+            if (lblVersionKiosco != null)
+            {
+                lblVersionKiosco.Location = new Point(40, ClientSize.Height - AltoFranja() - lblVersionKiosco.Height - 24);
+            }
+        }
+
+        // --- Kiosco: con o sin internet (pedido del 2026-11-13) ---------------------
+
+        private IndicadorInternet indicadorInternet;
+        // La ultima vez que se pregunto al servidor (RevisarVersion, cada minuto): respondio.
+        private bool servidorRespondio = true;
+        // Lo ultimo que se dejo en el log: "Sin internet".
+        private bool sinInternetAnotado;
+
+        /// <summary>
+        /// Arriba a la derecha: "Con internet" o "Sin internet", con su icono. Sin internet es
+        /// sin red en el equipo, o con red pero sin respuesta del servidor de DigLab (lo que
+        /// el laboratorio necesita); al pasar el raton dice cual. Se mira cada 5 s (la red y
+        /// el modo sin conexion, que no cuestan) y el servidor, cada minuto, con la revision
+        /// de la version; si la red cambia, en ese momento.
+        /// </summary>
+        private void ConstruirIndicadorInternet()
+        {
+            indicadorInternet = new IndicadorInternet();
+            Controls.Add(indicadorInternet);
+            indicadorInternet.BringToFront();
+            System.Net.NetworkInformation.NetworkChange.NetworkAvailabilityChanged += AlCambiarLaRed;
+            FormClosed += (s, e) => System.Net.NetworkInformation.NetworkChange.NetworkAvailabilityChanged -= AlCambiarLaRed;
+            ActualizarIndicadorInternet();
+        }
+
+        private void AlCambiarLaRed(object sender, System.Net.NetworkInformation.NetworkAvailabilityEventArgs e)
+        {
+            try
+            {
+                if (IsHandleCreated && !IsDisposed)
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        ActualizarIndicadorInternet();
+                        // Volvio la red: que no espere al minuto para decir si hay servidor.
+                        RevisarVersion();
+                    }));
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // La ventana ya no esta.
+            }
+        }
+
+        private void ActualizarIndicadorInternet()
+        {
+            if (indicadorInternet == null || IsDisposed)
+            {
+                return;
+            }
+
+            bool red = System.Net.NetworkInformation.NetworkInterface.GetIsNetworkAvailable();
+            bool servidor = servidorRespondio && !SinConexion.Activo;
+            string ayuda = !red ? "Este equipo no tiene red: revisa el cable o el wifi."
+                : !servidor ? "Hay red, pero no responde el servidor de DigLab: los estudiantes entran con la copia del horario de este equipo."
+                : "Conectado al servidor de DigLab.";
+            bool conInternet = red && servidor;
+            indicadorInternet.Poner(conInternet, ayuda);
+            // Al log solo cuando cambia: cada 5 s lo llenaria.
+            if (conInternet == sinInternetAnotado)
+            {
+                sinInternetAnotado = !conInternet;
+                if (conInternet)
+                {
+                    Log.Info("Kiosco: Con internet otra vez.");
+                }
+                else
+                {
+                    Log.Aviso("Kiosco: Sin internet (" + (!red ? "el equipo no tiene red" : SinConexion.Activo ? "modo sin conexion" : "el servidor no respondio") + ").");
+                }
+            }
+
+            ColocarInfoKiosco();
+        }
+
+        // --- La version de este DigLab, para saber al instalar que ya quedo -----------
+
+        private Label lblVersionTarjeta;
+        private Label lblVersionKiosco;
+
+        /// <summary>
+        /// "DigLab 1.3.0" (pedido del 2026-11-13: "mostrar la version para cerciorarse cuando
+        /// la instalen que ya esta"): en el kiosco, abajo a la izquierda de la pantalla; en
+        /// los demas equipos, al pie de la tarjeta.
+        /// </summary>
+        private void ConstruirVersion()
+        {
+            string texto = "DigLab " + ActualizacionesDatos.Mostrar(ActualizacionesDatos.VersionInstalada);
+            if (Kiosco.Activo)
+            {
+                lblVersionKiosco = TextoFondo(new Font("Century Gothic", 9.5F));
+                lblVersionKiosco.ForeColor = Color.FromArgb(215, 235, 222);
+                lblVersionKiosco.Text = texto;
+                return;
+            }
+
+            lblVersionTarjeta = TextoTarjeta(new Font("Century Gothic", 8.5F), Color.FromArgb(140, 146, 142), ContentAlignment.MiddleCenter);
+            lblVersionTarjeta.Text = texto;
         }
 
         // --- Ventana sin borde: se arrastra desde el fondo -------------------------
@@ -548,6 +666,115 @@ namespace DigLab
 
             ReleaseCapture();
             SendMessage(Handle, WM_NCLBUTTONDOWN, new IntPtr(HT_CAPTION), IntPtr.Zero);
+        }
+    }
+
+    /// <summary>
+    /// La pastilla de arriba a la derecha del kiosco: el icono del wifi y "Con internet",
+    /// o tachado en rojo y "Sin internet". Se dibuja aqui (sin imagenes), sobre el fondo
+    /// verde, que se ve alrededor (fondo transparente).
+    /// </summary>
+    internal sealed class IndicadorInternet : Control
+    {
+        private static readonly Color FondoCon = Color.FromArgb(70, 0, 40, 20);
+        private static readonly Color FondoSin = Color.FromArgb(225, 176, 32, 32);
+        private readonly ToolTip ayuda = new ToolTip();
+        private bool conectado = true;
+
+        public IndicadorInternet()
+        {
+            SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            BackColor = Color.Transparent;
+            ForeColor = Color.White;
+            Font = new Font("Century Gothic", 11F, FontStyle.Bold);
+            TabStop = false;
+            AccessibleRole = AccessibleRole.StaticText;
+            Medir();
+        }
+
+        public void Poner(bool conInternet, string detalle)
+        {
+            bool cambia = conectado != conInternet;
+            conectado = conInternet;
+            AccessibleName = Texto + ". " + detalle;
+            ayuda.SetToolTip(this, detalle);
+            if (cambia)
+            {
+                Medir();
+                Invalidate();
+            }
+        }
+
+        private string Texto
+        {
+            get { return conectado ? "Con internet" : "Sin internet"; }
+        }
+
+        private void Medir()
+        {
+            Size texto = TextRenderer.MeasureText(Texto, Font);
+            Size = new Size(14 + 26 + 8 + texto.Width + 12, 40);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                ayuda.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            Rectangle pastilla = new Rectangle(0, 0, Width - 1, Height - 1);
+            using (GraphicsPath camino = Redondeado(pastilla, Height / 2))
+            using (SolidBrush fondo = new SolidBrush(conectado ? FondoCon : FondoSin))
+            {
+                g.FillPath(fondo, camino);
+            }
+
+            // El wifi: tres arcos y un punto, con su centro abajo.
+            PointF centro = new PointF(14 + 13, Height / 2F + 8);
+            Color trazo = conectado ? Color.White : Color.FromArgb(150, 255, 255, 255);
+            using (Pen pluma = new Pen(trazo, 2.4F) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            using (SolidBrush punto = new SolidBrush(trazo))
+            {
+                foreach (float radio in new[] { 5.5F, 10.5F, 15.5F })
+                {
+                    g.DrawArc(pluma, centro.X - radio, centro.Y - radio, radio * 2, radio * 2, 225, 90);
+                }
+
+                g.FillEllipse(punto, centro.X - 2.2F, centro.Y - 2.2F, 4.4F, 4.4F);
+            }
+
+            if (!conectado)
+            {
+                // Tachado: una raya blanca de lado a lado del icono.
+                using (Pen raya = new Pen(Color.White, 2.6F) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                {
+                    g.DrawLine(raya, centro.X - 12, centro.Y - 17, centro.X + 12, centro.Y + 2);
+                }
+            }
+
+            TextRenderer.DrawText(g, Texto, Font, new Rectangle(14 + 26 + 8, 0, Width - (14 + 26 + 8), Height), ForeColor,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding);
+        }
+
+        private static GraphicsPath Redondeado(Rectangle r, int radio)
+        {
+            int d = Math.Min(radio * 2, Math.Min(r.Width, r.Height));
+            GraphicsPath camino = new GraphicsPath();
+            camino.AddArc(r.X, r.Y, d, d, 180, 90);
+            camino.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            camino.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            camino.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            camino.CloseFigure();
+            return camino;
         }
     }
 }

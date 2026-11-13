@@ -55,6 +55,7 @@ namespace DigLab.Infraestructura
             {
                 string titulo = "Sin conexión";
                 string problema = ComprobarEntorno();
+                bool conServidor = problema == null;
                 if (problema == null)
                 {
                     titulo = "Equipo sin laboratorio";
@@ -75,6 +76,15 @@ namespace DigLab.Infraestructura
 
                 if (problema == null)
                 {
+                    // Una version nueva publicada en la base (db/29): fuera del kiosco se
+                    // ofrece antes del login; si se acepta, DigLab se cierra para que el
+                    // instalador lo reemplace (y lo vuelve a abrir). En el kiosco la instala
+                    // el vigilante cuando nadie usa el equipo.
+                    if (conServidor && Actualizador.OfrecerSiHay())
+                    {
+                        return false;
+                    }
+
                     IniciarVigilanciaConexion();
                     MostrarLogin();
                     return true;

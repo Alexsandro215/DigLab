@@ -216,7 +216,7 @@ namespace DigLab.conexion
                 return false;
             }
 
-            Log.Info("Inicio de sesion rechazado: '" + numeroIdentificador + "' tiene el acceso suspendido hasta " + SuspensionesDatos.Fecha(suspension.Hasta) + ".");
+            Log.Info("Inicio de sesion rechazado: '" + numeroIdentificador + "' tiene el acceso suspendido; vuelve a entrar desde el " + SuspensionesDatos.Regreso(suspension.Hasta) + ".");
             MessageBox.Show(SuspensionesDatos.TextoParaElEstudiante(suspension), "Acceso suspendido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return true;
         }

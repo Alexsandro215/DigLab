@@ -296,6 +296,26 @@ namespace DigLab.conexion
             return TablaMemoriasEmergencia.Existe(conexion, transaccion);
         }
 
+        private static readonly Columna TablaActualizaciones = new Columna("actualizaciones_trozos", "datos",
+            "La base no tiene las tablas actualizaciones y actualizaciones_trozos (o este usuario no puede leerlas): "
+            + "falta db/29_actualizaciones.sql. Hasta aplicarla, DigLab no busca versiones nuevas en la base.");
+
+        /// <summary>True si las versiones de DigLab se publican en la base y este equipo las ve (db/29_actualizaciones.sql).</summary>
+        public static bool Actualizaciones(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablaActualizaciones.Existe(conexion, transaccion);
+        }
+
+        private static readonly Columna TablaOrdenesEquipos = new Columna("ordenes_equipos", "caduca_en",
+            "La base no tiene la tabla ordenes_equipos (o este usuario no puede leerla): falta aplicar otra vez "
+            + "db/29_actualizaciones.sql. Hasta entonces, «Actualizar ya» no llega a los equipos (se actualizan solos en 10 minutos).");
+
+        /// <summary>True si la administracion puede mandar ordenes a los equipos ("actualizar ya") y este equipo las ve (db/29).</summary>
+        public static bool OrdenesEquipos(MySqlConnection conexion, MySqlTransaction transaccion = null)
+        {
+            return TablaOrdenesEquipos.Existe(conexion, transaccion);
+        }
+
         private static bool usoLibre;
         private static bool avisadoUsoLibre;
         private static readonly NoReciente sinUsoLibre = new NoReciente();

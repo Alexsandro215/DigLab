@@ -527,8 +527,8 @@ namespace DigLab
                 string resto = estudiantesConSiia
                     ? ": revisa que esté bien escrita. Si es su primera vez en DigLab, que inicie sesión una vez en un equipo con internet "
                         + "con su matrícula, su contraseña y su NIP del SIIA (su cuenta se crea sola); después podrás darle la asistencia si la clase sigue."
-                    : ": revisa que esté bien escrita. Si aún no tiene cuenta, que la cree con «Crear cuenta» al iniciar sesión "
-                        + "en un equipo con internet; después podrás darle la asistencia si la clase sigue.";
+                    : ": revisa que esté bien escrita. Si aún no tiene cuenta, que la administración la dé de alta en Estudiantes; "
+                        + "después podrás darle la asistencia si la clase sigue.";
                 return QueQuepa("No hay ninguna cuenta con la matrícula " + matricula + resto, "No hay ninguna cuenta con esa matrícula" + resto);
             }
 

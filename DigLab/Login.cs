@@ -65,9 +65,15 @@ namespace DigLab
             PrepararBotonApagar();
             Colocar();
 
-            // Con los estudiantes entrando con el SIIA, el kiosco no ofrece "Crear
-            // cuenta" (se crea sola). Se mira al ensenarse (antes no hay ventana a
-            // la que avisar) y cada minuto, sin congelar.
+            // Sin "Crear cuenta" (pedido del 2026-11-13: "el SIIA lo maneja todo"):
+            // el boton es solo el "Volver" del paso del NIP. Las cuentas de los
+            // estudiantes se crean solas al entrar con el SIIA o las da de alta la
+            // administracion.
+            btnRegistro.Visible = false;
+
+            // Quien entra con el SIIA (el subtitulo y el aviso verde del kiosco). Se
+            // mira al ensenarse (antes no hay ventana a la que avisar) y cada minuto,
+            // sin congelar.
             Shown += (s, e) => RevisarSiia();
             temporizadorSiia = new Timer { Interval = 60000 };
             temporizadorSiia.Tick += (s, e) => RevisarSiia();
@@ -104,8 +110,6 @@ namespace DigLab
                         docentesConSiia = !tarea.IsFaulted && tarea.Result.Docentes;
                         if (!enPasoNip)
                         {
-                            // Con el SIIA la cuenta del estudiante se crea sola: sin "Crear cuenta".
-                            btnRegistro.Visible = !estudiantesConSiia;
                             ActualizarSubtitulo();
                             Colocar();
                         }
@@ -158,6 +162,8 @@ namespace DigLab
 
             ColocarBotonApagar();
             PrepararBotonEmergencia();
+            PrepararBotonActualizar();
+            ColocarBotonEmergencia();
             Resize += (s, e) => { ColocarBotonApagar(); ColocarBotonEmergencia(); };
         }
 
@@ -216,6 +222,221 @@ namespace DigLab
             btnEmergencia.Location = new Point(
                 ClientSize.Width - btnEmergencia.Width - margen,
                 ClientSize.Height - btnEmergencia.Height - margen - franja - altoApagar);
+            ColocarBotonActualizar();
+        }
+
+        // --- Version nueva de DigLab (db/29) -------------------------------------
+
+        private Button btnActualizar;
+        private Timer temporizadorVersion;
+        private bool revisandoVersion;
+        private VersionPublicada versionNueva;
+        private bool instalacionPedida;
+        private DateTime pedidaEn;
+
+        /// <summary>
+        /// En el kiosco: un boton naranja con icono que dice que hay una version nueva de
+        /// DigLab (pedido del 2026-11-13: "en kiosko debe aparecer un icono de actualizacion
+        /// para saber y poder actualizar"). El equipo la instala solo cuando nadie lo usa,
+        /// en menos de 10 minutos; con el boton se instala ya. Cualquiera puede pulsarlo:
+        /// solo adelanta la version que publico la administracion, y el vigilante sigue
+        /// comprobando su huella.
+        /// </summary>
+        private void PrepararBotonActualizar()
+        {
+            if (!Kiosco.Activo)
+            {
+                return;
+            }
+
+            btnActualizar = new Button
+            {
+                Size = new Size(200, 40),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Century Gothic", 9F, FontStyle.Bold),
+                BackColor = Color.FromArgb(190, 85, 0),
+                ForeColor = Color.White,
+                Cursor = Cursors.Hand,
+                Image = IconoActualizar(),
+                ImageAlign = ContentAlignment.MiddleLeft,
+                TextAlign = ContentAlignment.MiddleCenter,
+                TextImageRelation = TextImageRelation.ImageBeforeText,
+                Padding = new Padding(8, 0, 4, 0),
+                TabStop = false,
+                Visible = false
+            };
+            btnActualizar.FlatAppearance.BorderSize = 0;
+            btnActualizar.FlatAppearance.MouseOverBackColor = Color.FromArgb(160, 70, 0);
+            btnActualizar.Click += (s, e) => PedirActualizacion();
+            Controls.Add(btnActualizar);
+            btnActualizar.BringToFront();
+
+            Shown += (s, e) => RevisarVersion();
+            temporizadorVersion = new Timer { Interval = 60000 };
+            temporizadorVersion.Tick += (s, e) => RevisarVersion();
+            temporizadorVersion.Start();
+        }
+
+        /// <summary>Encima del de emergencia.</summary>
+        private void ColocarBotonActualizar()
+        {
+            if (btnActualizar == null || btnEmergencia == null || IsDisposed)
+            {
+                return;
+            }
+
+            btnActualizar.Location = new Point(btnEmergencia.Right - btnActualizar.Width, btnEmergencia.Top - 10 - btnActualizar.Height);
+        }
+
+        /// <summary>Una flecha hacia abajo sobre una raya, en blanco: "descargar".</summary>
+        private static Bitmap IconoActualizar()
+        {
+            Bitmap icono = new Bitmap(20, 20);
+            using (Graphics g = Graphics.FromImage(icono))
+            using (Pen pluma = new Pen(Color.White, 2.2F) { StartCap = System.Drawing.Drawing2D.LineCap.Round, EndCap = System.Drawing.Drawing2D.LineCap.Round })
+            using (SolidBrush relleno = new SolidBrush(Color.White))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.DrawLine(pluma, 10, 2, 10, 11);
+                g.FillPolygon(relleno, new[] { new PointF(4.5F, 9F), new PointF(15.5F, 9F), new PointF(10F, 15F) });
+                g.DrawLine(pluma, 3, 18, 17, 18);
+            }
+
+            return icono;
+        }
+
+        /// <summary>Cada minuto, sin congelar: hay una version publicada mas nueva que esta?</summary>
+        private void RevisarVersion()
+        {
+            if (revisandoVersion || btnActualizar == null || IsDisposed)
+            {
+                return;
+            }
+
+            revisandoVersion = true;
+            // La senal "actualizar ya" de la administracion para este laboratorio (db/29).
+            bool orden = false;
+            // Si el servidor contesto: lo dice el indicador de internet de arriba a la derecha.
+            bool respondio = false;
+            Task.Run(() =>
+            {
+                try
+                {
+                    VersionPublicada nueva = Actualizador.BuscarNueva();
+                    respondio = true;
+                    orden = nueva != null && Actualizador.HayOrdenParaEsteEquipo();
+                    return nueva;
+                }
+                catch (Exception)
+                {
+                    // Sin servidor: el boton se queda como estaba.
+                    return versionNueva;
+                }
+            }).ContinueWith(tarea =>
+            {
+                if (IsDisposed || !IsHandleCreated)
+                {
+                    revisandoVersion = false;
+                    return;
+                }
+
+                try
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        revisandoVersion = false;
+                        versionNueva = tarea.Result;
+                        servidorRespondio = respondio;
+                        ActualizarIndicadorInternet();
+                        // Si a los 10 minutos sigue sin instalarse (sin red, una descarga que fallo),
+                        // se vuelve a ofrecer en lugar de quedarse en "Instalando...".
+                        if (instalacionPedida && DateTime.Now - pedidaEn > TimeSpan.FromMinutes(10))
+                        {
+                            instalacionPedida = false;
+                        }
+
+                        // La administracion mando "actualizar ya" a este laboratorio: como si
+                        // alguien hubiera pulsado el boton (el equipo esta libre: es el inicio de sesion).
+                        string error;
+                        if (orden && versionNueva != null && !instalacionPedida && Actualizador.PedirInstalarAhora(versionNueva, out error))
+                        {
+                            Log.Info("La administracion mando actualizar ya: se pide al vigilante instalar DigLab " + versionNueva.Version + ".");
+                            instalacionPedida = true;
+                            pedidaEn = DateTime.Now;
+                        }
+
+                        MostrarBotonActualizar();
+                    }));
+                }
+                catch (InvalidOperationException)
+                {
+                    revisandoVersion = false;
+                }
+            });
+        }
+
+        private void MostrarBotonActualizar()
+        {
+            if (btnActualizar == null || IsDisposed)
+            {
+                return;
+            }
+
+            if (versionNueva == null)
+            {
+                btnActualizar.Visible = false;
+                return;
+            }
+
+            string version = ActualizacionesDatos.Mostrar(versionNueva.Numero);
+            btnActualizar.Text = instalacionPedida ? "Instalando la " + version + "..." : "Actualizar a la " + version;
+            btnActualizar.Enabled = !instalacionPedida;
+            ayudaVersion.SetToolTip(btnActualizar, "Hay una versión nueva de DigLab (la " + version + "; este equipo tiene la "
+                + ActualizacionesDatos.Mostrar(ActualizacionesDatos.VersionInstalada) + "). Se instala sola cuando nadie usa el equipo; "
+                + "con este botón, ahora.");
+            btnActualizar.Visible = true;
+            ColocarBotonActualizar();
+        }
+
+        private readonly ToolTip ayudaVersion = new ToolTip();
+
+        private void PedirActualizacion()
+        {
+            if (versionNueva == null || instalacionPedida)
+            {
+                return;
+            }
+
+            string version = ActualizacionesDatos.Mostrar(versionNueva.Numero);
+            DialogResult respuesta = MessageBox.Show(
+                "Hay una versión nueva de DigLab: la " + version + " (este equipo tiene la "
+                    + ActualizacionesDatos.Mostrar(ActualizacionesDatos.VersionInstalada) + ")."
+                    + (versionNueva.Cambios.Count == 0 ? ""
+                        : Environment.NewLine + Environment.NewLine + "Qué cambia:" + Environment.NewLine + "• "
+                            + string.Join(Environment.NewLine + "• ", versionNueva.Cambios))
+                    + Environment.NewLine + Environment.NewLine
+                    + "Se instala ahora y el equipo se reinicia solo; en 2 o 3 minutos vuelve a esta pantalla." + Environment.NewLine + Environment.NewLine
+                    + "¿Instalar ahora?",
+                "Actualizar DigLab",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button2);
+            if (respuesta != DialogResult.Yes)
+            {
+                return;
+            }
+
+            string error;
+            if (!Actualizador.PedirInstalarAhora(versionNueva, out error))
+            {
+                MessageBox.Show("No se pudo pedir la actualización: " + error + Environment.NewLine + Environment.NewLine
+                    + "El equipo la instalará solo cuando nadie lo use.", "Actualizar DigLab", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            instalacionPedida = true;
+            pedidaEn = DateTime.Now;
+            MostrarBotonActualizar();
         }
 
         private void AbrirEmergencia()
@@ -305,6 +526,7 @@ namespace DigLab
             string texto = SinConexion.TextoAviso();
             lblSinConexion.Text = texto;
             lblSinConexion.Visible = texto.Length > 0;
+            ActualizarIndicadorInternet();
             // En el kiosco la franja va a todo lo ancho de la pantalla y crece con el
             // texto (con "la persona responsable del laboratorio" puede pasar de dos
             // lineas). En una ventana de 400 se queda en 34: mas alta taparia los botones.
@@ -556,7 +778,8 @@ namespace DigLab
             EstiloHorarios.PonerTextoGuia(txtPassword, "Tu contraseña");
             lblEtiquetaPassword.Text = "Contraseña";
             btnRegistro.Text = textoRegistro;
-            btnRegistro.Visible = !estudiantesConSiia;
+            // Fuera del paso del NIP no se ensena: ya no hay "Crear cuenta".
+            btnRegistro.Visible = false;
             linkPasswd.Text = textoEnlace;
             ActualizarSubtitulo();
             MostrarMensaje(null);
@@ -687,124 +910,16 @@ namespace DigLab
 
 
         /// <summary>
-        /// "Crear cuenta", tambien en el kiosco: el alumno que no esta dado de alta
-        /// se registra aqui mismo, con los datos que le pediria el administrador.
-        /// El usuario de MySQL de los equipos, cuya contrasena esta en
-        /// connections.config y el alumno puede leer, solo tiene INSERT en usuarios
-        /// POR COLUMNA y sin fk_tipo_usuario, que vale 1 (alumno) por defecto: con
-        /// esas credenciales se crean alumnos y nada mas. Ver
-        /// db/07_usuarios_minimos.sql y db/10_red_y_autoregistro.sql.
+        /// El boton de debajo de "Iniciar sesion": solo existe en el paso del NIP, donde
+        /// es "Volver". Antes, fuera de el, era "Crear cuenta"; se quito el 2026-11-13
+        /// ("Crear cuenta es innecesario ya que el SIIA lo maneja todo").
         /// </summary>
-        private async void btnRegistro_Click(object sender, EventArgs e)
+        private void btnRegistro_Click(object sender, EventArgs e)
         {
-            // En el paso del NIP es "Volver".
             if (esperaNip != null)
             {
                 CancelarNip();
-                return;
             }
-
-            if (entrando)
-            {
-                return;
-            }
-
-            // Con los estudiantes entrando con el SIIA no hace falta crear cuenta:
-            // se crea sola la primera vez (el kiosco ni ensena el boton).
-            if (estudiantesConSiia || InicioConSiia.LeerSinFallar().Estudiantes)
-            {
-                MessageBox.Show("Ya no hace falta crear una cuenta: entra con tu matrícula, tu contraseña y tu NIP del SIIA, y tu cuenta de DigLab "
-                    + "se crea sola la primera vez.", "Crear cuenta", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            // Sin servidor no se puede: ni saber si la matricula ya existe ni
-            // guardar la cuenta. Y sin la migracion 10 la base no admite un
-            // alumno sin grupo. Las dos cosas se miran antes de que el alumno lo
-            // escriba todo.
-            bool hayServidor = !SinConexion.Activo;
-            bool disponible = false;
-            if (hayServidor)
-            {
-                // Sin servidor la consulta tarda lo que la espera de la conexion.
-                Cursor.Current = Cursors.WaitCursor;
-                try
-                {
-                    disponible = new AlumnosDatos().AltaDisponible();
-                }
-                catch (Exception ex)
-                {
-                    Log.Error("El servidor no responde al crear una cuenta", ex);
-                    hayServidor = false;
-                    if (SinConexion.IntentarActivar(ex.Message))
-                    {
-                        ActualizarAvisoSinConexion();
-                    }
-                }
-                finally
-                {
-                    Cursor.Current = Cursors.Default;
-                }
-            }
-
-            if (!hayServidor)
-            {
-                // Sin cuenta su docente no puede darle la asistencia. En un equipo libre
-                // con conexion la crea y ahi mismo registra su bitacora; si no hay
-                // ninguno, que lo sepa su docente (sin prometer lo que no puede hacer).
-                MessageBox.Show("Para crear tu cuenta hace falta conexión con el servidor, y ahora no la hay. "
-                    + "Inténtalo más tarde o avisa a la persona responsable del laboratorio."
-                    + ParaElEstudiante("Si vienes a una clase, créala en otro equipo que sí tenga conexión y registra ahí tu bitácora. "
-                        + "Si no hay ninguno libre, avísale a tu docente."),
-                    "Sin conexión", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            if (!disponible)
-            {
-                MessageBox.Show("Todavía no se pueden crear cuentas desde el laboratorio. Pide a la administración de DigLab que te dé de alta.",
-                    "Crear cuenta", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            string matricula;
-            string contrasena;
-            if (!DialogoUsuario.CrearCuenta(this, out matricula, out contrasena))
-            {
-                return;
-            }
-
-            // Recien creada, se entra con ella sin volver a escribirla. Si eso
-            // falla (RealizarInicioSesion ya enseno su error), que el alumno sepa
-            // que la cuenta si existe: si no, la volveria a crear y le diria que
-            // esa matricula ya esta tomada.
-            bool entro = false;
-            MostrarEntrando(true);
-            try
-            {
-                entro = await consultas.RealizarInicioSesionAsync(matricula, contrasena);
-            }
-            catch (Exception ex)
-            {
-                Log.Error("Entrar con la cuenta recien creada", ex);
-            }
-            finally
-            {
-                MostrarEntrando(false);
-            }
-
-            if (entro)
-            {
-                this.Hide();
-                return;
-            }
-
-            txtUsuario.Text = matricula;
-            txtPassword.Clear();
-            MessageBox.Show("Tu cuenta quedó creada, pero no se pudo entrar con ella ahora." + Environment.NewLine + Environment.NewLine
-                + "Inicia sesión con tu matrícula y tu contraseña.", "Crear cuenta", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            // La matricula ya esta escrita: falta la contrasena.
-            txtPassword.Focus();
         }
 
         /// <summary>

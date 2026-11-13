@@ -39,7 +39,7 @@ namespace DigLab
             // La responsable no instala equipos: a ella, que hay aqui (sin instrucciones de instalacion).
             : base("Laboratorios", Permisos.SoloConsulta
                 ? "Cuánto se usa cada laboratorio y cómo se entra a sus clases. Doble clic para ver su horario. F5 actualiza."
-                : "Cada equipo se instala con el nombre exacto de su laboratorio. Doble clic para cambiarlo. F5 actualiza.", new Size(1100, 600))
+                : "Cada equipo se instala con el nombre exacto de su laboratorio. Doble clic para cambiarlo. F5 actualiza.", new Size(Permisos.SoloConsulta ? 1100 : 1240, 600))
         {
             if (!soloConsulta)
             {
@@ -47,7 +47,8 @@ namespace DigLab
             }
 
             // Con muchos laboratorios, el que se busca (por cualquier parte del nombre).
-            txtBuscar = CrearBuscador(new Point(Margen, 112), 330);
+            // Mas angosto con los cuatro botones de la derecha (con "Apagar equipos...").
+            txtBuscar = CrearBuscador(new Point(Margen, 112), soloConsulta ? 330 : 270);
             CrearLista(156);
             if (!soloConsulta)
             {
@@ -65,6 +66,25 @@ namespace DigLab
                 btnMemorias.Click += (s, e) => DialogoMemoriasEmergencia.Mostrar(this);
                 ayuda.SetToolTip(btnMemorias, "Las memorias USB que abren cualquier equipo del laboratorio sin bitácora, con «Acceso de emergencia».");
                 Controls.Add(btnMemorias);
+
+                // Actualizar los equipos desde la base (db/29), sin llevar el instalador en una memoria.
+                Button btnVersion = EstiloHorarios.CrearBoton("Versión de DigLab...", new Point(btnMemorias.Left - 10 - 200, 108), new Size(200, 38));
+                btnVersion.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+                btnVersion.Click += (s, e) => DialogoVersionesDigLab.Mostrar(this);
+                ayuda.SetToolTip(btnVersion, "Publicar una versión nueva para que los equipos se actualicen solos.");
+                Controls.Add(btnVersion);
+
+                // Apagar los equipos de un laboratorio (o de todos) con una orden en la base
+                // que cumple el vigilante de cada equipo (pedido del 2026-11-13).
+                Button btnApagar = EstiloHorarios.CrearBoton("Apagar equipos...", new Point(btnVersion.Left - 10 - 180, 108), new Size(180, 38));
+                btnApagar.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+                btnApagar.Click += (s, e) =>
+                {
+                    LaboratorioInfo elegido = Seleccionado<LaboratorioInfo>();
+                    DialogoApagarEquipos.Mostrar(this, elegido == null ? 0 : elegido.Id);
+                };
+                ayuda.SetToolTip(btnApagar, "Apagar desde aquí los equipos encendidos de un laboratorio o de todos; a quien esté usando uno, Windows le avisa 2 minutos antes.");
+                Controls.Add(btnApagar);
             }
 
             grid.Columns.Add("nombre", "Laboratorio");
